@@ -116,13 +116,11 @@ NOME_ARQUIVO_CSV = "C:/Users/victor.brenner/Desktop/Pagamentos_2026/base_2026.cs
 # -------------------------------------------------------------------------
 # FUNÇÕES DE INFRAESTRUTURA E TRATAMENTO DE BANCO DE DADOS
 # -------------------------------------------------------------------------
-# Mude ou adicione a função de atualização para este modelo incremental:
 def atualizar_banco_via_csv():
     """
     Lê o CSV e adiciona APENAS os registros novos no banco de dados,
     permitindo atualizações semanais e mensais sem apagar o histórico.
     """
-    # Defina o caminho correto do seu CSV (use o 'r' antes para evitar erro de sintaxe)
     caminho_csv = r"C:\Users\victor.brenner\Desktop\Pagamentos_2026\02_Bases_Novas_Fontes\base_2026.csv"
     caminho_db = 'pagamentos2026.db'
     
@@ -131,7 +129,6 @@ def atualizar_banco_via_csv():
         return False
         
     try:
-        # Tenta ler o arquivo CSV tratando possíveis codificações
         df_novo = None
         for enc in ['utf-8-sig', 'latin-1', 'cp1252', 'utf-8']:
             for sep_tentativa in [';', ',']:
@@ -148,48 +145,40 @@ def atualizar_banco_via_csv():
             st.sidebar.error("Não foi possível ler o arquivo CSV.")
             return False
 
-        # Padroniza o nome das colunas removendo espaços extras
         df_novo.columns = [str(c).strip() for c in df_novo.columns]
         
-        # Identifica dinamicamente as colunas essenciais
         col_data = next((c for c in df_novo.columns if c.lower() in ["data emissão", "data emissao", "data", "dt_emissao"]), df_novo.columns[0])
-        col_ob = next((c for c in df_novo.columns if 'OB' in c.upper() or 'NÚMERO' in c.upper() or 'NUMERO' in c.upper()), df_novo.columns[0])
-        col_valor = next((c for c in df_novo.columns if 'VALOR' in c.upper()), df_novo.columns[-1])
         
-        # Limpa linhas completamente nulas nas chaves principais
+        # LÓGICA ASSERTIVA: PRIORIZA A COLUNA DocumentoGD COMO IDENTIFICADOR ÚNICO DO DOCUMENTO
+        col_ob = next((c for c in df_novo.columns if c == 'DocumentoGD' or 'OB' in c.upper() or 'NÚMERO' in c.upper() or 'NUMERO' in c.upper()), df_novo.columns[0])
+        col_valor = next((c for c in df_novo.columns if 'VALOR' in c.upper() or 'PAGAMENTO' in c.upper()), df_novo.columns[-1])
+        
         df_novo = df_novo.dropna(subset=[col_data, col_ob, col_valor])
         
-        # Cria uma coluna de ID ÚNICO combinando Número da OB e Data para evitar duplicados
         df_novo['id_controle'] = df_novo[col_ob].astype(str).str.strip() + "_" + df_novo[col_data].astype(str).str.strip()
         df_novo = df_novo.drop_duplicates(subset=['id_controle'])
 
         conn = sqlite3.connect(caminho_db)
         cursor = conn.cursor()
         
-        # Garante que a tabela pagamentos exista e cria uma chave única pelo 'id_controle'
         cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='pagamentos'")
         if not cursor.fetchone():
-            # Se a tabela não existir, cria a primeira vez com os dados do DataFrame
             df_novo.to_sql('pagamentos', conn, if_exists='replace', index=False)
             cursor.execute("CREATE UNIQUE INDEX IF NOT EXISTS idx_pag_controle ON pagamentos(id_controle)")
             conn.commit()
             st.sidebar.success(f"Banco inicializado com {len(df_novo)} registros.")
         else:
-            # Se a tabela já existir, adiciona uma coluna 'id_controle' temporária se não houver no banco antigo
             cursor.execute("PRAGMA table_info(pagamentos)")
             colunas_bd = [info[1] for info in cursor.fetchall()]
             if 'id_controle' not in colunas_bd:
                 cursor.execute("ALTER TABLE pagamentos ADD COLUMN id_controle TEXT")
                 conn.commit()
             
-            # Carrega o que já está salvo no banco para comparar
             ids_existentes = pd.read_sql_query("SELECT id_controle FROM pagamentos", conn)['id_controle'].dropna().tolist()
             
-            # Filtra o DataFrame trazendo apenas o que é REALMENTE NOVO
             df_inserir = df_novo[~df_novo['id_controle'].isin(ids_existentes)].copy()
             
             if not df_inserir.empty:
-                # Garante que as colunas do df que vai entrar batam com as que já existem no banco
                 for col in colunas_bd:
                     if col not in df_inserir.columns:
                         df_inserir[col] = None
@@ -208,17 +197,15 @@ def atualizar_banco_via_csv():
         return False
 
 
-@st.cache_data(ttl=60)  # Atualiza os dados a cada 1 minuto
+@st.cache_data(ttl=60)
 def carregar_dados_auditoria():
     """
     Lê os dados diretamente do link publicado da aba 'BASE' do Google Sheets.
-    Aplica tratamentos para evitar o erro 'DataFrame object has no attribute str'.
+    Aplica tratamentos para evitar erros de tipos de dados.
     """
-    # O link oficial que você acabou de gerar:
     LINK_PUBLICADO = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6mS4X1SSJWjVhFxNdTstSWgRdn_AFSGf9ZzdGqZ1GjZNeT7GSUZDqoB_4q5JnZPbgd2gJ2Jq0g4YJ/pub?gid=0&single=true&output=csv"
     
     try:
-        # Lê o CSV diretamente da publicação do Google
         df = pd.read_csv(LINK_PUBLICADO, sep=',')
     except Exception as e:
         st.error(f"Erro ao conectar com a aba 'BASE' do Google Sheets: {e}")
@@ -227,29 +214,21 @@ def carregar_dados_auditoria():
     if df.empty:
         return df
 
-    # 1. REMOVE COLUNAS DUPLICADAS (Causa real do erro 'DataFrame object has no attribute str')
-    # Se houver duas colunas com o mesmo nome, o pandas se confunde. Isso garante apenas a primeira.
     df = df.loc[:, ~df.columns.duplicated()]
-
-    # 2. PADRONIZAÇÃO DE NOMES DE COLUNAS (Remove espaços extras nas pontas)
     df.columns = [str(c).strip() for c in df.columns]
 
-    # 3. GARANTIA DE COLUNAS OBRIGATÓRIAS
     colunas_obrigatorias = [
         "Número", "UG Emitente", "UG Pagadora", "Data Emissão", "Status", "Tipo de OB", 
         "NE", "Credor", "Nome do Credor", "Valor", "Fonte", "Natureza", "Status de Envio", 
-        "RE", "PD", "GRUPO", "Elemento", "Despesa", "OBJETO"
+        "RE", "PD", "GRUPO", "Elemento", "Despesa", "OBJETO", "DocumentoGD"
     ]
     for col in colunas_obrigatorias:
         if col not in df.columns:
             df[col] = None
 
-    # --- 4. TRATAMENTOS ULTRA SEGUROS (Forçando conversão para Series/String antes do .str) ---
-
-    # Tratamento da Despesa (CORRENTE, DEA, RP)
+    # Tratamento da Despesa
     df['Despesa_Tratada'] = 'CORRENTE'
     if 'Despesa' in df.columns:
-        # Certifica que estamos pegando uma Series (coluna única) e tratando nulos
         serie_despesa = df['Despesa'].squeeze()
         if isinstance(serie_despesa, pd.DataFrame):
             serie_despesa = serie_despesa.iloc[:, 0]
@@ -264,7 +243,7 @@ def carregar_dados_auditoria():
                 return 'RP'
             else: 
                 return 'CORRENTE'
-        df['Despesa_Tratada'] = sample_apply = amostra.apply(classificar_texto)
+        df['Despesa_Tratada'] = amostra.apply(classificar_texto)
 
     # Tratamento do Grupo (Investimentos)
     df['Grupo_Tratado'] = '3 - OUTRAS DESPESAS CORRENTES'
@@ -306,90 +285,12 @@ def carregar_dados_auditoria():
     else:
         df['Mes_Extenso'] = 'Não Identificado'
     
-    # Ajuste de Credores e Fontes
+    # Ajuste Seguro de Credores e Fontes (Blindagem contra Float/NaN)
     df['Credor_Nome_Tratado'] = df['Nome do Credor'].fillna(df['Credor']).fillna('Não Identificado').astype(str).str.strip().str.upper()
     df['Fonte_Tratada'] = df['Fonte'].fillna('Não Informada').astype(str).str.strip()
-        
-    return df
-
-    # --- TRATAMENTOS DE STRING SEGUROS CONTRA VALORES EM BRANCO ---
-    df['Despesa_Tratada'] = 'CORRENTE'
-    if 'Despesa' in df.columns:
-        amostra = df['Despesa'].fillna('').astype(str).str.upper()
-        def classificar_texto(val):
-            v = str(val).upper().strip()
-            if 'DEA' in v or 'EXERC' in v or 'ANTERIOR' in v: return 'DEA'
-            elif 'RP' in v or 'RESTO' in v or 'PAGAR' in v: return 'RP'
-            else: return 'CORRENTE'
-        df['Despesa_Tratada'] = amostra.apply(classificar_texto)
-
-    df['Grupo_Tratado'] = df['GRUPO'].fillna('').astype(str).str.strip().str.upper()
-    df['Grupo_Tratado'] = df['Grupo_Tratado'].apply(lambda v: '4 - INVESTIMENTOS' if 'INVEST' in v or '4' in v else '3 - OUTRAS DESBAS CORRENTES')
     
-    df['Valor_Limpo'] = df['Valor'].fillna('0').astype(str).str.replace(r'[R$\s.]', '', regex=True).str.replace(',', '.')
-    df['Valor_Limpo'] = pd.to_numeric(df['Valor_Limpo'], errors='coerce').fillna(0)
-        
-    df['Mes_Num'] = df['Data Emissão'].fillna('').astype(str).str.slice(3, 5)
-    mapa_meses = {
-        '01': 'Jan/2026', '02': 'Fev/2026', '03': 'Mar/2026', '04': 'Abr/2026', 
-        '05': 'Mai/2026', '06': 'Jun/2026', '07': 'Jul/2026', '08': 'Ago/2026',
-        '09': 'Set/2026', '10': 'Out/2026', '11': 'Nov/2026', '12': 'Dez/2026'
-    }
-    df['Mes_Extenso'] = df['Mes_Num'].map(mapa_meses)
-    df = df[df['Mes_Extenso'].notna()]
-    
-    df['Credor_Nome_Tratado'] = df['Nome do Credor'].fillna(df['Credor']).fillna('Não Identificado').astype(str).str.strip().str.upper()
-    df['Fonte_Tratada'] = df['Fonte'].fillna('Não Informada').astype(str).str.strip()
-        
-    return df
-
-    # --- MAPEAMENTO DA NATUREZA DA DESPESA (CORRENTE, RP, DEA) ---
-    df['Despesa_Tratada'] = 'CORRENTE'
-    for col_alvo in ['Despesa', 'Natureza', 'Status']:
-        if col_alvo in df.columns and df[col_alvo].notna().any():
-            amostra = df[col_alvo].astype(str).str.upper()
-            if amostra.str.contains('RP|RESTO|DEA|ANTERIOR|EXERC').any():
-                def classificar_texto(val):
-                    v = str(val).upper().strip()
-                    if 'DEA' in v or 'EXERC' in v or 'ANTERIOR' in v: return 'DEA'
-                    elif 'RP' in v or 'RESTO' in v or 'PAGAR' in v: return 'RP'
-                    else: return 'CORRENTE'
-                df['Despesa_Tratada'] = amostra.apply(classificar_texto)
-                break
-
-    # --- PADRONIZAÇÃO DO GRUPO ORÇAMENTÁRIO (GND) ---
-    df['Grupo_Tratado'] = df['GRUPO'].astype(str).str.strip().str.upper()
-    
-    def mapear_grupo_oficial(val):
-        v = str(val).upper()
-        if 'INVEST' in v or '4' in v: return '4 - INVESTIMENTOS'
-        else: return '3 - OUTRAS DESPESAS CORRENTES'
-    df['Grupo_Tratado'] = df['Grupo_Tratado'].apply(mapear_grupo_oficial)
-    
-    # --- SANEAMENTO MONETÁRIO DOS VALORES ---
-    df['Valor_Limpo'] = df['Valor'].astype(str).str.replace(r'[R$\s.]', '', regex=True).str.replace(',', '.')
-    df['Valor_Limpo'] = pd.to_numeric(df['Valor_Limpo'], errors='coerce').fillna(0)
-        
-    # --- TRATAMENTO CRONOLÓGICO DOS MESES ---
-    df['Mes_Num'] = df['Data Emissão'].astype(str).str.slice(3, 5)
-    
-    mapa_meses = {
-        '01': 'Jan/2026', '02': 'Fev/2026', '03': 'Mar/2026', '04': 'Abr/2026', 
-        '05': 'Mai/2026', '06': 'Jun/2026', '07': 'Jul/2026', '08': 'Ago/2026',
-        '09': 'Set/2026', '10': 'Out/2026', '11': 'Nov/2026', '12': 'Dez/2026'
-    }
-    df['Mes_Extenso'] = df['Mes_Num'].map(mapa_meses)
-    df = df[df['Mes_Extenso'].notna()]
-    
-    if 'Nome do Credor' in df.columns:
-        df['Credor_Nome_Tratado'] = df['Nome do Credor'].astype(str).str.strip().str.upper()
-    else:
-        df['Credor_Nome_Tratado'] = df['Credor'].astype(str).str.strip().str.upper()
-        
-    if 'Fonte' in df.columns:
-        df['Fonte_Tratada'] = df['Fonte'].astype(str).str.strip()
-    else:
-        df['Fonte_Tratada'] = 'Não Informada'
+    # Ajuste Seguro da nova coluna DocumentoGD
+    df['DocumentoGD_Tratado'] = df['DocumentoGD'].fillna('Não Identificado').astype(str).str.strip()
         
     return df
 
@@ -408,18 +309,22 @@ if not df_base.empty and 'Mes_Extenso' in df_base.columns:
 if not lista_meses_fixa:
     lista_meses_fixa = ['Jan/2026', 'Fev/2026', 'Mar/2026', 'Abr/2026', 'Mai/2026', 'Jun/2026']
 
-# --- BARRA LATERAL ---
+# -------------------------------------------------------------------------
+# BARRA LATERAL - FILTROS GLOBAIS COM TRATAMENTO DE STRING SEGURO (ANTI-BUG)
+# -------------------------------------------------------------------------
 st.sidebar.markdown("### 🏛️ Filtros Globais")
 st.sidebar.markdown("---")
 
 meses_selecionados = st.sidebar.multiselect("Filtrar Período de Competência:", options=lista_meses_fixa, default=[])
 
-nomes_disponiveis = sorted([n for n in df_base['Credor_Nome_Tratado'].unique() if n]) if not df_base.empty else []
+# Lista de Credores com Tratamento Robusto de Nulos
+nomes_disponiveis = sorted([str(n).strip() for n in df_base['Credor_Nome_Tratado'].unique() if n and str(n).lower() != 'nan']) if not df_base.empty else []
 nomes_selecionados = st.sidebar.multiselect("Filtrar por Entidade / Credor:", options=nomes_disponiveis, default=[])
 
 st.sidebar.markdown("---")
-lista_fontes = sorted([f for f in df_base['Fonte_Tratada'].unique() if f and f != 'nan']) if not df_base.empty else []
-default_fonte = ['500'] if '500' in lista_fontes else []
+# Lista de Fontes com Tratamento Robusto de Nulos
+lista_fontes = sorted([str(f).strip() for f in df_base['Fonte_Tratada'].unique() if f and str(f).lower() != 'nan']) if not df_base.empty else []
+default_fonte = [f for f in lista_fontes if "500" in f]
 
 fontes_selecionadas = st.sidebar.multiselect(
     "Filtrar por Fonte de Recurso:",
@@ -432,7 +337,7 @@ st.sidebar.markdown("---")
 coluna_objeto = 'OBJETO'
 
 if not df_base.empty and coluna_objeto in df_base.columns:
-    lista_objetos = sorted(df_base[coluna_objeto].dropna().unique())
+    lista_objetos = sorted([str(obj).strip() for obj in df_base[coluna_objeto].dropna().unique() if str(obj).lower() != 'nan'])
     objeto_selecionado = st.sidebar.multiselect(
         "Filtrar por Objeto de Despesa:",
         options=lista_objetos,
@@ -561,12 +466,67 @@ if not df_filtrado.empty:
     renderizar_tabela_simetrica_html(df_matriz, 'DEA', ['3 - OUTRAS DESPESAS CORRENTES', '4 - INVESTIMENTOS'], "🔴 DESPESAS DE EXERCÍCIOS ANTERIORES - DEA (Reconhecimento de Passivo)", "#d62828")
 
 else:
-    st.info("Nenhum registro financeiro localizado. Certifique-se de que o arquivo 'base_2026.csv' está na pasta raiz e clique em 'Importar e Filtrar Novo CSV' na barra lateral.")
+    st.info("Nenhum registro financeiro localizado. Verifique os filtros.")
 
 st.markdown("---")
 
-# --- BLOCO 3: TEMPORAL + CREDORES ---
-st.markdown("### 📊 2. Análise Temporal e Desembolso Mensal")
+# -------------------------------------------------------------------------
+# NOVO BLOCO: REQUISITADO - DEMONSTRATIVO CONSOLIDADO POR FONTE DE RECURSO
+# -------------------------------------------------------------------------
+st.markdown("### 🏦 2. Distribuição Mensal Consolidada por Fonte de Recurso")
+
+if not df_filtrado.empty:
+    df_matriz_fonte = df_filtrado.pivot_table(
+        index='Fonte_Tratada',
+        columns='Mes_Extenso',
+        values='Valor_Limpo',
+        aggfunc='sum',
+        fill_value=0.0
+    ).reset_index()
+
+    for m in lista_meses_fixa:
+        if m not in df_matriz_fonte.columns:
+            df_matriz_fonte[m] = 0.0
+            
+    df_matriz_fonte['Total Geral'] = df_matriz_fonte[lista_meses_fixa].sum(axis=1)
+    df_matriz_fonte = df_matriz_fonte.sort_values(by='Total Geral', ascending=False)
+
+    linhas_fonte_html = ""
+    totais_meses_fonte = {m: 0.0 for m in lista_meses_fixa + ['Total Geral']}
+
+    for _, row in df_matriz_fonte.iterrows():
+        colunas_valores = ""
+        for m in lista_meses_fixa + ['Total Geral']:
+            val = float(row[m])
+            totais_meses_fonte[m] += val
+            colunas_valores += f"<td>{formatar_brl(val)}</td>"
+        linhas_fonte_html += f"<tr><td>🏛️ {row['Fonte_Tratada']}</td>{colunas_valores}</tr>"
+
+    valores_totais_fonte = ""
+    for m in lista_meses_fixa + ['Total Geral']:
+        valores_totais_fonte += f"<td>{formatar_brl(totais_meses_fonte[m])}</td>"
+
+    cabecalhos_meses_fonte = "".join([f"<th style='width: 10%;'>{mes}</th>" for mes in lista_meses_fixa])
+
+    html_fontes_resumo = (
+        f"<div class='tabela-container'>"
+        f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #1d3557 0%, #002b49 100%);'>💰 Origem dos Recursos e Fluxo de Saída Monetária</div>"
+        f"<table class='html-executiva'>"
+        f"<thead><tr>"
+        f"<th style='width: 30%;'>FONTE DE RECURSO</th>"
+        f"{cabecalhos_meses_fonte}"
+        f"<th style='width: 10%;'>Total Geral</th>"
+        f"</tr></thead>"
+        f"<tbody>{linhas_fonte_html}"
+        f"<tr class='linha-total-html'><td>💰 TOTAL CONSOLIDADO POR FONTE</td>{valores_totais_fonte}</tr>"
+        f"</tbody></table></div>"
+    )
+    st.markdown(html_fontes_resumo, unsafe_allow_html=True)
+
+st.markdown("---")
+
+# --- BLOCO 4: TEMPORAL + CREDORES ---
+st.markdown("### 📊 3. Análise Temporal e Desembolso Mensal")
 
 if not df_filtrado.empty:
     df_agrupado_mes = df_filtrado.groupby("Mes_Extenso").agg(
@@ -671,7 +631,7 @@ if not df_filtrado.empty:
 
     # --- DEMONSTRATIVO POR CREDOR ---
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 🏢 3. Detalhamento de Pagamentos por Credor / Entidade")
+    st.markdown("### 🏢 4. Detalhamento de Pagamentos por Credor / Entidade")
     
     df_matriz_credor = df_filtrado.pivot_table(
         index='Credor_Nome_Tratado',
@@ -684,44 +644,38 @@ if not df_filtrado.empty:
     for m in lista_meses_fixa:
         if m not in df_matriz_credor.columns:
             df_matriz_credor[m] = 0.0
-
+            
     df_matriz_credor['Total Geral'] = df_matriz_credor[lista_meses_fixa].sum(axis=1)
     df_matriz_credor = df_matriz_credor.sort_values(by='Total Geral', ascending=False)
 
-    cabecalhos_meses_html = "".join([f"<th style='width: 10%;'>{mes}</th>" for mes in lista_meses_fixa])
-    
-    linhas_corpo_credor = ""
-    totais_colunas_credor = {m: 0.0 for m in lista_meses_fixa + ['Total Geral']}
+    linhas_credor_html = ""
+    totais_meses_credor = {m: 0.0 for m in lista_meses_fixa + ['Total Geral']}
 
     for _, row in df_matriz_credor.iterrows():
         colunas_valores = ""
         for m in lista_meses_fixa + ['Total Geral']:
             val = float(row[m])
-            totais_colunas_credor[m] += val
+            totais_meses_credor[m] += val
             colunas_valores += f"<td>{formatar_brl(val)}</td>"
-        
-        linhas_corpo_credor += f"<tr><td style='padding-left: 20px; text-align: left;'>{row['Credor_Nome_Tratado']}</td>{colunas_valores}</tr>"
+        linhas_credor_html += f"<tr><td>{row['Credor_Nome_Tratado']}</td>{colunas_valores}</tr>"
 
     valores_totais_credor = ""
     for m in lista_meses_fixa + ['Total Geral']:
-        valores_totais_credor += f"<td>{formatar_brl(totais_colunas_credor[m])}</td>"
+        valores_totais_credor += f"<td>{formatar_brl(totais_meses_credor[m])}</td>"
 
-    html_completo_credor = (
+    cabecalhos_meses_credor = "".join([f"<th style='width: 10%;'>{mes}</th>" for mes in lista_meses_fixa])
+
+    html_credores = (
         f"<div class='tabela-container'>"
-        f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #002b49 0%, #475569 100%);'>"
-        f"💼 Distribuição Mensal de Recursos por Fornecedor / Prestador de Serviço"
-        f"</div>"
+        f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #3a537d 0%, #002b49 100%);'>🏢 Distribuição Mensal de Recursos por Fornecedor / Prestador de Serviço</div>"
         f"<table class='html-executiva'>"
         f"<thead><tr>"
-        f"<th style='width: 30%; text-align: left; padding-left: 20px;'>RAZÃO SOCIAL / CREDOR</th>"
-        f"{cabecalhos_meses_html}"
+        f"<th style='width: 30%;'>RAZÃO SOCIAL / CREDOR</th>"
+        f"{cabecalhos_meses_credor}"
         f"<th style='width: 10%;'>Total Geral</th>"
         f"</tr></thead>"
-        f"<tbody>{linhas_corpo_credor}"
-        f"<tr class='linha-total-html'><td style='padding-left: 20px; text-align: left;'>📊 TOTAL CONSOLIDADO DO FILTRO</td>{valores_totais_credor}</tr>"
+        f"<tbody>{linhas_credor_html}"
+        f"<tr class='linha-total-html'><td>🏢 TOTAL CONSOLIDADO DO FILTRO</td>{valores_totais_credor}</tr>"
         f"</tbody></table></div>"
     )
-    st.markdown(html_completo_credor, unsafe_allow_html=True)
-
-else:
-    st.info("Nenhum dado mensal disponível para exibição.")
+    st.markdown(html_credores, unsafe_allow_html=True)
