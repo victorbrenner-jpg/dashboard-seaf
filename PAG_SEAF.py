@@ -388,7 +388,10 @@ else:
     qtd_registros = 0
 
 with col_kpi1:
-    st.markdown(f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL PAGO</p><h3 style='color: #002b49; margin: 5px 0;'>{formatar_brl(total_real_calculado)}</h3><p style='color: #28a745; font-size: 11px; margin:0;'>📋 Registros: {qtd_registros:,}</p></div>", unsafe_allow_html=True)
+    # Formata com a vírgula nativa e depois troca por ponto para bater com o padrão BR
+    qtd_formatada_br = f"{qtd_registros:,}".replace(",", ".")
+    
+    st.markdown(f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL PAGO</p><h3 style='color: #002b49; margin: 5px 0;'>{formatar_brl(total_real_calculado)}</h3><p style='color: #28a745; font-size: 11px; margin:0;'>📋 Registros: {qtd_formatada_br}</p></div>", unsafe_allow_html=True)
 with col_kpi2:
     st.markdown(f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>CORRENTE</p><h3 style='color: #028090; margin: 5px 0;'>{formatar_brl(total_corrente)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Dotação do Ano</p></div>", unsafe_allow_html=True)
 with col_kpi3:
@@ -601,10 +604,17 @@ if not df_filtrado.empty:
             total_documentos = int(df_agrupado_mes["Qtd_Docs"].sum())
             total_financeiro = float(df_agrupado_mes["Total_Liq"].sum())
             
+            # Formata o total geral de documentos com ponto no milhar
+            total_docs_formatado_br = f"{total_documentos:,}".replace(",", ".")
+            
             linhas_tabela_html = ""
             for _, row in df_agrupado_mes.iterrows():
                 valor_formatado = formatar_brl(row['Total_Liq'])
-                linhas_tabela_html += f'<tr style="border-bottom: 1px solid #f1f5f9;"><td style="padding: 10px 15px; text-align: left; color: #334155; font-family: sans-serif; font-size: 13px;">{row["Mês de Referência"]}</td><td style="padding: 10px 15px; text-align: center; color: #334155; font-family: sans-serif; font-size: 13px;">{int(row["Qtd_Docs"]):,}</td><td style="padding: 10px 15px; text-align: right; color: #0f172a; font-family: sans-serif; font-size: 13px; font-weight: 600;">{valor_formatado}</td></tr>'
+                
+                # CORREÇÃO CRÍTICA: Força a quantidade a virar inteiro e troca a vírgula por ponto
+                qtd_docs_br = f"{int(row['Qtd_Docs']):,}".replace(",", ".")
+                
+                linhas_tabela_html += f'<tr style="border-bottom: 1px solid #f1f5f9;"><td style="padding: 10px 15px; text-align: left; color: #334155; font-family: sans-serif; font-size: 13px;">{row["Mês de Referência"]}</td><td style="padding: 10px 15px; text-align: center; color: #334155; font-family: sans-serif; font-size: 13px;">{qtd_docs_br}</td><td style="padding: 10px 15px; text-align: right; color: #0f172a; font-family: sans-serif; font-size: 13px; font-weight: 600;">{valor_formatado}</td></tr>'
                 
             html_tabela_gerencial = (
                 f'<div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background-color: #ffffff; width: 100%;">'
@@ -620,7 +630,7 @@ if not df_filtrado.empty:
                 f'<tfoot>'
                 f'<tr style="background-color: #f8fafc; border-top: 2px solid #002b49; font-weight: 700;">'
                 f'<td style="padding: 12px 15px; font-family: sans-serif; font-size: 13px; color: #002b49; text-align: left;">📊 TOTAL GERAL</td>'
-                f'<td style="padding: 12px 15px; font-family: sans-serif; font-size: 13px; color: #002b49; text-align: center;">{total_documentos:,}</td>'
+                f'<td style="padding: 12px 15px; font-family: sans-serif; font-size: 13px; color: #002b49; text-align: center;">{total_docs_formatado_br}</td>'
                 f'<td style="padding: 12px 15px; font-family: sans-serif; font-size: 13px; color: #002b49; text-align: right;">{formatar_brl(total_financeiro)}</td>'
                 f'</tr>'
                 f'</tfoot>'
