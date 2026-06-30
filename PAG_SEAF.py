@@ -155,7 +155,8 @@ def atualizar_banco_via_csv():
         
         df_novo = df_novo.dropna(subset=[col_data, col_ob, col_valor])
         
-        df_novo['id_controle'] = df_novo[col_ob].astype(str).str.strip() + "_" + df_novo[col_data].astype(str).str.strip()
+        # Em vez de col_ob apontar estritamente para GD, criamos uma chave composta combinando Número e Data
+        df_novo['id_controle'] = df_novo[col_data].astype(str).str.strip() + "_" + df_novo[col_valor].astype(str).str.strip() + "_" + df_novo.index.astype(str)
         df_novo = df_novo.drop_duplicates(subset=['id_controle'])
 
         conn = sqlite3.connect(caminho_db)
@@ -200,8 +201,8 @@ def atualizar_banco_via_csv():
 @st.cache_data(ttl=60)
 def carregar_dados_auditoria():
     """
-    Lê os dados diretamente do link publicado da aba 'BASE' do Google Sheets.
-    Aplica tratamentos para evitar erros de tipos de dados.
+    Lê os dados diretamente do link publicado do Google Sheets.
+    Garante extração de datas robusta e correção de tipos.
     """
     LINK_PUBLICADO = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6mS4X1SSJWjVhFxNdTstSWgRdn_AFSGf9ZzdGqZ1GjZNeT7GSUZDqoB_4q5JnZPbgd2gJ2Jq0g4YJ/pub?gid=0&single=true&output=csv"
     
@@ -225,6 +226,9 @@ def carregar_dados_auditoria():
     for col in colunas_obrigatorias:
         if col not in df.columns:
             df[col] = None
+
+    # Remove apenas se a coluna essencial de Valor estiver nula
+    df = df.dropna(subset=["Valor"])
 
     # Tratamento da Despesa
     df['Despesa_Tratada'] = 'CORRENTE'
@@ -257,25 +261,29 @@ def carregar_dados_auditoria():
             lambda v: '4 - INVESTIMENTOS' if 'INVEST' in v or '4' in v else '3 - OUTRAS DESPESAS CORRENTES'
         )
     
-    # Tratamento Numérico do Valor Monetário
+    # Tratamento Numérico do Valor Monetário (Preservando Sinais de Negativo)
     if 'Valor' in df.columns:
         serie_valor = df['Valor'].squeeze()
         if isinstance(serie_valor, pd.DataFrame):
             serie_valor = serie_valor.iloc[:, 0]
             
         valores_str = serie_valor.fillna('0').astype(str)
+        # Remove R$, espaços e pontos de milhar, mas mantém o sinal de menos (-)
         valores_str = valores_str.str.replace(r'[R$\s.]', '', regex=True).str.replace(',', '.')
         df['Valor_Limpo'] = pd.to_numeric(valores_str, errors='coerce').fillna(0.0)
     else:
         df['Valor_Limpo'] = 0.0
         
-    # Tratamento de Datas e Geração do Mês por Extenso
+    # CORREÇÃO CRÍTICA: Conversão de data inteligente (Universal)
     if 'Data Emissão' in df.columns:
         serie_data = df['Data Emissão'].squeeze()
         if isinstance(serie_data, pd.DataFrame):
             serie_data = serie_data.iloc[:, 0]
             
-        df['Mes_Num'] = serie_data.fillna('').astype(str).str.slice(3, 5)
+        # Converte dinamicamente aceitando múltiplos formatos de data
+        datas_convertidas = pd.to_datetime(serie_data, errors='coerce', dayfirst=True)
+        df['Mes_Num'] = datas_convertidas.dt.month.fillna(0).astype(int).astype(str).str.zfill(2)
+        
         mapa_meses = {
             '01': 'Jan/2026', '02': 'Fev/2026', '03': 'Mar/2026', '04': 'Abr/2026', 
             '05': 'Mai/2026', '06': 'Jun/2026', '07': 'Jul/2026', '08': 'Ago/2026',
@@ -285,12 +293,10 @@ def carregar_dados_auditoria():
     else:
         df['Mes_Extenso'] = 'Não Identificado'
     
-    # Ajuste Seguro de Credores e Fontes (Blindagem contra Float/NaN)
-    df['Credor_Nome_Tratado'] = df['Nome do Credor'].fillna(df['Credor']).fillna('Não Identificado').astype(str).str.strip().str.upper()
-    df['Fonte_Tratada'] = df['Fonte'].fillna('Não Informada').astype(str).str.strip()
-    
-    # Ajuste Seguro da nova coluna DocumentoGD
-    df['DocumentoGD_Tratado'] = df['DocumentoGD'].fillna('Não Identificado').astype(str).str.strip()
+    # Ajuste Seguro de Credores e Fontes (Garante String Pura)
+    df['Credor_Nome_Tratado'] = df['Nome do Credor'].fillna(df['Credor']).fillna('NÃO IDENTIFICADO').astype(str).str.strip().str.upper()
+    df['Fonte_Tratada'] = df['Fonte'].fillna('NÃO INFORMADA').astype(str).str.strip()
+    df['DocumentoGD_Tratado'] = df['DocumentoGD'].fillna('NÃO CONSTA').astype(str).str.strip()
         
     return df
 
