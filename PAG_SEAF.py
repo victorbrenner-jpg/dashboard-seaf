@@ -4,6 +4,7 @@ import sqlite3
 import plotly.express as px
 import os
 import urllib.request
+import streamlit.components.v1 as components
 
 # 1. CONFIGURAÇÃO DA PÁGINA
 st.set_page_config(
@@ -314,6 +315,8 @@ if not df_base.empty and 'Mes_Extenso' in df_base.columns:
 
 if not lista_meses_fixa:
     lista_meses_fixa = ['Jan/2026', 'Fev/2026', 'Mar/2026', 'Abr/2026', 'Mai/2026', 'Jun/2026']
+    
+import os
 
 # -------------------------------------------------------------------------
 # BARRA LATERAL - FILTROS GLOBAIS COM TRATAMENTO DE STRING SEGURO (ANTI-BUG)
@@ -471,7 +474,7 @@ if not df_filtrado.empty:
         st.markdown(html_completo, unsafe_allow_html=True)
 
     renderizar_tabela_simetrica_html(df_matriz, 'CORRENTE', ['3 - OUTRAS DESPESAS CORRENTES', '4 - INVESTIMENTOS'], "🔵 DESPESAS CORRENTES (Dotação Ordinária do Ano)", "#028090")
-    renderizar_tabela_simetrica_html(df_matriz, 'RP', ['3 - OUTRAS DESPESAS CORRENTES'], "🟠 RESTOS A PAGAR - RP (Compromissos de Anos Anteriores)", "#f77f00")
+    renderizar_tabela_simetrica_html(df_matriz, 'RP', ['3 - OUTRAS DESPESAS CORRENTES', '4 - INVESTIMENTOS'], "🟠 RESTOS A PAGAR - RP (Compromissos de Anos Anteriores)", "#f77f00")
     renderizar_tabela_simetrica_html(df_matriz, 'DEA', ['3 - OUTRAS DESPESAS CORRENTES', '4 - INVESTIMENTOS'], "🔴 DESPESAS DE EXERCÍCIOS ANTERIORES - DEA (Reconhecimento de Passivo)", "#d62828")
 
 else:
