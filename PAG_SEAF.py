@@ -36,8 +36,12 @@ st.markdown("""
     .tabela-container {
         width: 100% !important;
         margin-bottom: 30px !important;
-        overflow: hidden !important;
+        /* AJUSTE CRÍTICO: Ativa a rolagem lateral se a tabela passar da largura da tela */
+        overflow-x: auto !important; 
+        overflow-y: hidden !important;
         background-color: #ffffff;
+        border-radius: 6px;
+        border: 1px solid #e2e8f0;
     }
     .subtitulo-tabela-html {
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif !important;
@@ -49,7 +53,9 @@ st.markdown("""
         letter-spacing: 0.5px;
     }
     .html-executiva {
+        /* AJUSTE CRÍTICO: Força a tabela a manter espaço para respirar até dezembro */
         width: 100% !important;
+        min-width: 1350px !important; 
         border-collapse: collapse !important;
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif !important;
         font-size: 13px !important;
@@ -64,22 +70,40 @@ st.markdown("""
         text-transform: uppercase;
         font-size: 11px;
         letter-spacing: 0.7px;
+        /* IMPEDE QUEBRA DO NOME DOS MESES */
+        white-space: nowrap !important; 
     }
     .html-executiva th:first-child {
         text-align: left !important;
         padding-left: 20px !important;
+        /* Define um tamanho fixo confortável para a descrição do Grupo */
+        width: 250px !important; 
     }
+    
+    /* AJUSTE CRÍTICO DE BLINDAGEM CONTRA QUEBRAS DE VALORES */
     .html-executiva td {
         padding: 12px 12px !important;
         border-bottom: 1px solid #f1f5f9 !important;
         text-align: center !important;
         color: #334155 !important;
+        white-space: nowrap !important; /* NUNCA quebra o valor numérico em duas linhas */
     }
     .html-executiva td:first-child {
         text-align: left !important;
         padding-left: 20px !important;
         font-weight: 600;
         color: #0f172a !important;
+        white-space: normal !important; /* Permite quebrar apenas o texto do grupo se for muito longo */
+    }
+    
+    /* COLUNA DO TOTAL GERAL PROTEGIDA */
+    .html-executiva th:last-child, 
+    .html-executiva td:last-child {
+        font-weight: bold !important;
+        background-color: #f8fafc !important;
+        text-align: right !important;
+        padding-right: 20px !important;
+        width: 140px !important; /* Largura maior garantida para o total acumulado */
     }
     
     .gnd-badge {
