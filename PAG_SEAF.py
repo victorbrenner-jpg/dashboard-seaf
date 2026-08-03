@@ -353,7 +353,6 @@ tipo_filtro_data = st.sidebar.radio(
     key="tipo_filtro_periodo"
 )
 
-# Ajustado para usar 'Data Emissão' (coluna presente no DataFrame)
 coluna_data = 'Data Emissão'
 
 meses_selecionados = []
@@ -368,9 +367,10 @@ if tipo_filtro_data == "Por Mês de Competência":
     )
 else:
     if not df_base.empty and coluna_data in df_base.columns:
-        datas_convertidas = pd.to_datetime(df_base[coluna_data], dayfirst=True, errors='coerce').dropna()
-        data_min = datas_convertidas.min().date() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
-        data_max = datas_convertidas.max().date() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
+        # Conversão robusta aceitando múltiplos formatos de data (mixed)
+        datas_convertidas = pd.to_datetime(df_base[coluna_data], format='mixed', dayfirst=True, errors='coerce').dt.date.dropna()
+        data_min = datas_convertidas.min() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
+        data_max = datas_convertidas.max() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
     else:
         data_min = datetime.date(2026, 1, 1)
         data_max = datetime.date(2026, 12, 31)
@@ -388,13 +388,12 @@ nomes_selecionados = st.sidebar.multiselect("Filtrar por Entidade / Credor:", op
 
 st.sidebar.markdown("---")
 lista_fontes = sorted([str(f).strip() for f in df_base['Fonte_Tratada'].unique() if f and str(f).lower() != 'nan']) if not df_base.empty else []
-default_fonte = [f for f in lista_fontes if "500" in f]
 
 fontes_selecionadas = st.sidebar.multiselect(
     "Filtrar por Fonte de Recurso:",
     options=lista_fontes,
-    default=default_fonte,
-    placeholder="Todas as fontes"
+    default=[],  # Deixado vazio por padrão para não filtrar/zerar os dados no carregamento inicial
+    placeholder="Todas as fontes (Exibe tudo)"
 )
 
 st.sidebar.markdown("---")
@@ -422,9 +421,9 @@ if not df_filtrado.empty:
             df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
     else:
         if coluna_data in df_filtrado.columns and data_inicio and data_fim:
-            # Conversão robusta com dayfirst=True para formato brasileiro e extração do tipo date
-            dt_serie = pd.to_datetime(df_filtrado[coluna_data], dayfirst=True, errors='coerce').dt.date
-            df_filtrado = df_filtrado[(dt_serie >= data_inicio) & (dt_serie <= data_fim)]
+            # Conversão flexível de data para garantir comparação exata de data (sem hora)
+            serie_datas = pd.to_datetime(df_filtrado[coluna_data], format='mixed', dayfirst=True, errors='coerce').dt.date
+            df_filtrado = df_filtrado[(serie_datas >= data_inicio) & (serie_datas <= data_fim)]
 
     if nomes_selecionados:
         df_filtrado = df_filtrado[df_filtrado['Credor_Nome_Tratado'].isin(nomes_selecionados)]
