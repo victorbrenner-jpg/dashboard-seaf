@@ -340,29 +340,13 @@ if not df_base.empty and 'Mes_Extenso' in df_base.columns:
 if not lista_meses_fixa:
     lista_meses_fixa = ['Jan/2026', 'Fev/2026', 'Mar/2026', 'Abr/2026', 'Mai/2026', 'Jun/2026']
     
+# -------------------------------------------------------------------------
+# BARRA LATERAL - FILTROS GLOBAIS COM TRATAMENTO DE STRING SEGURO (ANTI-BUG)
+# -------------------------------------------------------------------------
 import datetime
 import pandas as pd
 import streamlit as st
 
-# -------------------------------------------------------------------------
-# FUNÇÕES UTILITÁRIAS (Anti-NameError)
-# -------------------------------------------------------------------------
-def formatar_brl(valor):
-    """Formata um valor numérico para o padrão monetário brasileiro (R$ X.XXX,XX)."""
-    try:
-        if pd.isna(valor) or valor is None:
-            return "R$ 0,00"
-        return f"R$ {float(valor):,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
-    except Exception:
-        return "R$ 0,00"
-
-# Garante que a lista de meses padrão exista caso não tenha sido declarada previamente
-if 'lista_meses_fixa' not in locals():
-    lista_meses_fixa = ['Jan', 'Fev', 'Mar', 'Abr', 'Mai', 'Jun', 'Jul', 'Ago', 'Set', 'Out', 'Nov', 'Dez']
-
-# -------------------------------------------------------------------------
-# BARRA LATERAL - FILTROS GLOBAIS COM TRATAMENTO DE STRING SEGURO (ANTI-BUG)
-# -------------------------------------------------------------------------
 st.sidebar.markdown("### 🏛️ Filtros Globais")
 st.sidebar.markdown("---")
 
@@ -383,12 +367,12 @@ data_fim = None
 if tipo_filtro_data == "Por Mês de Competência":
     meses_selecionados = st.sidebar.multiselect(
         "Filtrar Período de Competência:", 
-        options=lista_meses_fixa, 
+        options=lista_meses_fixa if 'lista_meses_fixa' in locals() else [], 
         default=[]
     )
 else:
     if not df_base.empty and coluna_data in df_base.columns:
-        # Garante conversão da coluna "Data Pagamento" para formato data correto (padrão brasileiro DD/MM/YYYY)
+        # Garante conversão da coluna "Data Pagamento" para formato data correto
         datas_convertidas = pd.to_datetime(df_base[coluna_data], dayfirst=True, errors='coerce').dropna()
         data_min = datas_convertidas.min().date() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
         data_max = datas_convertidas.max().date() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
@@ -434,35 +418,32 @@ else:
 
 st.sidebar.markdown("---")
 
-# -------------------------------------------------------------------------
-# APLICAÇÃO DOS FILTROS EM CASCATA
-# -------------------------------------------------------------------------
+# --- APLICAÇÃO DOS FILTROS EM CASCATA ---
 df_filtrado = df_base.copy() if not df_base.empty else pd.DataFrame()
 
 if not df_filtrado.empty:
     if tipo_filtro_data == "Por Mês de Competência":
-        if meses_selecionados and 'Mes_Extenso' in df_filtrado.columns:
+        if meses_selecionados:
             df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
     else:
         if coluna_data in df_filtrado.columns and data_inicio and data_fim:
-            # Converte a coluna "Data Pagamento" e aplica o intervalo
+            # Converte a coluna "Data Pagamento" e faz a comparação direta das datas
             dt_serie = pd.to_datetime(df_filtrado[coluna_data], dayfirst=True, errors='coerce').dt.date
             df_filtrado = df_filtrado[(dt_serie >= data_inicio) & (dt_serie <= data_fim)]
 
-    if nomes_selecionados and 'Credor_Nome_Tratado' in df_filtrado.columns:
+    if nomes_selecionados:
         df_filtrado = df_filtrado[df_filtrado['Credor_Nome_Tratado'].isin(nomes_selecionados)]
-    if fontes_selecionadas and 'Fonte_Tratada' in df_filtrado.columns:
+    if fontes_selecionadas:
         df_filtrado = df_filtrado[df_filtrado['Fonte_Tratada'].isin(fontes_selecionadas)]
     if objeto_selecionado and coluna_objeto in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado[coluna_objeto].isin(objeto_selecionado)]
 
 # -------------------------------------------------------------------------
-# BLOCO: DEMONSTRATIVO CONSOLIDADO POR FONTE DE RECURSO
+# NOVO BLOCO: REQUISITADO - DEMONSTRATIVO CONSOLIDADO POR FONTE DE RECURSO
 # -------------------------------------------------------------------------
 st.markdown("### 🏦 2. Distribuição Mensal Consolidada por Fonte de Recurso")
 
 if not df_filtrado.empty:
-    # 1. Pivotagem da matriz por fonte e mês
     df_matriz_fonte = df_filtrado.pivot_table(
         index='Fonte_Tratada',
         columns='Mes_Extenso',
@@ -471,16 +452,13 @@ if not df_filtrado.empty:
         fill_value=0.0
     ).reset_index()
 
-    # Garantir que todos os meses da lista fixa fiquem presentes na estrutura de colunas
     for m in lista_meses_fixa:
         if m not in df_matriz_fonte.columns:
             df_matriz_fonte[m] = 0.0
-
-    # 2. Cálculo do Total Geral e ordenação
+            
     df_matriz_fonte['Total Geral'] = df_matriz_fonte[lista_meses_fixa].sum(axis=1)
     df_matriz_fonte = df_matriz_fonte.sort_values(by='Total Geral', ascending=False)
 
-    # 3. Construção do corpo HTML e acumuladores
     linhas_fonte_html = ""
     totais_meses_fonte = {m: 0.0 for m in lista_meses_fixa + ['Total Geral']}
 
@@ -496,15 +474,14 @@ if not df_filtrado.empty:
     for m in lista_meses_fixa + ['Total Geral']:
         valores_totais_fonte += f"<td>{formatar_brl(totais_meses_fonte[m])}</td>"
 
-    cabecalhos_meses_fonte = "".join([f"<th style='width: 7%;'>{mes}</th>" for mes in lista_meses_fixa])
+    cabecalhos_meses_fonte = "".join([f"<th style='width: 10%;'>{mes}</th>" for mes in lista_meses_fixa])
 
-    # 4. Renderização do container HTML da Tabela Executiva
     html_fontes_resumo = (
         f"<div class='tabela-container'>"
         f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #1d3557 0%, #002b49 100%);'>💰 Origem dos Recursos e Fluxo de Saída Monetária</div>"
         f"<table class='html-executiva'>"
         f"<thead><tr>"
-        f"<th style='width: 25%;'>FONTE DE RECURSO</th>"
+        f"<th style='width: 30%;'>FONTE DE RECURSO</th>"
         f"{cabecalhos_meses_fonte}"
         f"<th style='width: 10%;'>Total Geral</th>"
         f"</tr></thead>"
@@ -513,8 +490,6 @@ if not df_filtrado.empty:
         f"</tbody></table></div>"
     )
     st.markdown(html_fontes_resumo, unsafe_allow_html=True)
-else:
-    st.info("Nenhum dado encontrado para os filtros selecionados.")
 
 st.markdown("---")
 
