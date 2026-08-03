@@ -343,23 +343,22 @@ if not lista_meses_fixa:
 # -------------------------------------------------------------------------
 # BARRA LATERAL - FILTROS GLOBAIS COM TRATAMENTO DE STRING SEGURO (ANTI-BUG)
 # -------------------------------------------------------------------------
-import os
 import datetime
+import pandas as pd
+import streamlit as st
 
 st.sidebar.markdown("### 🏛️ Filtros Globais")
 st.sidebar.markdown("---")
 
-# 1. Opção de escolha do tipo de filtro (Bolinha / Radio Button)
 tipo_filtro_data = st.sidebar.radio(
     "Como deseja filtrar o período?",
     options=["Por Mês de Competência", "Por Intervalo de Datas"],
-    index=0
+    index=0,
+    key="tipo_filtro_periodo"
 )
 
-# Coluna contendo as datas para o filtro de intervalo (Ajuste se o nome for diferente)
-coluna_data = 'Data_Pagamento' 
+coluna_data = 'Data_Pagamento'  # ⚠️ CERTIFIQUE-SE QUE ESTA COLUNA EXISTE NO SEU DF_BASE
 
-# 2. Renderização condicional dos componentes de filtro
 meses_selecionados = []
 data_inicio = None
 data_fim = None
@@ -367,15 +366,14 @@ data_fim = None
 if tipo_filtro_data == "Por Mês de Competência":
     meses_selecionados = st.sidebar.multiselect(
         "Filtrar Período de Competência:", 
-        options=lista_meses_fixa, 
+        options=lista_meses_fixa if 'lista_meses_fixa' in locals() else [], 
         default=[]
     )
 else:
-    # Trata os limites de datas para o st.date_input
     if not df_base.empty and coluna_data in df_base.columns:
-        df_base[coluna_data] = pd.to_datetime(df_base[coluna_data], errors='coerce')
-        data_min = df_base[coluna_data].min().date() if pd.notnull(df_base[coluna_data].min()) else datetime.date(2026, 1, 1)
-        data_max = df_base[coluna_data].max().date() if pd.notnull(df_base[coluna_data].max()) else datetime.date(2026, 12, 31)
+        datas_convertidas = pd.to_datetime(df_base[coluna_data], errors='coerce').dropna()
+        data_min = datas_convertidas.min().date() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
+        data_max = datas_convertidas.max().date() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
     else:
         data_min = datetime.date(2026, 1, 1)
         data_max = datetime.date(2026, 12, 31)
@@ -388,12 +386,10 @@ else:
 
 st.sidebar.markdown("---")
 
-# Lista de Credores com Tratamento Robusto de Nulos
 nomes_disponiveis = sorted([str(n).strip() for n in df_base['Credor_Nome_Tratado'].unique() if n and str(n).lower() != 'nan']) if not df_base.empty else []
 nomes_selecionados = st.sidebar.multiselect("Filtrar por Entidade / Credor:", options=nomes_disponiveis, default=[])
 
 st.sidebar.markdown("---")
-# Lista de Fontes com Tratamento Robusto de Nulos
 lista_fontes = sorted([str(f).strip() for f in df_base['Fonte_Tratada'].unique() if f and str(f).lower() != 'nan']) if not df_base.empty else []
 default_fonte = [f for f in lista_fontes if "500" in f]
 
@@ -422,17 +418,16 @@ st.sidebar.markdown("---")
 
 # --- APLICAÇÃO DOS FILTROS EM CASCATA ---
 df_filtrado = df_base.copy() if not df_base.empty else pd.DataFrame()
+
 if not df_filtrado.empty:
-    # Lógica condicional de filtragem da data
     if tipo_filtro_data == "Por Mês de Competência":
         if meses_selecionados:
             df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
     else:
         if coluna_data in df_filtrado.columns and data_inicio and data_fim:
-            df_filtrado = df_filtrado[
-                (df_filtrado[coluna_data].dt.date >= data_inicio) & 
-                (df_filtrado[coluna_data].dt.date <= data_fim)
-            ]
+            # Converte e filtra estritamente por intervalo de datas
+            dt_serie = pd.to_datetime(df_filtrado[coluna_data], errors='coerce').dt.date
+            df_filtrado = df_filtrado[(dt_serie >= data_inicio) & (dt_serie <= data_fim)]
 
     if nomes_selecionados:
         df_filtrado = df_filtrado[df_filtrado['Credor_Nome_Tratado'].isin(nomes_selecionados)]
@@ -483,6 +478,17 @@ st.markdown("<br>", unsafe_allow_html=True)
 st.markdown("### 📋 1. Demonstrativo Analítico por tipo de Despesa")
 
 if not df_filtrado.empty:
+    # ⚠️ DETERMINA QUAIS COLUNAS DE MESES DEVEM APARECER NA TABELA
+    if tipo_filtro_data == "Por Mês de Competência" and meses_selecionados:
+        meses_exibicao = [m for m in lista_meses_fixa if m in meses_selecionados]
+    else:
+        # Pega apenas os meses presentes nos dados filtrados (respeitando a ordem do ano)
+        meses_presentes = df_filtrado['Mes_Extenso'].unique()
+        meses_exibicao = [m for m in lista_meses_fixa if m in meses_presentes]
+
+    if not meses_exibicao:
+        meses_exibicao = lista_meses_fixa
+
     df_matriz = df_filtrado.pivot_table(
         index=['Despesa_Tratada', 'Grupo_Tratado'],
         columns='Mes_Extenso',
@@ -491,11 +497,11 @@ if not df_filtrado.empty:
         fill_value=0.0
     ).reset_index()
 
-    for m in lista_meses_fixa:
+    for m in meses_exibicao:
         if m not in df_matriz.columns:
             df_matriz[m] = 0.0
             
-    df_matriz['Total Geral'] = df_matriz[lista_meses_fixa].sum(axis=1)
+    df_matriz['Total Geral'] = df_matriz[meses_exibicao].sum(axis=1)
 
     def renderizar_tabela_simetrica_html(df_origem, chave_natureza, grupos_obrigatorios, titulo_bloco, cor_hexa):
         linhas = []
@@ -505,27 +511,27 @@ if not df_filtrado.empty:
                 linhas.append(match.iloc[0].to_dict())
             else:
                 nova_linha = {'Despesa_Tratada': chave_natureza, 'Grupo_Tratado': gnd}
-                for col_m in lista_meses_fixa + ['Total Geral']:
+                for col_m in meses_exibicao + ['Total Geral']:
                     nova_linha[col_m] = 0.0
                 linhas.append(nova_linha)
         
         linhas_corpo_html = ""
-        totais_colunas = {m: 0.0 for m in lista_meses_fixa + ['Total Geral']}
+        totais_colunas = {m: 0.0 for m in meses_exibicao + ['Total Geral']}
         
         for row in linhas:
             colunas_valores = ""
-            for m in lista_meses_fixa + ['Total Geral']:
-                val = float(row[m])
+            for m in meses_exibicao + ['Total Geral']:
+                val = float(row.get(m, 0.0))
                 totais_colunas[m] += val
                 colunas_valores += f"<td>{formatar_brl(val)}</td>"
             
             linhas_corpo_html += f"<tr><td><span class='gnd-badge' style='background-color: {cor_hexa};'></span>{row['Grupo_Tratado']}</td>{colunas_valores}</tr>"
             
         valores_totais_gnd = ""
-        for m in lista_meses_fixa + ['Total Geral']:
+        for m in meses_exibicao + ['Total Geral']:
             valores_totais_gnd += f"<td>{formatar_brl(totais_colunas[m])}</td>"
             
-        cabecalhos_meses_html = "".join([f"<th style='width: 10%;'>{mes}</th>" for mes in lista_meses_fixa])
+        cabecalhos_meses_html = "".join([f"<th>{mes}</th>" for mes in meses_exibicao])
 
         html_completo = (
             f"<div class='tabela-container'>"
@@ -534,7 +540,7 @@ if not df_filtrado.empty:
             f"<thead><tr>"
             f"<th style='width: 30%;'>GRUPO DO GASTO (GND)</th>"
             f"{cabecalhos_meses_html}"
-            f"<th style='width: 10%;'>Total Geral</th>"
+            f"<th>Total Geral</th>"
             f"</tr></thead>"
             f"<tbody>{linhas_corpo_html}"
             f"<tr class='linha-total-html'><td>📊 TOTAL GERAL DA NATUREZA</td>{valores_totais_gnd}</tr>"
