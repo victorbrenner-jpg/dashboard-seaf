@@ -343,10 +343,6 @@ if not lista_meses_fixa:
 # -------------------------------------------------------------------------
 # BARRA LATERAL - FILTROS GLOBAIS COM TRATAMENTO DE STRING SEGURO (ANTI-BUG)
 # -------------------------------------------------------------------------
-import datetime
-import pandas as pd
-import streamlit as st
-
 st.sidebar.markdown("### 🏛️ Filtros Globais")
 st.sidebar.markdown("---")
 
@@ -357,7 +353,8 @@ tipo_filtro_data = st.sidebar.radio(
     key="tipo_filtro_periodo"
 )
 
-coluna_data = 'Data Pagamento'  # ⚠️ CERTIFIQUE-SE QUE ESTA COLUNA EXISTE NO SEU DF_BASE
+# Ajustado para usar 'Data Emissão' (coluna presente no DataFrame)
+coluna_data = 'Data Emissão'
 
 meses_selecionados = []
 data_inicio = None
@@ -371,7 +368,7 @@ if tipo_filtro_data == "Por Mês de Competência":
     )
 else:
     if not df_base.empty and coluna_data in df_base.columns:
-        datas_convertidas = pd.to_datetime(df_base[coluna_data], errors='coerce').dropna()
+        datas_convertidas = pd.to_datetime(df_base[coluna_data], dayfirst=True, errors='coerce').dropna()
         data_min = datas_convertidas.min().date() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
         data_max = datas_convertidas.max().date() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
     else:
@@ -380,9 +377,9 @@ else:
 
     col_dt1, col_dt2 = st.sidebar.columns(2)
     with col_dt1:
-        data_inicio = st.date_input("Data Inicial:", value=data_min, format="DD/MM/YYYY")
+        data_inicio = st.date_input("Data Inicial:", value=data_min, format="DD/MM/YYYY", key="dt_ini_input")
     with col_dt2:
-        data_fim = st.date_input("Data Final:", value=data_max, format="DD/MM/YYYY")
+        data_fim = st.date_input("Data Final:", value=data_max, format="DD/MM/YYYY", key="dt_fim_input")
 
 st.sidebar.markdown("---")
 
@@ -425,8 +422,8 @@ if not df_filtrado.empty:
             df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
     else:
         if coluna_data in df_filtrado.columns and data_inicio and data_fim:
-            # Converte e filtra estritamente por intervalo de datas
-            dt_serie = pd.to_datetime(df_filtrado[coluna_data], errors='coerce').dt.date
+            # Conversão robusta com dayfirst=True para formato brasileiro
+            dt_serie = pd.to_datetime(df_filtrado[coluna_data], dayfirst=True, errors='coerce').dt.date
             df_filtrado = df_filtrado[(dt_serie >= data_inicio) & (dt_serie <= data_fim)]
 
     if nomes_selecionados:
@@ -473,6 +470,78 @@ with col_kpi4:
     st.markdown(f"<div class='metric-card'><p style='color: #d62828; font-size: 11px; font-weight: bold; margin:0;'>EXERC. ANTERIORES (DEA)</p><h3 style='color: #d62828; margin: 5px 0;'>{formatar_brl(total_dea)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Reconhecimento de Passivo</p></div>", unsafe_allow_html=True)
 
 st.markdown("<br>", unsafe_allow_html=True)
+
+# --- BLOCO 2: DEMONSTRATIVO DE DESPESAS SEPARADO POR TABELAS MESTRE ---
+st.markdown("### 📋 1. Demonstrativo Analítico por tipo de Despesa")
+
+if not df_filtrado.empty:
+    if tipo_filtro_data == "Por Mês de Competência" and meses_selecionados:
+        meses_exibicao = [m for m in lista_meses_fixa if m in meses_selecionados]
+    else:
+        meses_presentes = df_filtrado['Mes_Extenso'].unique()
+        meses_exibicao = [m for m in lista_meses_fixa if m in meses_presentes]
+
+    if not meses_exibicao:
+        meses_exibicao = lista_meses_fixa
+
+    df_matriz = df_filtrado.pivot_table(
+        index=['Despesa_Tratada', 'Grupo_Tratado'],
+        columns='Mes_Extenso',
+        values='Valor_Limpo',
+        aggfunc='sum',
+        fill_value=0.0
+    ).reset_index()
+
+    for m in meses_exibicao:
+        if m not in df_matriz.columns:
+            df_matriz[m] = 0.0
+            
+    df_matriz['Total Geral'] = df_matriz[meses_exibicao].sum(axis=1)
+
+    def renderizar_tabela_simetrica_html(df_origem, chave_natureza, grupos_obrigatorios, titulo_bloco, cor_hexa):
+        linhas = []
+        for gnd in grupos_obrigatorios:
+            match = df_origem[(df_origem['Despesa_Tratada'] == chave_natureza) & (df_origem['Grupo_Tratado'] == gnd)]
+            if not match.empty:
+                linhas.append(match.iloc[0].to_dict())
+            else:
+                nova_linha = {'Despesa_Tratada': chave_natureza, 'Grupo_Tratado': gnd}
+                for col_m in meses_exibicao + ['Total Geral']:
+                    nova_linha[col_m] = 0.0
+                linhas.append(nova_linha)
+        
+        linhas_corpo_html = ""
+        totais_colunas = {m: 0.0 for m in meses_exibicao + ['Total Geral']}
+        
+        for row in linhas:
+            colunas_valores = ""
+            for m in meses_exibicao + ['Total Geral']:
+                val = float(row.get(m, 0.0))
+                totais_colunas[m] += val
+                colunas_valores += f"<td>{formatar_brl(val)}</td>"
+            
+            linhas_corpo_html += f"<tr><td><span class='gnd-badge' style='background-color: {cor_hexa};'></span>{row['Grupo_Tratado']}</td>{colunas_valores}</tr>"
+            
+        valores_totais_gnd = ""
+        for m in meses_exibicao + ['Total Geral']:
+            valores_totais_gnd += f"<td>{formatar_brl(totais_colunas[m])}</td>"
+            
+        cabecalhos_meses_html = "".join([f"<th>{mes}</th>" for mes in meses_exibicao])
+
+        html_completo = (
+            f"<div class='tabela-container'>"
+            f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, {cor_hexa} 0%, #002b49 100%);'>{titulo_bloco}</div>"
+            f"<table class='html-executiva'>"
+            f"<thead><tr>"
+            f"<th style='width: 30%;'>GRUPO DO GASTO (GND)</th>"
+            f"{cabecalhos_meses_html}"
+            f"<th>Total Geral</th>"
+            f"</tr></thead>"
+            f"<tbody>{linhas_corpo_html}"
+            f"<tr class='linha-total-html'><td>📊 TOTAL GERAL DA NATUREZA</td>{valores_totais_gnd}</tr>"
+            f"</tbody></table></div>"
+        )
+        st.markdown(html_completo, unsafe_allow_html=True)
 
 # --- BLOCO 2: DEMONSTRATIVO DE DESPESAS SEPARADO POR TABELAS MESTRE ---
 st.markdown("### 📋 1. Demonstrativo Analítico por tipo de Despesa")
