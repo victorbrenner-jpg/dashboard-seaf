@@ -340,15 +340,53 @@ if not df_base.empty and 'Mes_Extenso' in df_base.columns:
 if not lista_meses_fixa:
     lista_meses_fixa = ['Jan/2026', 'Fev/2026', 'Mar/2026', 'Abr/2026', 'Mai/2026', 'Jun/2026']
     
-import os
-
 # -------------------------------------------------------------------------
 # BARRA LATERAL - FILTROS GLOBAIS COM TRATAMENTO DE STRING SEGURO (ANTI-BUG)
 # -------------------------------------------------------------------------
+import os
+import datetime
+
 st.sidebar.markdown("### 🏛️ Filtros Globais")
 st.sidebar.markdown("---")
 
-meses_selecionados = st.sidebar.multiselect("Filtrar Período de Competência:", options=lista_meses_fixa, default=[])
+# 1. Opção de escolha do tipo de filtro (Bolinha / Radio Button)
+tipo_filtro_data = st.sidebar.radio(
+    "Como deseja filtrar o período?",
+    options=["Por Mês de Competência", "Por Intervalo de Datas"],
+    index=0
+)
+
+# Coluna contendo as datas para o filtro de intervalo (Ajuste se o nome for diferente)
+coluna_data = 'Data_Pagamento' 
+
+# 2. Renderização condicional dos componentes de filtro
+meses_selecionados = []
+data_inicio = None
+data_fim = None
+
+if tipo_filtro_data == "Por Mês de Competência":
+    meses_selecionados = st.sidebar.multiselect(
+        "Filtrar Período de Competência:", 
+        options=lista_meses_fixa, 
+        default=[]
+    )
+else:
+    # Trata os limites de datas para o st.date_input
+    if not df_base.empty and coluna_data in df_base.columns:
+        df_base[coluna_data] = pd.to_datetime(df_base[coluna_data], errors='coerce')
+        data_min = df_base[coluna_data].min().date() if pd.notnull(df_base[coluna_data].min()) else datetime.date(2026, 1, 1)
+        data_max = df_base[coluna_data].max().date() if pd.notnull(df_base[coluna_data].max()) else datetime.date(2026, 12, 31)
+    else:
+        data_min = datetime.date(2026, 1, 1)
+        data_max = datetime.date(2026, 12, 31)
+
+    col_dt1, col_dt2 = st.sidebar.columns(2)
+    with col_dt1:
+        data_inicio = st.date_input("Data Inicial:", value=data_min, format="DD/MM/YYYY")
+    with col_dt2:
+        data_fim = st.date_input("Data Final:", value=data_max, format="DD/MM/YYYY")
+
+st.sidebar.markdown("---")
 
 # Lista de Credores com Tratamento Robusto de Nulos
 nomes_disponiveis = sorted([str(n).strip() for n in df_base['Credor_Nome_Tratado'].unique() if n and str(n).lower() != 'nan']) if not df_base.empty else []
@@ -385,8 +423,17 @@ st.sidebar.markdown("---")
 # --- APLICAÇÃO DOS FILTROS EM CASCATA ---
 df_filtrado = df_base.copy() if not df_base.empty else pd.DataFrame()
 if not df_filtrado.empty:
-    if meses_selecionados:
-        df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
+    # Lógica condicional de filtragem da data
+    if tipo_filtro_data == "Por Mês de Competência":
+        if meses_selecionados:
+            df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
+    else:
+        if coluna_data in df_filtrado.columns and data_inicio and data_fim:
+            df_filtrado = df_filtrado[
+                (df_filtrado[coluna_data].dt.date >= data_inicio) & 
+                (df_filtrado[coluna_data].dt.date <= data_fim)
+            ]
+
     if nomes_selecionados:
         df_filtrado = df_filtrado[df_filtrado['Credor_Nome_Tratado'].isin(nomes_selecionados)]
     if fontes_selecionadas:
@@ -421,9 +468,7 @@ else:
     qtd_registros = 0
 
 with col_kpi1:
-    # Formata com a vírgula nativa e depois troca por ponto para bater com o padrão BR
     qtd_formatada_br = f"{qtd_registros:,}".replace(",", ".")
-    
     st.markdown(f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL PAGO</p><h3 style='color: #002b49; margin: 5px 0;'>{formatar_brl(total_real_calculado)}</h3><p style='color: #28a745; font-size: 11px; margin:0;'>📋 Registros: {qtd_formatada_br}</p></div>", unsafe_allow_html=True)
 with col_kpi2:
     st.markdown(f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>CORRENTE</p><h3 style='color: #028090; margin: 5px 0;'>{formatar_brl(total_corrente)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Dotação do Ano</p></div>", unsafe_allow_html=True)
