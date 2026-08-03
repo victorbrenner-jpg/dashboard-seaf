@@ -442,7 +442,8 @@ def formatar_brl(valor):
 
 # --- CABEÇALHO INSTITUCIONAL SEAF ---
 st.markdown("<h2 class='div-titulo'>📊 Painel de Controle de Pagamentos — Exercício 2026</h2>", unsafe_allow_html=True)
-st.markdown("##### *Secretaria Executiva de Finanças (SEAF) — Relatório de Prestação de Contas*")
+st.markdown("##### *Secretaria Executiva de Administração e Finanças (SEAF)*")
+st.markdown("##### *Gerência Financeira (GFIN)*")
 st.markdown("---")
 
 # --- BLOCO 1: PAINEL DE METRICAS GERENCIAIS ---
@@ -721,7 +722,7 @@ if not df_filtrado.empty:
 
     # --- DEMONSTRATIVO POR CREDOR ---
     st.markdown("<br>", unsafe_allow_html=True)
-    st.markdown("### 🏢 4. Detalhamento de Pagamentos por Credor / Entidade")
+    st.markdown("### 🏢 4. Detalhamento de Pagamentos por Credor")
     
     df_matriz_credor = df_filtrado.pivot_table(
         index='Credor_Nome_Tratado',
