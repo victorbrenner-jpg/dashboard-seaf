@@ -357,7 +357,7 @@ tipo_filtro_data = st.sidebar.radio(
     key="tipo_filtro_periodo"
 )
 
-coluna_data = 'Data_Pagamento'  # ⚠️ CERTIFIQUE-SE QUE ESTA COLUNA EXISTE NO SEU DF_BASE
+coluna_data = 'Data Pagamento'  # ⚠️ CERTIFIQUE-SE QUE ESTA COLUNA EXISTE NO SEU DF_BASE
 
 meses_selecionados = []
 data_inicio = None
