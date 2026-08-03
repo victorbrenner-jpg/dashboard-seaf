@@ -357,7 +357,8 @@ tipo_filtro_data = st.sidebar.radio(
     key="tipo_filtro_periodo"
 )
 
-coluna_data = 'Data Pagamento'  # ⚠️ CERTIFIQUE-SE QUE ESTA COLUNA EXISTE NO SEU DF_BASE
+# ⚠️ NOME EXATO DA COLUNA NA SUA PLANILHA: "Data Pagamento" (com espaço)
+coluna_data = 'Data Pagamento' 
 
 meses_selecionados = []
 data_inicio = None
@@ -371,7 +372,8 @@ if tipo_filtro_data == "Por Mês de Competência":
     )
 else:
     if not df_base.empty and coluna_data in df_base.columns:
-        datas_convertidas = pd.to_datetime(df_base[coluna_data], errors='coerce').dropna()
+        # Garante conversão da coluna "Data Pagamento" para formato data correto
+        datas_convertidas = pd.to_datetime(df_base[coluna_data], dayfirst=True, errors='coerce').dropna()
         data_min = datas_convertidas.min().date() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
         data_max = datas_convertidas.max().date() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
     else:
@@ -380,9 +382,9 @@ else:
 
     col_dt1, col_dt2 = st.sidebar.columns(2)
     with col_dt1:
-        data_inicio = st.date_input("Data Inicial:", value=data_min, format="DD/MM/YYYY")
+        data_inicio = st.date_input("Data Inicial:", value=data_min, format="DD/MM/YYYY", key="dt_ini_input")
     with col_dt2:
-        data_fim = st.date_input("Data Final:", value=data_max, format="DD/MM/YYYY")
+        data_fim = st.date_input("Data Final:", value=data_max, format="DD/MM/YYYY", key="dt_fim_input")
 
 st.sidebar.markdown("---")
 
@@ -425,8 +427,8 @@ if not df_filtrado.empty:
             df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
     else:
         if coluna_data in df_filtrado.columns and data_inicio and data_fim:
-            # Converte e filtra estritamente por intervalo de datas
-            dt_serie = pd.to_datetime(df_filtrado[coluna_data], errors='coerce').dt.date
+            # Converte a coluna "Data Pagamento" e faz a comparação direta das datas
+            dt_serie = pd.to_datetime(df_filtrado[coluna_data], dayfirst=True, errors='coerce').dt.date
             df_filtrado = df_filtrado[(dt_serie >= data_inicio) & (dt_serie <= data_fim)]
 
     if nomes_selecionados:
@@ -435,127 +437,6 @@ if not df_filtrado.empty:
         df_filtrado = df_filtrado[df_filtrado['Fonte_Tratada'].isin(fontes_selecionadas)]
     if objeto_selecionado and coluna_objeto in df_filtrado.columns:
         df_filtrado = df_filtrado[df_filtrado[coluna_objeto].isin(objeto_selecionado)]
-
-st.sidebar.markdown("### ⚙️ Atualizar Dados do Painel")
-if st.sidebar.button("🔄 Incorporar Novos Pagamentos do CSV"):
-    atualizar_banco_via_csv()
-    st.rerun()
-
-def formatar_brl(valor):
-    return f"R$ {valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
-
-# --- CABEÇALHO INSTITUCIONAL SEAF ---
-st.markdown("<h2 class='div-titulo'>📊 Painel de Controle de Pagamentos — Exercício 2026</h2>", unsafe_allow_html=True)
-st.markdown("##### *Secretaria Executiva de Finanças (SEAF) — Relatório de Prestação de Contas*")
-st.markdown("---")
-
-# --- BLOCO 1: PAINEL DE METRICAS GERENCIAIS ---
-col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
-
-if not df_filtrado.empty:
-    total_real_calculado = float(df_filtrado['Valor_Limpo'].sum())
-    total_corrente = float(df_filtrado[df_filtrado['Despesa_Tratada'] == 'CORRENTE']['Valor_Limpo'].sum())
-    total_rp = float(df_filtrado[df_filtrado['Despesa_Tratada'] == 'RP']['Valor_Limpo'].sum())
-    total_dea = float(df_filtrado[df_filtrado['Despesa_Tratada'] == 'DEA']['Valor_Limpo'].sum())
-    qtd_registros = int(df_filtrado.shape[0])
-else:
-    total_real_calculado = total_corrente = total_rp = total_dea = 0.0
-    qtd_registros = 0
-
-with col_kpi1:
-    qtd_formatada_br = f"{qtd_registros:,}".replace(",", ".")
-    st.markdown(f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL PAGO</p><h3 style='color: #002b49; margin: 5px 0;'>{formatar_brl(total_real_calculado)}</h3><p style='color: #28a745; font-size: 11px; margin:0;'>📋 Registros: {qtd_formatada_br}</p></div>", unsafe_allow_html=True)
-with col_kpi2:
-    st.markdown(f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>CORRENTE</p><h3 style='color: #028090; margin: 5px 0;'>{formatar_brl(total_corrente)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Dotação do Ano</p></div>", unsafe_allow_html=True)
-with col_kpi3:
-    st.markdown(f"<div class='metric-card'><p style='color: #f77f00; font-size: 11px; font-weight: bold; margin:0;'>RESTOS A PAGAR (RP)</p><h3 style='color: #f77f00; margin: 5px 0;'>{formatar_brl(total_rp)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Exercícios Anteriores</p></div>", unsafe_allow_html=True)
-with col_kpi4:
-    st.markdown(f"<div class='metric-card'><p style='color: #d62828; font-size: 11px; font-weight: bold; margin:0;'>EXERC. ANTERIORES (DEA)</p><h3 style='color: #d62828; margin: 5px 0;'>{formatar_brl(total_dea)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Reconhecimento de Passivo</p></div>", unsafe_allow_html=True)
-
-st.markdown("<br>", unsafe_allow_html=True)
-
-# --- BLOCO 2: DEMONSTRATIVO DE DESPESAS SEPARADO POR TABELAS MESTRE ---
-st.markdown("### 📋 1. Demonstrativo Analítico por tipo de Despesa")
-
-if not df_filtrado.empty:
-    # ⚠️ DETERMINA QUAIS COLUNAS DE MESES DEVEM APARECER NA TABELA
-    if tipo_filtro_data == "Por Mês de Competência" and meses_selecionados:
-        meses_exibicao = [m for m in lista_meses_fixa if m in meses_selecionados]
-    else:
-        # Pega apenas os meses presentes nos dados filtrados (respeitando a ordem do ano)
-        meses_presentes = df_filtrado['Mes_Extenso'].unique()
-        meses_exibicao = [m for m in lista_meses_fixa if m in meses_presentes]
-
-    if not meses_exibicao:
-        meses_exibicao = lista_meses_fixa
-
-    df_matriz = df_filtrado.pivot_table(
-        index=['Despesa_Tratada', 'Grupo_Tratado'],
-        columns='Mes_Extenso',
-        values='Valor_Limpo',
-        aggfunc='sum',
-        fill_value=0.0
-    ).reset_index()
-
-    for m in meses_exibicao:
-        if m not in df_matriz.columns:
-            df_matriz[m] = 0.0
-            
-    df_matriz['Total Geral'] = df_matriz[meses_exibicao].sum(axis=1)
-
-    def renderizar_tabela_simetrica_html(df_origem, chave_natureza, grupos_obrigatorios, titulo_bloco, cor_hexa):
-        linhas = []
-        for gnd in grupos_obrigatorios:
-            match = df_origem[(df_origem['Despesa_Tratada'] == chave_natureza) & (df_origem['Grupo_Tratado'] == gnd)]
-            if not match.empty:
-                linhas.append(match.iloc[0].to_dict())
-            else:
-                nova_linha = {'Despesa_Tratada': chave_natureza, 'Grupo_Tratado': gnd}
-                for col_m in meses_exibicao + ['Total Geral']:
-                    nova_linha[col_m] = 0.0
-                linhas.append(nova_linha)
-        
-        linhas_corpo_html = ""
-        totais_colunas = {m: 0.0 for m in meses_exibicao + ['Total Geral']}
-        
-        for row in linhas:
-            colunas_valores = ""
-            for m in meses_exibicao + ['Total Geral']:
-                val = float(row.get(m, 0.0))
-                totais_colunas[m] += val
-                colunas_valores += f"<td>{formatar_brl(val)}</td>"
-            
-            linhas_corpo_html += f"<tr><td><span class='gnd-badge' style='background-color: {cor_hexa};'></span>{row['Grupo_Tratado']}</td>{colunas_valores}</tr>"
-            
-        valores_totais_gnd = ""
-        for m in meses_exibicao + ['Total Geral']:
-            valores_totais_gnd += f"<td>{formatar_brl(totais_colunas[m])}</td>"
-            
-        cabecalhos_meses_html = "".join([f"<th>{mes}</th>" for mes in meses_exibicao])
-
-        html_completo = (
-            f"<div class='tabela-container'>"
-            f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, {cor_hexa} 0%, #002b49 100%);'>{titulo_bloco}</div>"
-            f"<table class='html-executiva'>"
-            f"<thead><tr>"
-            f"<th style='width: 30%;'>GRUPO DO GASTO (GND)</th>"
-            f"{cabecalhos_meses_html}"
-            f"<th>Total Geral</th>"
-            f"</tr></thead>"
-            f"<tbody>{linhas_corpo_html}"
-            f"<tr class='linha-total-html'><td>📊 TOTAL GERAL DA NATUREZA</td>{valores_totais_gnd}</tr>"
-            f"</tbody></table></div>"
-        )
-        st.markdown(html_completo, unsafe_allow_html=True)
-
-    renderizar_tabela_simetrica_html(df_matriz, 'CORRENTE', ['3 - OUTRAS DESPESAS CORRENTES', '4 - INVESTIMENTOS'], "🔵 DESPESAS CORRENTES (Dotação Ordinária do Ano)", "#028090")
-    renderizar_tabela_simetrica_html(df_matriz, 'RP', ['3 - OUTRAS DESPESAS CORRENTES', '4 - INVESTIMENTOS'], "🟠 RESTOS A PAGAR - RP (Compromissos de Anos Anteriores)", "#f77f00")
-    renderizar_tabela_simetrica_html(df_matriz, 'DEA', ['3 - OUTRAS DESPESAS CORRENTES', '4 - INVESTIMENTOS'], "🔴 DESPESAS DE EXERCÍCIOS ANTERIORES - DEA (Reconhecimento de Passivo)", "#d62828")
-
-else:
-    st.info("Nenhum registro financeiro localizado. Verifique os filtros.")
-
-st.markdown("---")
 
 # -------------------------------------------------------------------------
 # NOVO BLOCO: REQUISITADO - DEMONSTRATIVO CONSOLIDADO POR FONTE DE RECURSO
