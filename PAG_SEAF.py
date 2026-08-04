@@ -383,6 +383,15 @@ else:
 
 st.sidebar.markdown("---")
 
+# --- NOVO FILTRO DE TIPO DE DESPESA ---
+opcao_despesa = st.sidebar.selectbox(
+    "Filtrar por Tipo de Despesa:",
+    options=["Todas as Despesas", "CORRENTE (Dotação do Ano)", "RP (Restos a Pagar)", "DEA (Exercícios Anteriores)"],
+    index=0
+)
+
+st.sidebar.markdown("---")
+
 nomes_disponiveis = sorted([str(n).strip() for n in df_base['Credor_Nome_Tratado'].unique() if n and str(n).lower() != 'nan']) if not df_base.empty else []
 nomes_selecionados = st.sidebar.multiselect("Filtrar por Entidade / Credor:", options=nomes_disponiveis, default=[])
 
@@ -416,6 +425,7 @@ st.sidebar.markdown("---")
 df_filtrado = df_base.copy() if not df_base.empty else pd.DataFrame()
 
 if not df_filtrado.empty:
+    # 1. Filtro de Período
     if tipo_filtro_data == "Por Mês de Competência":
         if meses_selecionados:
             df_filtrado = df_filtrado[df_filtrado['Mes_Extenso'].isin(meses_selecionados)]
@@ -425,6 +435,15 @@ if not df_filtrado.empty:
             serie_datas = pd.to_datetime(df_filtrado[coluna_data], format='mixed', dayfirst=True, errors='coerce').dt.date
             df_filtrado = df_filtrado[(serie_datas >= data_inicio) & (serie_datas <= data_fim)]
 
+    # 2. Filtro por Tipo de Despesa (CORRENTE, RP, DEA)
+    if opcao_despesa == "CORRENTE (Dotação do Ano)":
+        df_filtrado = df_filtrado[df_filtrado['Despesa_Tratada'] == 'CORRENTE']
+    elif opcao_despesa == "RP (Restos a Pagar)":
+        df_filtrado = df_filtrado[df_filtrado['Despesa_Tratada'] == 'RP']
+    elif opcao_despesa == "DEA (Exercícios Anteriores)":
+        df_filtrado = df_filtrado[df_filtrado['Despesa_Tratada'] == 'DEA']
+
+    # 3. Demais Filtros
     if nomes_selecionados:
         df_filtrado = df_filtrado[df_filtrado['Credor_Nome_Tratado'].isin(nomes_selecionados)]
     if fontes_selecionadas:
