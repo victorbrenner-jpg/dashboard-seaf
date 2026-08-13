@@ -62,8 +62,8 @@ if "mem_nl_credores" not in st.session_state:
     st.session_state["mem_nl_credores"] = []
 if "mem_nl_fonte" not in st.session_state:
     st.session_state["mem_nl_fonte"] = "Todas as fontes (Exibe tudo)"
-if "mem_nl_objeto" not in st.session_state:
-    st.session_state["mem_nl_objeto"] = "Todos os objetos"
+if "mem_nl_objetos" not in st.session_state:
+    st.session_state["mem_nl_objetos"] = []
 
 # Estilização CSS
 st.markdown(
@@ -639,21 +639,6 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         "Nov/2026",
         "Dez/2026",
     ]
-    lista_meses_fixa = []
-    if not df_base.empty and "Mes_Extenso" in df_base.columns:
-        lista_meses_fixa = [
-            m for m in ordem_meses_ano if m in df_base["Mes_Extenso"].unique()
-        ]
-
-    if not lista_meses_fixa:
-        lista_meses_fixa = [
-            "Jan/2026",
-            "Fev/2026",
-            "Mar/2026",
-            "Abr/2026",
-            "Mai/2026",
-            "Jun/2026",
-        ]
 
     st.sidebar.markdown("#### 🎯 Filtros — Pagamentos (OB)")
 
@@ -671,16 +656,60 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
     )
 
     coluna_data = "Data Emissão"
+    coluna_objeto = "OBJETO"
+
+    # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA OB ---
+    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_cred=False, ign_fnt=False, ign_obj=False):
+        d = df.copy()
+        if d.empty:
+            return d
+
+        # Filtro Data/Mês
+        if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência":
+            if not ign_mes and st.session_state["mem_ob_meses"]:
+                d = d[d["Mes_Extenso"].isin(st.session_state["mem_ob_meses"])]
+        else:
+            if not ign_mes:
+                dt_i = st.session_state["mem_ob_dt_ini"]
+                dt_f = st.session_state["mem_ob_dt_fim"]
+                if dt_i and dt_f:
+                    s_dt = pd.to_datetime(d[coluna_data], format="mixed", dayfirst=True, errors="coerce").dt.date
+                    d = d[(s_dt >= dt_i) & (s_dt <= dt_f)]
+
+        # Filtro Despesa
+        if not ign_dsp:
+            dsp = st.session_state["mem_ob_despesa"]
+            if dsp == "CORRENTE (Dotação do Ano)":
+                d = d[d["Despesa_Tratada"] == "CORRENTE"]
+            elif dsp == "RP (Restos a Pagar)":
+                d = d[d["Despesa_Tratada"] == "RP"]
+            elif dsp == "DEA (Exercícios Anteriores)":
+                d = d[d["Despesa_Tratada"] == "DEA"]
+
+        # Filtro Credores
+        if not ign_cred and st.session_state["mem_ob_credores"]:
+            d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
+
+        # Filtro Fontes
+        if not ign_fnt and st.session_state["mem_ob_fontes"]:
+            d = d[d["Fonte_Tratada"].isin(st.session_state["mem_ob_fontes"])]
+
+        # Filtro Objetos
+        if not ign_obj and st.session_state["mem_ob_objetos"] and coluna_objeto in d.columns:
+            d = d[d[coluna_objeto].isin(st.session_state["mem_ob_objetos"])]
+
+        return d
+
+    # CALCULAR OPÇÕES DINÂMICAS PARA CADA WIDGET TELA OB
+    df_para_meses = filtrar_df_ob(df_base, ign_mes=True)
+    lista_meses_fixa = [m for m in ordem_meses_ano if m in df_para_meses["Mes_Extenso"].unique()] if not df_para_meses.empty else []
+
     meses_selecionados = []
     data_inicio = None
     data_fim = None
 
     if tipo_filtro_data == "Por Mês de Competência":
-        validos_m_ob = [
-            m
-            for m in st.session_state["mem_ob_meses"]
-            if m in lista_meses_fixa
-        ]
+        validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
         meses_selecionados = st.sidebar.multiselect(
             "Filtrar Período de Competência:",
             options=lista_meses_fixa,
@@ -747,7 +776,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     st.sidebar.markdown("---")
 
-    # FILTRO TIPO DE DESPESA
+    # FILTRO TIPO DE DESPESA (Opções estáticas, seleção afeta os demais)
     opcoes_despesa_ob = [
         "Todas as Despesas",
         "CORRENTE (Dotação do Ano)",
@@ -771,15 +800,17 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     st.sidebar.markdown("---")
 
+    # CREDORES DINÂMICOS
+    df_para_credores = filtrar_df_ob(df_base, ign_cred=True)
     nomes_disponiveis = (
         sorted(
             [
                 str(n).strip()
-                for n in df_base["Credor_Nome_Tratado"].unique()
+                for n in df_para_credores["Credor_Nome_Tratado"].unique()
                 if n and str(n).lower() != "nan"
             ]
         )
-        if not df_base.empty
+        if not df_para_credores.empty
         else []
     )
     validos_c_ob = [
@@ -796,15 +827,17 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
     )
 
     st.sidebar.markdown("---")
+    # FONTES DINÂMICAS
+    df_para_fontes = filtrar_df_ob(df_base, ign_fnt=True)
     lista_fontes = (
         sorted(
             [
                 str(f).strip()
-                for f in df_base["Fonte_Tratada"].unique()
+                for f in df_para_fontes["Fonte_Tratada"].unique()
                 if f and str(f).lower() != "nan"
             ]
         )
-        if not df_base.empty
+        if not df_para_fontes.empty
         else []
     )
     validos_f_ob = [
@@ -822,13 +855,14 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
     )
 
     st.sidebar.markdown("---")
-    coluna_objeto = "OBJETO"
+    # OBJETOS DINÂMICOS
+    df_para_objetos = filtrar_df_ob(df_base, ign_obj=True)
 
-    if not df_base.empty and coluna_objeto in df_base.columns:
+    if not df_para_objetos.empty and coluna_objeto in df_para_objetos.columns:
         lista_objetos = sorted(
             [
                 str(obj).strip()
-                for obj in df_base[coluna_objeto].dropna().unique()
+                for obj in df_para_objetos[coluna_objeto].dropna().unique()
                 if str(obj).lower() != "nan"
             ]
         )
@@ -849,44 +883,8 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     st.sidebar.markdown("---")
 
-    df_filtrado = df_base.copy() if not df_base.empty else pd.DataFrame()
-
-    if not df_filtrado.empty:
-        if tipo_filtro_data == "Por Mês de Competência":
-            if meses_selecionados:
-                df_filtrado = df_filtrado[
-                    df_filtrado["Mes_Extenso"].isin(meses_selecionados)
-                ]
-        else:
-            serie_datas = pd.to_datetime(
-                df_filtrado[coluna_data],
-                format="mixed",
-                dayfirst=True,
-                errors="coerce",
-            ).dt.date
-            df_filtrado = df_filtrado[
-                (serie_datas >= data_inicio) & (serie_datas <= data_fim)
-            ]
-
-    if opcao_despesa == "CORRENTE (Dotação do Ano)":
-        df_filtrado = df_filtrado[df_filtrado["Despesa_Tratada"] == "CORRENTE"]
-    elif opcao_despesa == "RP (Restos a Pagar)":
-        df_filtrado = df_filtrado[df_filtrado["Despesa_Tratada"] == "RP"]
-    elif opcao_despesa == "DEA (Exercícios Anteriores)":
-        df_filtrado = df_filtrado[df_filtrado["Despesa_Tratada"] == "DEA"]
-
-    if nomes_selecionados:
-        df_filtrado = df_filtrado[
-            df_filtrado["Credor_Nome_Tratado"].isin(nomes_selecionados)
-        ]
-    if fontes_selecionadas:
-        df_filtrado = df_filtrado[
-            df_filtrado["Fonte_Tratada"].isin(fontes_selecionadas)
-        ]
-    if objeto_selecionado and coluna_objeto in df_filtrado.columns:
-        df_filtrado = df_filtrado[
-            df_filtrado[coluna_objeto].isin(objeto_selecionado)
-        ]
+    # DATAFRAME FINALMENTE FILTRADO TELA OB
+    df_filtrado = filtrar_df_ob(df_base)
 
     st.sidebar.markdown("### 🔄 Atualizar Dados do Painel")
     if st.sidebar.button("🔄 Incorporar Novos Pagamentos do CSV", key="btn_csv_ob"):
@@ -1378,12 +1376,10 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         )
 
     def classificar_grupo_nl(valor):
-        """Converte as diferentes formas de identificação do grupo para GD3/GD4."""
         texto = "" if pd.isna(valor) else str(valor).strip().upper()
         if not texto or texto in {"NÃO INFORMADO", "NAO INFORMADO", "NAN", "NONE", "TODOS"}:
             return "NÃO INFORMADO"
 
-        # Remove acentos apenas nos termos relevantes e deixa a comparação robusta.
         compacto = re.sub(r"[^A-Z0-9]", "", texto)
 
         if (
@@ -1546,9 +1542,6 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             "NÃO INFORMADO"
         )
 
-        # Grupo usado exclusivamente na tela de Liquidação (NL).
-        # Primeiro considera o grupo relacionado à NE; quando ele não existe,
-        # utiliza o grupo informado diretamente na planilha das NLs.
         df_merged["Grupo_Classificado"] = df_merged["Grupo_Relacao"].apply(
             classificar_grupo_nl
         )
@@ -1710,8 +1703,48 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             args=("mem_nl_tipo_periodo", "w_nl_tipo_periodo"),
         )
 
+        # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA NL ---
+        def filtrar_df_nl(df, ign_per=False, ign_grp=False, ign_sts=False, ign_cred=False, ign_fnt=False, ign_obj=False):
+            d = df.copy()
+            if d.empty:
+                return d
+
+            # Período
+            if not ign_per:
+                if st.session_state["mem_nl_tipo_periodo"] == "Por Mês de Competência":
+                    if st.session_state["mem_nl_comps"]:
+                        d = d[d["Competencia"].astype(str).isin(st.session_state["mem_nl_comps"])]
+                else:
+                    d_sel = st.session_state["mem_nl_datas"]
+                    if isinstance(d_sel, (tuple, list)) and len(d_sel) == 2:
+                        d = d[(d["Data_DT"] >= pd.to_datetime(d_sel[0])) & (d["Data_DT"] <= pd.to_datetime(d_sel[1]))]
+
+            # Grupo
+            if not ign_grp and st.session_state["mem_nl_grupo"] != "Todos":
+                d = d[d["Grupo_Classificado"] == st.session_state["mem_nl_grupo"]]
+
+            # Status
+            if not ign_sts and st.session_state["mem_nl_status"] != "Todos":
+                d = d[d["Status_Filtro"] == st.session_state["mem_nl_status"]]
+
+            # Credor
+            if not ign_cred and st.session_state["mem_nl_credores"]:
+                d = d[d["Credor_Tratado"].isin(st.session_state["mem_nl_credores"])]
+
+            # Fonte
+            if not ign_fnt and st.session_state["mem_nl_fonte"] != "Todas as fontes (Exibe tudo)":
+                d = d[d["Fonte_Relacao"] == st.session_state["mem_nl_fonte"]]
+
+            # Objeto
+            if not ign_obj and st.session_state["mem_nl_objetos"]:
+                d = d[d["Objeto_Relacao"].isin(st.session_state["mem_nl_objetos"])]
+
+            return d
+
+        # CALCULAR OPÇÕES DINÂMICAS TELA NL
         if tipo_periodo == "Por Mês de Competência":
-            comps_unicas = df_base["Competencia"].dropna().astype(str).unique()
+            df_para_per = filtrar_df_nl(df_base, ign_per=True)
+            comps_unicas = df_para_per["Competencia"].dropna().astype(str).unique() if not df_para_per.empty else []
             comps = sorted(
                 [
                     c
@@ -1775,9 +1808,11 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             args=("mem_nl_grupo", "w_nl_grupo"),
         )
 
+        # STATUS DINÂMICO
+        df_para_sts = filtrar_df_nl(df_base, ign_sts=True)
         statuses = sorted(
-            [s for s in df_base["Status_Filtro"].unique() if s != "Todos"]
-        )
+            [s for s in df_para_sts["Status_Filtro"].unique() if s != "Todos"]
+        ) if not df_para_sts.empty else []
         opcoes_sts_nl = ["Todos"] + statuses
         idx_sts_nl = (
             opcoes_sts_nl.index(st.session_state["mem_nl_status"])
@@ -1795,7 +1830,9 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.sidebar.divider()
 
-        credores = sorted(df_base["Credor_Tratado"].unique())
+        # CREDORES DINÂMICOS
+        df_para_cred = filtrar_df_nl(df_base, ign_cred=True)
+        credores = sorted(df_para_cred["Credor_Tratado"].unique()) if not df_para_cred.empty else []
         validos_c_nl = [
             c for c in st.session_state["mem_nl_credores"] if c in credores
         ]
@@ -1811,13 +1848,15 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.sidebar.divider()
 
+        # FONTES DINÂMICAS
+        df_para_fnt = filtrar_df_nl(df_base, ign_fnt=True)
         fontes = sorted(
             [
                 f
-                for f in df_base["Fonte_Relacao"].unique()
+                for f in df_para_fnt["Fonte_Relacao"].unique()
                 if f != "NÃO INFORMADA"
             ]
-        )
+        ) if not df_para_fnt.empty else []
         opcoes_fnt_nl = ["Todas as fontes (Exibe tudo)"] + fontes
         idx_fnt_nl = (
             opcoes_fnt_nl.index(st.session_state["mem_nl_fonte"])
@@ -1835,26 +1874,27 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.sidebar.divider()
 
+        # OBJETOS DINÂMICOS
+        df_para_obj = filtrar_df_nl(df_base, ign_obj=True)
         objetos = sorted(
             [
                 o
-                for o in df_base["Objeto_Relacao"].unique()
+                for o in df_para_obj["Objeto_Relacao"].unique()
                 if o != "NÃO INFORMADO"
             ]
-        )
-        opcoes_obj_nl = ["Todos os objetos"] + objetos
-        idx_obj_nl = (
-            opcoes_obj_nl.index(st.session_state["mem_nl_objeto"])
-            if st.session_state["mem_nl_objeto"] in opcoes_obj_nl
-            else 0
-        )
-        objeto_sel = st.sidebar.selectbox(
+        ) if not df_para_obj.empty else []
+        
+        validos_obj_nl = [
+            o for o in st.session_state["mem_nl_objetos"] if o in objetos
+        ]
+        objeto_sel = st.sidebar.multiselect(
             "Filtrar por Objeto de Despesa:",
-            options=opcoes_obj_nl,
-            index=idx_obj_nl,
-            key="w_nl_objeto",
+            options=objetos,
+            default=validos_obj_nl,
+            placeholder="Todos os objetos",
+            key="w_nl_objetos",
             on_change=sincronizar_filtro,
-            args=("mem_nl_objeto", "w_nl_objeto"),
+            args=("mem_nl_objetos", "w_nl_objetos"),
         )
 
         st.sidebar.divider()
@@ -1868,56 +1908,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.cache_data.clear()
             st.rerun()
 
-        df_filtrado = df_base.copy()
-
-        if (
-            tipo_periodo == "Por Mês de Competência"
-            and "comp_sel" in locals()
-            and comp_sel
-        ):
-            df_filtrado = df_filtrado[
-                df_filtrado["Competencia"].astype(str).isin(comp_sel)
-            ]
-        elif (
-            tipo_periodo == "Por Intervalo de Datas"
-            and "datas_sel" in locals()
-            and isinstance(datas_sel, (tuple, list))
-            and len(datas_sel) == 2
-        ):
-            df_filtrado = df_filtrado[
-                (df_filtrado["Data_DT"] >= pd.to_datetime(datas_sel[0]))
-                & (df_filtrado["Data_DT"] <= pd.to_datetime(datas_sel[1]))
-            ]
-
-        if grupo_sel != "Todos":
-            # O filtro da NL trabalha com uma classificação única e padronizada.
-            # Assim GD3/GD4 continuam funcionando mesmo quando a origem traz
-            # formatos diferentes, como "GD3", "GND3", "3 - OUTRAS...", etc.
-            df_filtrado = df_filtrado[
-                df_filtrado["Grupo_Classificado"] == grupo_sel
-            ]
-
-        if status_sel != "Todos":
-            df_filtrado = df_filtrado[
-                df_filtrado["Status_Filtro"] == status_sel
-            ]
-        if credor_sel:
-            df_filtrado = df_filtrado[
-                df_filtrado["Credor_Tratado"].isin(credor_sel)
-            ]
-        if fonte_sel != "Todas as fontes (Exibe tudo)":
-            df_filtrado = df_filtrado[
-                df_filtrado["Fonte_Relacao"] == fonte_sel
-            ]
-        if objeto_sel != "Todos os objetos":
-            df_filtrado = df_filtrado[
-                df_filtrado["Objeto_Relacao"] == objeto_sel
-            ]
+        # DATAFRAME FINALMENTE FILTRADO TELA NL
+        df_filtrado = filtrar_df_nl(df_base)
 
         qtd_liquidada = len(df_filtrado)
         valor_total = df_filtrado["Valor_Total_Limpo"].sum()
 
-        # Os cartões GD3/GD4 usam exatamente a mesma classificação do filtro.
         mask_gd3 = df_filtrado["Grupo_Classificado"] == "GD3"
         mask_gd4 = df_filtrado["Grupo_Classificado"] == "GD4"
 
