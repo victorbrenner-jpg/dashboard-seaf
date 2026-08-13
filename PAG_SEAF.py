@@ -1627,6 +1627,107 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.markdown(html_final, unsafe_allow_html=True)
 
+    def gerar_relatorio_nl_excel(df_filtrado):
+        """Gera o relatório de NL com a base detalhada e o painel-resumo."""
+        coluna_tipo_nl = next(
+            (
+                coluna
+                for coluna in df_filtrado.columns
+                if "TIPO" in str(coluna).upper()
+                and "NL" in str(coluna).upper()
+            ),
+            None,
+        )
+        base_relatorio = pd.DataFrame(
+            {
+                "Nome do Credor": df_filtrado["Credor_Tratado"],
+                "Objeto Despesa": df_filtrado["Objeto_Relacao"],
+                "GD": df_filtrado["Grupo_Classificado"].replace({"GD3": "3", "GD4": "4"}),
+                "Número": df_filtrado["NL_Numero"],
+                "Tipo de NL": (
+                    df_filtrado[coluna_tipo_nl].fillna("NÃO INFORMADO").astype(str).str.strip()
+                    if coluna_tipo_nl else "NÃO INFORMADO"
+                ),
+                "Status": df_filtrado["Status_Filtro"],
+                "Valor": df_filtrado["Valor_Total_Limpo"],
+            }
+        )
+        def adicionar_total(df_resumo):
+            return pd.concat(
+                [
+                    df_resumo,
+                    pd.DataFrame(
+                        [{df_resumo.columns[0]: "Total Geral", "Valor": df_resumo["Valor"].sum()}]
+                    ),
+                ],
+                ignore_index=True,
+            )
+
+        resumo_objeto = adicionar_total(
+            base_relatorio.groupby("Objeto Despesa", as_index=False)["Valor"].sum().sort_values("Valor", ascending=False)
+        )
+        resumo_tipo = adicionar_total(
+            base_relatorio.groupby("Tipo de NL", as_index=False)["Valor"].sum().sort_values("Valor", ascending=False)
+        )
+        resumo_status = adicionar_total(
+            base_relatorio.groupby("Status", as_index=False)["Valor"].sum().sort_values("Valor", ascending=False)
+        )
+        resumo_gd = adicionar_total(
+            base_relatorio.groupby("GD", as_index=False)["Valor"].sum().sort_values("GD")
+        )
+
+        arquivo = io.BytesIO()
+        with pd.ExcelWriter(arquivo, engine="xlsxwriter") as writer:
+            base_relatorio.to_excel(writer, sheet_name="Relatório Geral de NL", index=False)
+            resumo_objeto.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=4, startcol=0, index=False)
+            resumo_tipo.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=4, startcol=3, index=False)
+            linha_status = 7 + len(resumo_tipo)
+            resumo_status.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_status, startcol=3, index=False)
+            linha_gd = linha_status + 3 + len(resumo_status)
+            resumo_gd.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_gd, startcol=3, index=False)
+
+            workbook = writer.book
+            aba_base = writer.sheets["Relatório Geral de NL"]
+            aba_painel = writer.sheets["Tabela_Dinâmica"]
+            formato_titulo = workbook.add_format({"bold": True, "font_size": 14, "font_color": "#FFFFFF", "bg_color": "#002B49", "align": "center", "valign": "vcenter"})
+            formato_subtitulo = workbook.add_format({"italic": True, "font_color": "#475569"})
+            formato_cabecalho = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#092E4D", "align": "center", "valign": "vcenter"})
+            formato_moeda = workbook.add_format({"num_format": "R$ #,##0.00", "align": "right"})
+
+            aba_base.freeze_panes(1, 0)
+            aba_base.autofilter(0, 0, len(base_relatorio), len(base_relatorio.columns) - 1)
+            aba_base.set_column("A:A", 42)
+            aba_base.set_column("B:B", 55)
+            aba_base.set_column("C:C", 8)
+            aba_base.set_column("D:F", 18)
+            aba_base.set_column("G:G", 18, formato_moeda)
+            aba_base.set_row(0, 24, formato_cabecalho)
+            aba_base.set_tab_color("#028090")
+
+            aba_painel.merge_range("A1:E1", "Relatório Geral de Liquidações", formato_titulo)
+            aba_painel.merge_range("A2:E2", "Painel consolidado conforme os filtros selecionados no sistema.", formato_subtitulo)
+            aba_painel.set_column("A:A", 56)
+            aba_painel.set_column("B:B", 18, formato_moeda)
+            aba_painel.set_column("C:C", 4)
+            aba_painel.set_column("D:D", 24)
+            aba_painel.set_column("E:E", 18, formato_moeda)
+            aba_painel.freeze_panes(4, 0)
+            aba_painel.set_tab_color("#002B49")
+
+            for linha, coluna, dados, nome in [
+                (4, 0, resumo_objeto, "ResumoObjeto"),
+                (4, 3, resumo_tipo, "ResumoTipoNL"),
+                (linha_status, 3, resumo_status, "ResumoStatus"),
+                (linha_gd, 3, resumo_gd, "ResumoGD"),
+            ]:
+                aba_painel.add_table(
+                    linha, coluna, linha + len(dados), coluna + 1,
+                    {"name": nome, "columns": [{"header": dados.columns[0]}, {"header": "Soma de Valor", "format": formato_moeda}], "style": "Table Style Medium 2"},
+                )
+
+        arquivo.seek(0)
+        return arquivo.getvalue()
+
     def renderizar_tabela_resumida(df_filtrado, coluna_grupo, titulo_coluna):
         df_agrupado = (
             df_filtrado.groupby(coluna_grupo)["Valor_Total_Limpo"]
@@ -1683,6 +1784,10 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         unsafe_allow_html=True,
     )
     st.markdown("---")
+
+    _, coluna_relatorio = st.columns([5, 1])
+    with coluna_relatorio:
+        botao_relatorio = st.empty()
 
     df_base = carregar_dados_integrados()
 
@@ -1910,6 +2015,75 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         # DATAFRAME FINALMENTE FILTRADO TELA NL
         df_filtrado = filtrar_df_nl(df_base)
+
+        @st.dialog("Gerar Relatório de Liquidações")
+        def janela_relatorio_nl():
+            st.caption(
+                "Escolha o Grupo e a Fonte para o arquivo. Os demais filtros "
+                "selecionados no painel também serão mantidos."
+            )
+
+            if "relatorio_nl_grupo" not in st.session_state:
+                st.session_state["relatorio_nl_grupo"] = st.session_state["mem_nl_grupo"]
+            if "relatorio_nl_fontes" not in st.session_state:
+                fonte_atual = st.session_state["mem_nl_fonte"]
+                st.session_state["relatorio_nl_fontes"] = (
+                    []
+                    if fonte_atual == "Todas as fontes (Exibe tudo)"
+                    else [fonte_atual]
+                )
+
+            grupo_relatorio = st.selectbox(
+                "Grupo", ["Todos", "GD3", "GD4"], key="relatorio_nl_grupo"
+            )
+            df_opcoes_relatorio = filtrar_df_nl(
+                df_base, ign_grp=True, ign_fnt=True
+            )
+            if grupo_relatorio != "Todos":
+                df_opcoes_relatorio = df_opcoes_relatorio[
+                    df_opcoes_relatorio["Grupo_Classificado"] == grupo_relatorio
+                ]
+            fontes_relatorio = sorted(
+                df_opcoes_relatorio["Fonte_Relacao"].dropna().astype(str).unique()
+            )
+            fontes_selecionadas = st.multiselect(
+                "Fonte de recurso (vazio = todas)",
+                fontes_relatorio,
+                key="relatorio_nl_fontes",
+            )
+
+            df_exportacao = df_opcoes_relatorio.copy()
+            if fontes_selecionadas:
+                df_exportacao = df_exportacao[
+                    df_exportacao["Fonte_Relacao"].isin(fontes_selecionadas)
+                ]
+
+            if df_exportacao.empty:
+                st.warning("Não há liquidações para os filtros escolhidos.")
+                return
+
+            try:
+                relatorio_excel = gerar_relatorio_nl_excel(df_exportacao)
+                st.download_button(
+                    "Baixar relatório",
+                    data=relatorio_excel,
+                    file_name=(
+                        "Relatório Geral de Liquidação "
+                        f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_baixar_relatorio_nl",
+                )
+            except ModuleNotFoundError:
+                st.error("Instale o pacote xlsxwriter para gerar o relatório.")
+
+        if botao_relatorio.button(
+            "📊 Gerar Relatório",
+            use_container_width=True,
+            key="btn_gerar_relatorio_nl",
+        ):
+            janela_relatorio_nl()
 
         qtd_liquidada = len(df_filtrado)
         valor_total = df_filtrado["Valor_Total_Limpo"].sum()
