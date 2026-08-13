@@ -299,8 +299,22 @@ st.markdown(
         border-top: 2px solid #005691;
         border-bottom: none;
         background-color: #f1f5f9;
-        padding: 8px 12px;
+        padding: 5px 12px;
+        height: 32px;
+        line-height: 16px;
         vertical-align: middle;
+    }
+    .tabela-fontes td:first-child {
+        font-size: 12px;
+        line-height: 1.25;
+        padding-right: 8px;
+    }
+    .tabela-fontes th:first-child {
+        width: 68%;
+    }
+    .tabela-fontes th:last-child {
+        width: 32%;
+        white-space: nowrap;
     }
     </style>
 """,
@@ -1750,8 +1764,13 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 <td style='text-align: right; font-weight: 600; color: #002b49; white-space: nowrap;'>{formatar_brl(valor)}</td>
 </tr>"""
 
+        classe_tabela = (
+            "tabela-simples tabela-fontes"
+            if titulo_coluna == "FONTE"
+            else "tabela-simples"
+        )
         html = f"""<div class='tabela-simples-container'>
-<table class='tabela-simples'>
+<table class='{classe_tabela}'>
 <thead>
 <tr>
 <th style='text-align: left;'>{titulo_coluna}</th>
@@ -2147,7 +2166,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        col_credor, col_objeto, col_fonte = st.columns([1.6, 1, 1])
+        col_credor, col_objeto, col_fonte = st.columns([1.6, 1, 1.18])
 
         with col_credor:
             renderizar_tabela_credor_dinamica(df_filtrado)
