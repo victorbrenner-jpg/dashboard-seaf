@@ -39,7 +39,13 @@ if "mem_ob_dt_ini" not in st.session_state:
 if "mem_ob_dt_fim" not in st.session_state:
     st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
 if "mem_ob_despesa" not in st.session_state:
-    st.session_state["mem_ob_despesa"] = "Todas as Despesas"
+    st.session_state["mem_ob_despesa"] = []
+elif isinstance(st.session_state["mem_ob_despesa"], str):
+    st.session_state["mem_ob_despesa"] = (
+        []
+        if st.session_state["mem_ob_despesa"] == "Todas as Despesas"
+        else [st.session_state["mem_ob_despesa"]]
+    )
 if "mem_ob_credores" not in st.session_state:
     st.session_state["mem_ob_credores"] = []
 if "mem_ob_fontes" not in st.session_state:
@@ -695,14 +701,19 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
                     d = d[(s_dt >= dt_i) & (s_dt <= dt_f)]
 
         # Filtro Despesa
-        if not ign_dsp:
-            dsp = st.session_state["mem_ob_despesa"]
-            if dsp == "CORRENTE (Dotação do Ano)":
-                d = d[d["Despesa_Tratada"] == "CORRENTE"]
-            elif dsp == "RP (Restos a Pagar)":
-                d = d[d["Despesa_Tratada"] == "RP"]
-            elif dsp == "DEA (Exercícios Anteriores)":
-                d = d[d["Despesa_Tratada"] == "DEA"]
+        if not ign_dsp and st.session_state["mem_ob_despesa"]:
+            mapa_despesas = {
+                "CORRENTE (Dotação do Ano)": "CORRENTE",
+                "RP (Restos a Pagar)": "RP",
+                "DEA (Exercícios Anteriores)": "DEA",
+            }
+            tipos_selecionados = [
+                mapa_despesas[tipo]
+                for tipo in st.session_state["mem_ob_despesa"]
+                if tipo in mapa_despesas
+            ]
+            if tipos_selecionados:
+                d = d[d["Despesa_Tratada"].isin(tipos_selecionados)]
 
         # Filtro Credores
         if not ign_cred and st.session_state["mem_ob_credores"]:
@@ -796,21 +807,21 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     # FILTRO TIPO DE DESPESA (Opções estáticas, seleção afeta os demais)
     opcoes_despesa_ob = [
-        "Todas as Despesas",
         "CORRENTE (Dotação do Ano)",
         "RP (Restos a Pagar)",
         "DEA (Exercícios Anteriores)",
     ]
-    idx_dsp_ob = (
-        opcoes_despesa_ob.index(st.session_state["mem_ob_despesa"])
-        if st.session_state["mem_ob_despesa"] in opcoes_despesa_ob
-        else 0
-    )
+    despesas_validas_ob = [
+        despesa
+        for despesa in st.session_state["mem_ob_despesa"]
+        if despesa in opcoes_despesa_ob
+    ]
 
-    opcao_despesa = st.sidebar.selectbox(
+    despesas_selecionadas = st.sidebar.multiselect(
         "Filtrar por Tipo de Despesa:",
         options=opcoes_despesa_ob,
-        index=idx_dsp_ob,
+        default=despesas_validas_ob,
+        placeholder="Todas as despesas",
         key="w_ob_despesa",
         on_change=sincronizar_filtro,
         args=("mem_ob_despesa", "w_ob_despesa"),
