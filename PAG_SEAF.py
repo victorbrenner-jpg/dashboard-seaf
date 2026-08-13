@@ -209,6 +209,9 @@ st.markdown(
         text-transform: uppercase;
         align-items: center;
     }
+    .tabela-dinamica-container > .tabela-dinamica-header:last-child {
+        font-size: 13px;
+    }
     details.credor-group {
         border-bottom: 1px solid #e2e8f0;
         background-color: #ffffff;
@@ -275,6 +278,7 @@ st.markdown(
         font-family: 'Segoe UI', sans-serif;
         font-size: 13px;
         table-layout: auto;
+        margin: 0 !important;
     }
     .tabela-simples th {
         color: #ffffff;
@@ -296,12 +300,12 @@ st.markdown(
     .tabela-simples tr.total-row td {
         color: #002b49;
         font-weight: 800;
+        font-size: 13px;
         border-top: 2px solid #005691;
         border-bottom: none;
         background-color: #f1f5f9;
-        padding: 5px 12px;
-        height: 32px;
-        line-height: 16px;
+        padding: 8px 12px !important;
+        line-height: 1.2 !important;
         vertical-align: middle;
     }
     .tabela-fontes td:first-child {
@@ -1874,8 +1878,24 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     c
                     for c in comps_unicas
                     if c.strip() not in ["Não informada", "nan", "None", ""]
-                ]
+                ],
+                key=lambda competencia: pd.to_datetime(
+                    f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
+                ),
             )
+
+            def exibir_competencia_nl(competencia):
+                data_competencia = pd.to_datetime(
+                    f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
+                )
+                if pd.isna(data_competencia):
+                    return competencia
+                nomes_meses = [
+                    "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+                    "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+                ]
+                return f"{nomes_meses[data_competencia.month - 1]}/{data_competencia.year}"
+
             validos_comp_nl = [
                 c for c in st.session_state["mem_nl_comps"] if c in comps
             ]
@@ -1884,6 +1904,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 "Filtrar Período de Competência:",
                 options=comps,
                 default=validos_comp_nl,
+                format_func=exibir_competencia_nl,
                 placeholder="Selecione as opções",
                 key="w_nl_comps",
                 on_change=sincronizar_filtro,
@@ -2166,15 +2187,14 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        col_credor, col_objeto, col_fonte = st.columns([1.6, 1, 1.18])
+        col_credor, col_resumos = st.columns([1.15, 0.85])
 
         with col_credor:
             renderizar_tabela_credor_dinamica(df_filtrado)
 
-        with col_objeto:
-            renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
-
-        with col_fonte:
+        with col_resumos:
             renderizar_tabela_resumida(df_filtrado, "Fonte_Relacao", "FONTE")
+            st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+            renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
     else:
         st.warning("Aguardando carregamento e relacionamento das planilhas...")
