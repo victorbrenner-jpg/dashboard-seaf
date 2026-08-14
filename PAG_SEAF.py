@@ -1734,27 +1734,44 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             formato_titulo = workbook.add_format({"bold": True, "font_size": 14, "font_color": "#FFFFFF", "bg_color": "#002B49", "align": "center", "valign": "vcenter"})
             formato_subtitulo = workbook.add_format({"italic": True, "font_color": "#475569"})
             formato_cabecalho = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#092E4D", "align": "center", "valign": "vcenter"})
+            formato_cabecalho_painel = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#4F81BD", "align": "left", "valign": "vcenter"})
+            formato_cabecalho_painel_direita = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#4F81BD", "align": "right", "valign": "vcenter"})
             formato_moeda = workbook.add_format({"num_format": "R$ #,##0.00", "align": "right"})
+            formato_texto_branco = workbook.add_format({"bg_color": "#FFFFFF"})
+            formato_moeda_branco = workbook.add_format({"bg_color": "#FFFFFF", "num_format": "R$ #,##0.00", "align": "right"})
+            formato_total_rotulo = workbook.add_format({"bold": True, "bg_color": "#D9EAF7"})
+            formato_total_moeda = workbook.add_format({"bold": True, "bg_color": "#D9EAF7", "num_format": "R$ #,##0.00", "align": "right"})
 
             aba_base.freeze_panes(1, 0)
             aba_base.autofilter(0, 0, len(base_relatorio), len(base_relatorio.columns) - 1)
+            aba_base.hide_gridlines(0)
             aba_base.set_column("A:A", 42)
             aba_base.set_column("B:B", 55)
             aba_base.set_column("C:C", 8)
             aba_base.set_column("D:F", 18)
             aba_base.set_column("G:G", 18, formato_moeda)
-            aba_base.set_row(0, 24, formato_cabecalho)
+            aba_base.set_row(0, 24)
+            for coluna, cabecalho in enumerate(base_relatorio.columns):
+                aba_base.write(0, coluna, cabecalho, formato_cabecalho)
+            for linha, valores in enumerate(
+                base_relatorio.itertuples(index=False, name=None), start=1
+            ):
+                for coluna, valor in enumerate(valores[:-1]):
+                    aba_base.write(linha, coluna, valor, formato_texto_branco)
+                aba_base.write_number(linha, 6, float(valores[-1]), formato_moeda_branco)
             aba_base.set_tab_color("#028090")
 
-            aba_painel.set_column("A:A", 3)
+            aba_painel.set_column("A:Z", 10, formato_texto_branco)
+            aba_painel.set_column("A:A", 3, formato_texto_branco)
             aba_painel.merge_range("B1:F1", "Relatório Geral de Liquidações", formato_titulo)
             aba_painel.merge_range("B2:F2", "Painel consolidado conforme os filtros selecionados no sistema.", formato_subtitulo)
-            aba_painel.set_column("B:B", 56)
-            aba_painel.set_column("C:C", 18, formato_moeda)
-            aba_painel.set_column("D:D", 4)
-            aba_painel.set_column("E:E", 24)
-            aba_painel.set_column("F:F", 18, formato_moeda)
+            aba_painel.set_column("B:B", 56, formato_texto_branco)
+            aba_painel.set_column("C:C", 18, formato_moeda_branco)
+            aba_painel.set_column("D:D", 4, formato_texto_branco)
+            aba_painel.set_column("E:E", 24, formato_texto_branco)
+            aba_painel.set_column("F:F", 18, formato_moeda_branco)
             aba_painel.freeze_panes(2, 1)
+            aba_painel.hide_gridlines(0)
             aba_painel.set_tab_color("#002B49")
 
             for linha, coluna, dados, nome in [
@@ -1765,7 +1782,36 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             ]:
                 aba_painel.add_table(
                     linha, coluna, linha + len(dados), coluna + 1,
-                    {"name": nome, "columns": [{"header": dados.columns[0]}, {"header": "Soma de Valor", "format": formato_moeda}], "style": "Table Style Medium 2"},
+                    {
+                        "name": nome,
+                        "columns": [
+                            {
+                                "header": dados.columns[0],
+                                "header_format": formato_cabecalho_painel,
+                            },
+                            {
+                                "header": "Soma de Valor",
+                                "header_format": formato_cabecalho_painel_direita,
+                                "format": formato_moeda,
+                            },
+                        ],
+                        "style": None,
+                        "banded_rows": False,
+                    },
+                )
+                for indice, valores in enumerate(dados.iloc[:-1].itertuples(index=False, name=None)):
+                    aba_painel.write(
+                        linha + 1 + indice, coluna, valores[0], formato_texto_branco
+                    )
+                    aba_painel.write_number(
+                        linha + 1 + indice, coluna + 1, float(valores[1]), formato_moeda_branco
+                    )
+                linha_total = linha + len(dados)
+                aba_painel.write(
+                    linha_total, coluna, dados.iloc[-1, 0], formato_total_rotulo
+                )
+                aba_painel.write(
+                    linha_total, coluna + 1, dados.iloc[-1, 1], formato_total_moeda
                 )
 
         arquivo.seek(0)
