@@ -1413,6 +1413,16 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         compacto = re.sub(r"[^A-Z0-9]", "", texto)
 
         if (
+            re.search(r"\bGD1\b", texto)
+            or re.search(r"\bGND1\b", texto)
+            or compacto.startswith("GD1")
+            or compacto.startswith("GND1")
+            or compacto == "1"
+            or compacto.startswith("1PESSOAL")
+        ):
+            return "GD1"
+
+        if (
             re.search(r"\bGD3\b", texto)
             or re.search(r"\bGND3\b", texto)
             or compacto.startswith("GD3")
@@ -1672,7 +1682,9 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             {
                 "Nome do Credor": df_filtrado["Credor_Tratado"],
                 "Objeto Despesa": df_filtrado["Objeto_Relacao"],
-                "GD": df_filtrado["Grupo_Classificado"].replace({"GD3": "3", "GD4": "4"}),
+                "GD": df_filtrado["Grupo_Classificado"].replace(
+                    {"GD1": "1", "GD3": "3", "GD4": "4"}
+                ),
                 "Número": df_filtrado["NL_Numero"],
                 "Tipo de NL": (
                     df_filtrado[coluna_tipo_nl].fillna("NÃO INFORMADO").astype(str).str.strip()
@@ -1709,12 +1721,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         arquivo = io.BytesIO()
         with pd.ExcelWriter(arquivo, engine="xlsxwriter") as writer:
             base_relatorio.to_excel(writer, sheet_name="Relatório Geral de NL", index=False)
-            resumo_objeto.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=4, startcol=0, index=False)
-            resumo_tipo.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=4, startcol=3, index=False)
-            linha_status = 7 + len(resumo_tipo)
-            resumo_status.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_status, startcol=3, index=False)
+            resumo_objeto.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=2, startcol=1, index=False)
+            resumo_tipo.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=2, startcol=4, index=False)
+            linha_status = 5 + len(resumo_tipo)
+            resumo_status.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_status, startcol=4, index=False)
             linha_gd = linha_status + 3 + len(resumo_status)
-            resumo_gd.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_gd, startcol=3, index=False)
+            resumo_gd.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_gd, startcol=4, index=False)
 
             workbook = writer.book
             aba_base = writer.sheets["Relatório Geral de NL"]
@@ -1734,21 +1746,22 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             aba_base.set_row(0, 24, formato_cabecalho)
             aba_base.set_tab_color("#028090")
 
-            aba_painel.merge_range("A1:E1", "Relatório Geral de Liquidações", formato_titulo)
-            aba_painel.merge_range("A2:E2", "Painel consolidado conforme os filtros selecionados no sistema.", formato_subtitulo)
-            aba_painel.set_column("A:A", 56)
-            aba_painel.set_column("B:B", 18, formato_moeda)
-            aba_painel.set_column("C:C", 4)
-            aba_painel.set_column("D:D", 24)
-            aba_painel.set_column("E:E", 18, formato_moeda)
-            aba_painel.freeze_panes(4, 0)
+            aba_painel.set_column("A:A", 3)
+            aba_painel.merge_range("B1:F1", "Relatório Geral de Liquidações", formato_titulo)
+            aba_painel.merge_range("B2:F2", "Painel consolidado conforme os filtros selecionados no sistema.", formato_subtitulo)
+            aba_painel.set_column("B:B", 56)
+            aba_painel.set_column("C:C", 18, formato_moeda)
+            aba_painel.set_column("D:D", 4)
+            aba_painel.set_column("E:E", 24)
+            aba_painel.set_column("F:F", 18, formato_moeda)
+            aba_painel.freeze_panes(2, 1)
             aba_painel.set_tab_color("#002B49")
 
             for linha, coluna, dados, nome in [
-                (4, 0, resumo_objeto, "ResumoObjeto"),
-                (4, 3, resumo_tipo, "ResumoTipoNL"),
-                (linha_status, 3, resumo_status, "ResumoStatus"),
-                (linha_gd, 3, resumo_gd, "ResumoGD"),
+                (2, 1, resumo_objeto, "ResumoObjeto"),
+                (2, 4, resumo_tipo, "ResumoTipoNL"),
+                (linha_status, 4, resumo_status, "ResumoStatus"),
+                (linha_gd, 4, resumo_gd, "ResumoGD"),
             ]:
                 aba_painel.add_table(
                     linha, coluna, linha + len(dados), coluna + 1,
@@ -1950,7 +1963,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         st.sidebar.divider()
 
         # FILTRO DE GRUPO
-        opcoes_grp_nl = ["Todos", "GD3", "GD4"]
+        opcoes_grp_nl = ["Todos", "GD1", "GD3", "GD4"]
         idx_grp_nl = (
             opcoes_grp_nl.index(st.session_state["mem_nl_grupo"])
             if st.session_state["mem_nl_grupo"] in opcoes_grp_nl
@@ -2075,8 +2088,11 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 "selecionados no painel também serão mantidos."
             )
 
-            if "relatorio_nl_grupo" not in st.session_state:
-                st.session_state["relatorio_nl_grupo"] = st.session_state["mem_nl_grupo"]
+            if "relatorio_nl_grupos" not in st.session_state:
+                grupo_atual = st.session_state["mem_nl_grupo"]
+                st.session_state["relatorio_nl_grupos"] = (
+                    [] if grupo_atual == "Todos" else [grupo_atual]
+                )
             if "relatorio_nl_fontes" not in st.session_state:
                 fonte_atual = st.session_state["mem_nl_fonte"]
                 st.session_state["relatorio_nl_fontes"] = (
@@ -2085,15 +2101,17 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     else [fonte_atual]
                 )
 
-            grupo_relatorio = st.selectbox(
-                "Grupo", ["Todos", "GD3", "GD4"], key="relatorio_nl_grupo"
+            grupos_relatorio = st.multiselect(
+                "Grupo (vazio = todos)",
+                ["GD1", "GD3", "GD4"],
+                key="relatorio_nl_grupos",
             )
             df_opcoes_relatorio = filtrar_df_nl(
                 df_base, ign_grp=True, ign_fnt=True
             )
-            if grupo_relatorio != "Todos":
+            if grupos_relatorio:
                 df_opcoes_relatorio = df_opcoes_relatorio[
-                    df_opcoes_relatorio["Grupo_Classificado"] == grupo_relatorio
+                    df_opcoes_relatorio["Grupo_Classificado"].isin(grupos_relatorio)
                 ]
             fontes_relatorio = sorted(
                 df_opcoes_relatorio["Fonte_Relacao"].dropna().astype(str).unique()
