@@ -499,7 +499,8 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     @st.cache_data(ttl=60)
     def carregar_dados_auditoria():
-        LINK_PUBLICADO = "https://docs.google.com/spreadsheets/d/e/2PACX-1vT6mS4X1SSJWjVhFxNdTstSWgRdn_AFSGf9ZzdGqZ1GjZNeT7GSUZDqoB_4q5JnZPbgd2gJ2Jq0g4YJ/pub?gid=0&single=true&output=csv"
+        # Aba BASE: consolidado da BASE_HISTORICA com o mês atual tratado.
+        LINK_PUBLICADO = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/pub?gid=1786485134&single=true&output=csv"
         try:
             df = ler_csv_url(LINK_PUBLICADO)
         except Exception as e:
