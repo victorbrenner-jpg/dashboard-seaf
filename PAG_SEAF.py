@@ -62,13 +62,27 @@ if "mem_nl_comps" not in st.session_state:
 if "mem_nl_datas" not in st.session_state:
     st.session_state["mem_nl_datas"] = None
 if "mem_nl_grupo" not in st.session_state:
-    st.session_state["mem_nl_grupo"] = "Todos"
+    st.session_state["mem_nl_grupo"] = []
+elif isinstance(st.session_state["mem_nl_grupo"], str):
+    # Mantém compatibilidade com a seleção única salva em sessões antigas.
+    st.session_state["mem_nl_grupo"] = (
+        []
+        if st.session_state["mem_nl_grupo"] == "Todos"
+        else [st.session_state["mem_nl_grupo"]]
+    )
 if "mem_nl_status" not in st.session_state:
     st.session_state["mem_nl_status"] = "Todos"
 if "mem_nl_credores" not in st.session_state:
     st.session_state["mem_nl_credores"] = []
 if "mem_nl_fonte" not in st.session_state:
-    st.session_state["mem_nl_fonte"] = "Todas as fontes (Exibe tudo)"
+    st.session_state["mem_nl_fonte"] = []
+elif isinstance(st.session_state["mem_nl_fonte"], str):
+    # Mantém compatibilidade com a seleção única salva em sessões antigas.
+    st.session_state["mem_nl_fonte"] = (
+        []
+        if st.session_state["mem_nl_fonte"] == "Todas as fontes (Exibe tudo)"
+        else [st.session_state["mem_nl_fonte"]]
+    )
 if "mem_nl_objetos" not in st.session_state:
     st.session_state["mem_nl_objetos"] = []
 
@@ -2114,8 +2128,10 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                         d = d[(d["Data_DT"] >= pd.to_datetime(d_sel[0])) & (d["Data_DT"] <= pd.to_datetime(d_sel[1]))]
 
             # Grupo
-            if not ign_grp and st.session_state["mem_nl_grupo"] != "Todos":
-                d = d[d["Grupo_Classificado"] == st.session_state["mem_nl_grupo"]]
+            if not ign_grp and st.session_state["mem_nl_grupo"]:
+                d = d[
+                    d["Grupo_Classificado"].isin(st.session_state["mem_nl_grupo"])
+                ]
 
             # Status
             if not ign_sts and st.session_state["mem_nl_status"] != "Todos":
@@ -2126,8 +2142,10 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 d = d[d["Credor_Tratado"].isin(st.session_state["mem_nl_credores"])]
 
             # Fonte
-            if not ign_fnt and st.session_state["mem_nl_fonte"] != "Todas as fontes (Exibe tudo)":
-                d = d[d["Fonte_Relacao"] == st.session_state["mem_nl_fonte"]]
+            if not ign_fnt and st.session_state["mem_nl_fonte"]:
+                d = d[
+                    d["Fonte_Relacao"].isin(st.session_state["mem_nl_fonte"])
+                ]
 
             # Objeto
             if not ign_obj and st.session_state["mem_nl_objetos"]:
@@ -2204,16 +2222,17 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         st.sidebar.divider()
 
         # FILTRO DE GRUPO
-        opcoes_grp_nl = ["Todos", "GD1", "GD3", "GD4"]
-        idx_grp_nl = (
-            opcoes_grp_nl.index(st.session_state["mem_nl_grupo"])
-            if st.session_state["mem_nl_grupo"] in opcoes_grp_nl
-            else 0
-        )
-        grupo_sel = st.sidebar.selectbox(
+        opcoes_grp_nl = ["GD1", "GD3", "GD4"]
+        grupos_validos_nl = [
+            grupo
+            for grupo in st.session_state["mem_nl_grupo"]
+            if grupo in opcoes_grp_nl
+        ]
+        st.sidebar.multiselect(
             "Filtrar por Grupo:",
             options=opcoes_grp_nl,
-            index=idx_grp_nl,
+            default=grupos_validos_nl,
+            placeholder="Todos os grupos (Exibe tudo)",
             key="w_nl_grupo",
             on_change=sincronizar_filtro,
             args=("mem_nl_grupo", "w_nl_grupo"),
@@ -2268,16 +2287,16 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 if f != "NÃO INFORMADA"
             ]
         ) if not df_para_fnt.empty else []
-        opcoes_fnt_nl = ["Todas as fontes (Exibe tudo)"] + fontes
-        idx_fnt_nl = (
-            opcoes_fnt_nl.index(st.session_state["mem_nl_fonte"])
-            if st.session_state["mem_nl_fonte"] in opcoes_fnt_nl
-            else 0
-        )
-        fonte_sel = st.sidebar.selectbox(
+        validas_f_nl = [
+            fonte
+            for fonte in st.session_state["mem_nl_fonte"]
+            if fonte in fontes
+        ]
+        fontes_selecionadas_nl = st.sidebar.multiselect(
             "Filtrar por Fonte de Recurso:",
-            options=opcoes_fnt_nl,
-            index=idx_fnt_nl,
+            options=fontes,
+            default=validas_f_nl,
+            placeholder="Todas as fontes (Exibe tudo)",
             key="w_nl_fonte",
             on_change=sincronizar_filtro,
             args=("mem_nl_fonte", "w_nl_fonte"),
@@ -2330,16 +2349,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             )
 
             if "relatorio_nl_grupos" not in st.session_state:
-                grupo_atual = st.session_state["mem_nl_grupo"]
-                st.session_state["relatorio_nl_grupos"] = (
-                    [] if grupo_atual == "Todos" else [grupo_atual]
+                st.session_state["relatorio_nl_grupos"] = list(
+                    st.session_state["mem_nl_grupo"]
                 )
             if "relatorio_nl_fontes" not in st.session_state:
-                fonte_atual = st.session_state["mem_nl_fonte"]
-                st.session_state["relatorio_nl_fontes"] = (
-                    []
-                    if fonte_atual == "Todas as fontes (Exibe tudo)"
-                    else [fonte_atual]
+                st.session_state["relatorio_nl_fontes"] = list(
+                    st.session_state["mem_nl_fonte"]
                 )
 
             grupos_relatorio = st.multiselect(
