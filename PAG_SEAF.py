@@ -5,6 +5,10 @@ import re
 import sqlite3
 import urllib.request
 import pandas as pd
+import sqlite3
+import urllib.request
+import numpy as np
+import pandas as pd
 import plotly.express as px
 import streamlit as st
 import streamlit.components.v1 as components
