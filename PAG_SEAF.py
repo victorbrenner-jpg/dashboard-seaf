@@ -339,6 +339,43 @@ def formatar_brl(valor):
     return f"R$ {val_str}"
 
 
+def converter_valor_monetario(serie):
+    """Converte valores do CSV e do padrão brasileiro sem inflar decimais."""
+    def converter(valor):
+        if pd.isna(valor):
+            return 0.0
+        if isinstance(valor, (int, float, np.number)):
+            return float(valor)
+
+        texto = str(valor).strip().replace("R$", "").replace(" ", "")
+        if not texto or texto == "-":
+            return 0.0
+
+        negativo = texto.startswith("-") or (
+            texto.startswith("(") and texto.endswith(")")
+        )
+        texto = texto.replace("-", "").replace("(", "").replace(")", "")
+        ultimo_ponto = texto.rfind(".")
+        ultima_virgula = texto.rfind(",")
+
+        if ultimo_ponto >= 0 and ultima_virgula >= 0:
+            # O último separador é o decimal; o outro é de milhar.
+            if ultima_virgula > ultimo_ponto:
+                texto = texto.replace(".", "").replace(",", ".")
+            else:
+                texto = texto.replace(",", "")
+        elif ultima_virgula >= 0:
+            texto = texto.replace(",", ".")
+        # Com apenas ponto, trata-se do decimal do CSV publicado pelo Sheets.
+
+        numero = pd.to_numeric(texto, errors="coerce")
+        if pd.isna(numero):
+            return 0.0
+        return -float(numero) if negativo else float(numero)
+
+    return serie.map(converter).astype(float)
+
+
 def ler_csv_url(url):
     req = urllib.request.Request(
         url, headers={"User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64)"}
@@ -541,6 +578,54 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
         df = df.dropna(subset=["Valor"])
 
+        # TRAVA DE DUPLICIDADE DA BASE OB
+        # A planilha consolidada pode trazer a mesma OB duas vezes, com o CPF/CNPJ
+        # apresentado de forma diferente (por exemplo, com zero à esquerda). Antes
+        # de qualquer filtro ou soma, conservamos somente uma linha para a mesma
+        # identificação financeira. Assim, atualizações futuras da base não voltam
+        # a inflar os valores exibidos pelo painel.
+        colunas_chave_ob = [
+            coluna
+            for coluna in [
+                "Número",
+                "NE",
+                "Data Emissão",
+                "Valor",
+                "Fonte",
+                "Nome do Credor",
+                "Tipo de OB",
+            ]
+            if coluna in df.columns
+        ]
+
+        if colunas_chave_ob:
+            for coluna in colunas_chave_ob:
+                chave_coluna = f"__chave_ob_{coluna}"
+                if coluna == "Valor":
+                    df[chave_coluna] = converter_valor_monetario(
+                        df[coluna]
+                    ).round(2)
+                elif coluna == "Data Emissão":
+                    data_chave = pd.to_datetime(
+                        df[coluna], errors="coerce", dayfirst=True
+                    )
+                    df[chave_coluna] = data_chave.dt.strftime("%Y-%m-%d").fillna(
+                        df[coluna].fillna("").astype(str).str.strip().str.upper()
+                    )
+                else:
+                    df[chave_coluna] = (
+                        df[coluna]
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
+                        .str.upper()
+                        .str.replace(r"\s+", " ", regex=True)
+                    )
+
+            chaves_auxiliares = [f"__chave_ob_{coluna}" for coluna in colunas_chave_ob]
+            df = df.drop_duplicates(subset=chaves_auxiliares, keep="first").copy()
+            df.drop(columns=chaves_auxiliares, inplace=True)
+
         df["Despesa_Tratada"] = "CORRENTE"
         if "Despesa" in df.columns:
             serie_despesa = df["Despesa"]
@@ -584,13 +669,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
             serie_valor = df["Valor"]
             if isinstance(serie_valor, pd.DataFrame):
                 serie_valor = serie_valor.iloc[:, 0]
-            valores_str = serie_valor.fillna("0").astype(str)
-            valores_str = valores_str.str.replace(
-                r"[R$\s.]", "", regex=True
-            ).str.replace(",", ".")
-            df["Valor_Limpo"] = pd.to_numeric(
-                valores_str, errors="coerce"
-            ).fillna(0.0)
+            df["Valor_Limpo"] = converter_valor_monetario(serie_valor)
         else:
             df["Valor_Limpo"] = 0.0
 
