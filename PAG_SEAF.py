@@ -1,8 +1,11 @@
 import datetime
+import html
 import io
+import json
 import os
 import re
 import sqlite3
+import urllib.parse
 import urllib.request
 import numpy as np
 import pandas as pd
@@ -86,6 +89,18 @@ elif isinstance(st.session_state["mem_nl_fonte"], str):
 if "mem_nl_objetos" not in st.session_state:
     st.session_state["mem_nl_objetos"] = []
 
+# --- MEMÓRIA DA TELA 3 (Priorização semanal) ---
+# Os widgets desta tela não são renderizados quando o usuário navega para NL
+# ou OB. Por isso os valores selecionados ficam em chaves independentes.
+if "mem_plan_grupos" not in st.session_state:
+    st.session_state["mem_plan_grupos"] = []
+if "mem_plan_tipos_nl" not in st.session_state:
+    st.session_state["mem_plan_tipos_nl"] = []
+if "mem_plan_mes_programacao" not in st.session_state:
+    # No primeiro acesso, abre no mês corrente. A seleção feita pelo usuário
+    # continua preservada durante a navegação entre as telas.
+    st.session_state["mem_plan_mes_programacao"] = datetime.date.today().strftime("%m/%Y")
+
 # Estilização CSS
 st.markdown(
     """
@@ -96,6 +111,179 @@ st.markdown(
         font-weight: 700 !important;
         margin-bottom: 4px !important;
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+    }
+    .barra-sistema {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        background: linear-gradient(90deg, #002b49 0%, #005691 52%, #028090 100%);
+        color: #ffffff;
+        border-radius: 9px 9px 0 0;
+        padding: 10px 18px;
+        font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        width: 100vw !important;
+        z-index: 100002 !important;
+        box-shadow: 0 3px 10px rgba(0, 43, 73, 0.25) !important;
+    }
+    .barra-sistema .marca-sistema {
+        font-weight: 800;
+        letter-spacing: 0.3px;
+        font-size: 15px;
+    }
+    .barra-sistema .exercicio-sistema {
+        font-size: 12px;
+        font-weight: 700;
+        opacity: 0.95;
+    }
+    .st-key-seletor_tela_global {
+        background: #eef4fa;
+        border: 1px solid #cbd5e1;
+        border-top: 0;
+        border-radius: 0 0 9px 9px;
+        padding: 7px 12px 8px 12px;
+        margin-bottom: 18px;
+        position: fixed !important;
+        top: 41px !important;
+        left: 0 !important;
+        width: 100vw !important;
+        z-index: 100001 !important;
+        box-shadow: 0 5px 10px rgba(15, 23, 42, 0.14) !important;
+    }
+    /* Cabeçalho único e fixo: a navegação nunca se separa da barra SEAF. */
+    .st-key-topo_navegacao {
+        position: static !important;
+    }
+    .st-key-topo_navegacao .barra-sistema {
+        border-radius: 0 !important;
+    }
+    .st-key-topo_navegacao .st-key-seletor_tela_global {
+        margin-bottom: 0 !important;
+        padding: 8px 22px 9px !important;
+    }
+    /* Navegação por módulos: abas corporativas, com módulo ativo evidente. */
+    .st-key-seletor_tela_global [data-testid="stSegmentedControl"] {
+        background: transparent !important;
+    }
+    .st-key-seletor_tela_global [data-testid="stSegmentedControl"] [role="radiogroup"],
+    .st-key-seletor_tela_global [data-baseweb="button-group"] {
+        gap: 7px !important;
+        background: transparent !important;
+    }
+    .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button,
+    .st-key-seletor_tela_global button[data-testid*="segmented_control"] {
+        min-height: 36px !important;
+        padding: 0 17px !important;
+        border: 1px solid #c7d5e2 !important;
+        border-radius: 7px !important;
+        background: #ffffff !important;
+        color: #334155 !important;
+        font-size: 13px !important;
+        font-weight: 650 !important;
+        box-shadow: 0 2px 5px rgba(15, 42, 68, 0.07) !important;
+        transition: all .18s ease !important;
+    }
+    .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button:hover,
+    .st-key-seletor_tela_global button[data-testid*="segmented_control"]:hover {
+        background: #f0fdfa !important;
+        border-color: #028090 !important;
+        color: #005b63 !important;
+        transform: translateY(-1px);
+        box-shadow: 0 5px 10px rgba(2, 128, 144, 0.14) !important;
+    }
+    .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button[aria-pressed="true"],
+    .st-key-seletor_tela_global button[data-testid*="segmented_control"][aria-pressed="true"] {
+        border-color: #007b84 !important;
+        background: linear-gradient(135deg, #005691 0%, #028090 100%) !important;
+        color: #ffffff !important;
+        box-shadow: 0 5px 12px rgba(0, 86, 145, 0.25) !important;
+    }
+    .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button[aria-pressed="true"]:hover,
+    .st-key-seletor_tela_global button[data-testid*="segmented_control"][aria-pressed="true"]:hover {
+        background: linear-gradient(135deg, #004a7c 0%, #01757d 100%) !important;
+        color: #ffffff !important;
+    }
+    [data-testid="stMainBlockContainer"] {
+        padding-top: 118px !important;
+    }
+    /* Mantém o cabeçalho técnico invisível, sem eliminar o controle nativo
+       que permite reabrir os filtros quando a barra lateral for recolhida. */
+    header[data-testid="stHeader"] {
+        background: transparent !important;
+        height: 0 !important;
+        z-index: 100003 !important;
+    }
+    header[data-testid="stHeader"] [data-testid="stToolbar"],
+    header[data-testid="stHeader"] [data-testid="stDecoration"] {
+        display: none !important;
+    }
+    [data-testid="stSidebarCollapsedControl"] {
+        display: none !important;
+    }
+    [data-testid="stSidebar"] {
+        z-index: 100000 !important;
+        padding-top: 108px !important;
+        /* Aba lateral de filtros: abre apenas ao passar o mouse ou navegar
+           pelos seus campos com o teclado. */
+        display: block !important;
+        visibility: visible !important;
+        transform: translateX(0) !important;
+        margin-left: 0 !important;
+        min-width: 28px !important;
+        width: 28px !important;
+        max-width: 28px !important;
+        overflow: hidden !important;
+        transition: width .22s ease .55s, min-width .22s ease .55s, max-width .22s ease .55s !important;
+        background: #f1f5f9 !important;
+        border-right: 1px solid #d4e0ea !important;
+    }
+    [data-testid="stSidebar"][aria-expanded="false"] {
+        min-width: 28px !important;
+        width: 28px !important;
+        max-width: 28px !important;
+        transform: translateX(0) !important;
+        visibility: visible !important;
+    }
+    [data-testid="stSidebar"]:hover,
+    [data-testid="stSidebar"]:focus-within,
+    [data-testid="stSidebar"][aria-expanded="false"]:hover,
+    [data-testid="stSidebar"][aria-expanded="false"]:focus-within {
+        min-width: 312px !important;
+        width: 312px !important;
+        max-width: 312px !important;
+        overflow-y: auto !important;
+        transition-delay: 0s !important;
+    }
+    [data-testid="stSidebar"] > div:first-child {
+        min-width: 312px !important;
+        width: 312px !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
+        visibility: visible !important;
+        opacity: 1 !important;
+    }
+    [data-testid="stSidebar"]::after {
+        content: "FILTROS";
+        position: fixed;
+        top: 138px;
+        left: 5px;
+        z-index: 100005;
+        writing-mode: vertical-rl;
+        transform: rotate(180deg);
+        color: #ffffff;
+        background: #005691;
+        border-radius: 0 6px 6px 0;
+        padding: 10px 5px;
+        font-size: 10px;
+        font-weight: 800;
+        letter-spacing: .5px;
+        pointer-events: none;
+    }
+    [data-testid="stSidebar"]:hover::after,
+    [data-testid="stSidebar"]:focus-within::after {
+        display: none;
     }
     .subtitulo-pagina {
         color: #6c757d;
@@ -112,6 +300,117 @@ st.markdown(
         border-radius: 8px;
         box-shadow: 0 4px 12px rgba(0, 43, 73, 0.05);
         border: 1px solid #e2e8f0;
+    }
+    /* Botões: contraste e hierarquia para ações de decisão. */
+    div.stButton > button,
+    div.stDownloadButton > button {
+        min-height: 38px;
+        border: 1px solid #b8c9d8;
+        border-radius: 7px;
+        background: linear-gradient(180deg, #ffffff 0%, #f4f7fa 100%);
+        color: #002b49;
+        font-weight: 700;
+        box-shadow: 0 2px 5px rgba(15, 42, 68, 0.08);
+        transition: transform .16s ease, box-shadow .16s ease, border-color .16s ease, background .16s ease;
+    }
+    div.stButton > button:hover,
+    div.stDownloadButton > button:hover {
+        border-color: #028090;
+        background: #f0fdfa;
+        box-shadow: 0 5px 12px rgba(2, 128, 144, 0.16);
+        transform: translateY(-1px);
+    }
+    div.stButton > button:active,
+    div.stDownloadButton > button:active {
+        transform: translateY(0);
+        box-shadow: 0 1px 3px rgba(15, 42, 68, 0.12);
+    }
+    div.stButton > button:focus-visible,
+    div.stDownloadButton > button:focus-visible {
+        outline: 3px solid rgba(2, 128, 144, 0.25);
+        outline-offset: 2px;
+    }
+    div.stDownloadButton > button,
+    div.st-key-btn_gerar_relatorio_nl button,
+    [class*="st-key-adicionar_objeto_"] button {
+        border-color: #007b84;
+        background: linear-gradient(135deg, #005691 0%, #028090 100%);
+        color: #ffffff;
+        box-shadow: 0 4px 10px rgba(0, 86, 145, 0.22);
+    }
+    div.stDownloadButton > button:hover,
+    div.st-key-btn_gerar_relatorio_nl button:hover,
+    [class*="st-key-adicionar_objeto_"] button:hover {
+        border-color: #006f78;
+        background: linear-gradient(135deg, #004a7c 0%, #01757d 100%);
+        color: #ffffff;
+    }
+    div.stDownloadButton > button:disabled,
+    div.st-key-btn_gerar_relatorio_nl button:disabled,
+    [class*="st-key-adicionar_objeto_"] button:disabled {
+        opacity: 1 !important;
+        border-color: #cbd5e1 !important;
+        background: #e8eef3 !important;
+        color: #64748b !important;
+        box-shadow: none !important;
+        cursor: not-allowed !important;
+        transform: none !important;
+    }
+    div.stDownloadButton > button:disabled:hover,
+    div.st-key-btn_gerar_relatorio_nl button:disabled:hover,
+    [class*="st-key-adicionar_objeto_"] button:disabled:hover {
+        border-color: #cbd5e1 !important;
+        background: #e8eef3 !important;
+        color: #64748b !important;
+        box-shadow: none !important;
+        transform: none !important;
+    }
+    [class*="st-key-limpar_"] button {
+        border-color: #d8b4b4;
+        color: #9f2d2d;
+        background: #fffafa;
+        box-shadow: none;
+    }
+    [class*="st-key-limpar_"] button:hover {
+        border-color: #c65b5b;
+        color: #8b2525;
+        background: #fff1f1;
+        box-shadow: 0 4px 10px rgba(159, 45, 45, 0.12);
+    }
+    /* Ação de adicionar: mantém o rótulo visível antes, durante e depois do hover. */
+    div.stButton[class*="st-key-adicionar_objeto_"] > button,
+    [class*="st-key-adicionar_objeto_"] button {
+        border-color: #d8b4b4 !important;
+        color: #9f2d2d !important;
+        background: #fffafa !important;
+        box-shadow: none !important;
+    }
+    div.stButton[class*="st-key-adicionar_objeto_"] > button:hover:not(:disabled),
+    [class*="st-key-adicionar_objeto_"] button:hover:not(:disabled) {
+        border-color: #c65b5b !important;
+        color: #8b2525 !important;
+        background: #fff1f1 !important;
+        box-shadow: 0 4px 10px rgba(198, 91, 91, 0.14) !important;
+        transform: translateY(-1px);
+    }
+    /* Grades da priorização: cabeçalho institucional e leitura reforçada. */
+    [data-testid="stDataFrame"] [role="columnheader"] {
+        background: #005691 !important;
+        color: #ffffff !important;
+        border-color: #004a7c !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stDataFrame"] [role="columnheader"] * {
+        color: #ffffff !important;
+        fill: #ffffff !important;
+        font-weight: 700 !important;
+    }
+    [data-testid="stDataFrame"] [role="gridcell"],
+    [data-testid="stDataFrame"] [role="gridcell"] * {
+        color: #173a5e !important;
+    }
+    [data-testid="stDataFrame"] [role="gridcell"] {
+        border-color: #d8e1ea !important;
     }
     .div-titulo {
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
@@ -297,35 +596,35 @@ st.markdown(
         width: 100%;
         border-collapse: collapse;
         font-family: 'Segoe UI', sans-serif;
-        font-size: 13px;
+        font-size: 12px;
         table-layout: auto;
         margin: 0 !important;
     }
     .tabela-simples th {
         color: #ffffff;
         font-weight: 700;
-        font-size: 11px;
-        letter-spacing: 0.5px;
+        font-size: 12px;
+        letter-spacing: 0.3px;
         text-transform: uppercase;
-        padding: 10px 12px;
+        padding: 9px 12px;
         border-bottom: 2px solid #092e4d;
         background-color: #092e4d;
         vertical-align: middle;
     }
     .tabela-simples td {
-        padding: 8px 12px;
+        padding: 9px 12px;
         border-bottom: 1px solid #f1f5f9;
         color: #334155;
         vertical-align: middle;
     }
     .tabela-simples tr.total-row td {
         color: #002b49;
-        font-weight: 800;
-        font-size: 13px;
+        font-weight: 700;
+        font-size: 12px;
         border-top: 2px solid #005691;
         border-bottom: none;
         background-color: #f1f5f9;
-        padding: 8px 12px !important;
+        padding: 9px 12px !important;
         line-height: 1.2 !important;
         vertical-align: middle;
     }
@@ -341,6 +640,81 @@ st.markdown(
         width: 32%;
         white-space: nowrap;
     }
+    .progresso-priorizacao {
+        margin: 10px 0 18px 0;
+    }
+    .progresso-priorizacao-texto {
+        display: block;
+        min-height: 22px;
+        line-height: 22px;
+        color: #334155;
+        font-size: 13px;
+        font-weight: 500;
+    }
+    .progresso-priorizacao-texto strong {
+        color: #028090;
+        font-weight: 700;
+    }
+    .progresso-priorizacao-trilha {
+        width: 100%;
+        height: 8px;
+        margin-top: 5px;
+        border-radius: 999px;
+        overflow: hidden;
+        background: #e2e8f0;
+    }
+    .progresso-priorizacao-preenchimento {
+        height: 100%;
+        min-width: 0;
+        border-radius: inherit;
+        background: linear-gradient(90deg, #028090, #0ea5a8);
+    }
+    /* Grades da Priorização: contraste institucional, sem o cinza apagado
+       do componente padrão do Streamlit. */
+    .tabela-priorizacao-executiva {
+        width: 100%;
+        overflow: auto;
+        border: 1px solid #b9cce0;
+        border-radius: 8px;
+        background: #ffffff;
+        box-shadow: 0 2px 7px rgba(15, 46, 76, 0.08);
+    }
+    .tabela-priorizacao-executiva-grade {
+        display: grid;
+        min-width: 780px;
+        font-size: 13px;
+        color: #173a5e;
+    }
+    .tabela-priorizacao-executiva-cabecalho {
+        padding: 11px 10px;
+        position: sticky;
+        top: 0;
+        z-index: 3;
+        background: linear-gradient(90deg, #315b85, #4d7fa8);
+        color: #ffffff !important;
+        font-size: 12px;
+        font-weight: 700;
+        letter-spacing: 0.15px;
+        text-align: left;
+        border-right: 1px solid rgba(255,255,255,0.28);
+        white-space: nowrap;
+    }
+    .tabela-priorizacao-executiva-celula {
+        padding: 10px;
+        color: #173a5e !important;
+        background: #ffffff;
+        border-top: 1px solid #dce6ef;
+        border-right: 1px solid #e4ebf2;
+        vertical-align: middle;
+    }
+    .tabela-priorizacao-executiva-celula.centralizado { text-align: center; }
+    .tabela-priorizacao-executiva-celula.linha-par { background: #f8fbfe; }
+    .tabela-priorizacao-executiva-celula.linha-total {
+        background: #e7f0f8 !important;
+        color: #002b49 !important;
+        font-weight: 700;
+        border-top: 2px solid #005691;
+    }
     </style>
 """,
     unsafe_allow_html=True,
@@ -352,6 +726,56 @@ def formatar_brl(valor):
         f"{valor:,.2f}".replace(",", "v").replace(".", ",").replace("v", ".")
     )
     return f"R$ {val_str}"
+
+
+def renderizar_tabela_priorizacao(
+    df, colunas_centralizadas=None, altura_maxima=None, template_colunas=None
+):
+    """Renderiza tabelas somente-leitura com contraste executivo estável.
+
+    O componente nativo do Streamlit usa canvas em algumas versões, o que pode
+    ignorar estilos de cabeçalho. Nesta tela as grades são apenas de consulta;
+    por isso a tabela HTML preserva o padrão visual institucional.
+    """
+    colunas_centralizadas = set(colunas_centralizadas or [])
+    dados = df.copy().fillna("")
+    if dados.empty:
+        st.info("Não há registros para os filtros selecionados.")
+        return
+
+    quantidade_colunas = len(dados.columns)
+    if template_colunas and len(template_colunas) == quantidade_colunas:
+        template_grade = " ".join(template_colunas)
+    else:
+        template_grade = f"repeat({quantidade_colunas}, minmax(110px, 1fr))"
+    itens_grade = [
+        f'<div class="tabela-priorizacao-executiva-cabecalho">{html.escape(str(coluna))}</div>'
+        for coluna in dados.columns
+    ]
+    for indice_linha, (_, registro) in enumerate(dados.iterrows()):
+        eh_total = any(
+            str(valor).strip().upper() == "TOTAL GERAL" for valor in registro.values
+        )
+        classe_linha = "linha-total" if eh_total else ("linha-par" if indice_linha % 2 else "")
+        for coluna, valor in registro.items():
+            classes = ["tabela-priorizacao-executiva-celula", classe_linha]
+            if coluna in colunas_centralizadas:
+                classes.append("centralizado")
+            texto = html.escape(str(valor))
+            itens_grade.append(f'<div class="{" ".join(classes)}">{texto}</div>')
+
+    estilo_altura = f"max-height:{int(altura_maxima)}px;" if altura_maxima else ""
+    st.markdown(
+        f"""
+        <div class="tabela-priorizacao-executiva" style="{estilo_altura}">
+          <div class="tabela-priorizacao-executiva-grade"
+               style="grid-template-columns: {template_grade};">
+            {"".join(itens_grade)}
+          </div>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
 
 
 def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
@@ -496,18 +920,327 @@ def ler_csv_url(url):
 
 
 # -------------------------------------------------------------------------
-# BOTÃO DE TRANSIÇÃO DAS TELAS
+# DADOS DA TELA DE PLANEJAMENTO
+# A tela é somente analítica: usa a mesma origem da NL e nunca grava nela.
 # -------------------------------------------------------------------------
-st.sidebar.markdown("### 🏛️ Módulo do Sistema")
+LINK_NL_DOCUMENTOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWnQkc7oF-YdXKoVTiYeUPYDHGzaeQaiEGqX6fNmB29mkzcd1kAvZVMujFDf02y7j1X8UJzqglAzTL/pub?gid=1892412645&single=true&output=csv"
+LINK_NL_RELACOES = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTDHDK6dPnS9favMwwkNSLYZ5i9yjQrJjCEGxpifdQfD9_8dAsHSVlc8TECEyKJi0hWy3Wi5gEM_tI0/pub?gid=1866981074&single=true&output=csv"
 
-tela_selecionada = st.sidebar.radio(
-    "Selecione o Painel:",
-    options=["Pagamentos (OB)", "Liquidação (NL)"],
-    index=0 if st.session_state["tela_atual"] == "Pagamentos (OB)" else 1,
-    horizontal=True,
-    key="seletor_tela_global",
-)
-st.session_state["tela_atual"] = tela_selecionada
+# Planilha exclusiva da priorização. A base de NL permanece somente para leitura.
+URL_API_PRIORIZACAO = "https://script.google.com/macros/s/AKfycbxJn-8aq4QgZTYj7QuJg8qgAkZOt3_88hq68UG832QUj-o22wKbmbNEGm5WsxocU9NQ/exec"
+
+
+def _valor_json_seguro(valor):
+    """Converte tipos do pandas/numpy para um valor aceito pelo Apps Script."""
+    if valor is None or (isinstance(valor, float) and not np.isfinite(valor)):
+        return None
+    if isinstance(valor, (pd.Timestamp, datetime.datetime, datetime.date)):
+        return valor.isoformat()
+    if isinstance(valor, np.generic):
+        return valor.item()
+    try:
+        return None if pd.isna(valor) else valor
+    except (TypeError, ValueError):
+        return valor
+
+
+def _registros_json(df):
+    if df is None or df.empty:
+        return []
+    return [
+        {str(chave): _valor_json_seguro(valor) for chave, valor in linha.items()}
+        for linha in df.to_dict(orient="records")
+    ]
+
+
+def carregar_priorizacao_google():
+    """Lê pactuados e programação já salvos no Apps Script da Fonte 500."""
+    try:
+        req = urllib.request.Request(
+            URL_API_PRIORIZACAO,
+            headers={"User-Agent": "Mozilla/5.0"},
+        )
+        # A tela não deve ficar bloqueada por uma inicialização lenta do Apps
+        # Script. Em caso de falha, o usuário ainda monta o cenário localmente.
+        with urllib.request.urlopen(req, timeout=20) as resposta:
+            conteudo = json.loads(resposta.read().decode("utf-8"))
+        if not isinstance(conteudo, dict) or conteudo.get("ok") is False:
+            raise ValueError("A planilha retornou uma resposta inválida.")
+        return conteudo
+    except Exception as erro:
+        return {"ok": False, "erro": str(erro), "pactuados": [], "programacao": []}
+
+
+def salvar_priorizacao_google(pactuados, programacao):
+    """Substitui o espelho de planejamento na planilha, sem tocar na NL/OB."""
+    carga = {
+        "acao": "salvar_tudo",
+        "pactuados": _registros_json(pactuados),
+        "programacao": _registros_json(programacao),
+    }
+    dados = json.dumps(carga, ensure_ascii=False).encode("utf-8")
+    req = urllib.request.Request(
+        URL_API_PRIORIZACAO,
+        data=dados,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "Mozilla/5.0",
+        },
+        method="POST",
+    )
+    # A planilha pode levar alguns segundos para aplicar os dois conjuntos de
+    # dados. Aguarda a confirmação para não criar novas gravações em paralelo.
+    with urllib.request.urlopen(req, timeout=120) as resposta:
+        retorno = json.loads(resposta.read().decode("utf-8"))
+    if not isinstance(retorno, dict) or retorno.get("ok") is False:
+        raise ValueError(str(retorno.get("erro", "A planilha não confirmou a gravação.")))
+    return retorno
+
+
+def classificar_grupo_planejamento(valor):
+    texto = "" if pd.isna(valor) else str(valor).strip().upper()
+    compacto = re.sub(r"[^A-Z0-9]", "", texto)
+    if re.search(r"\b(GD|GND)1\b", texto) or compacto in {"1", "GD1", "GND1"} or compacto.startswith("1PESSOAL"):
+        return "GD1"
+    if re.search(r"\b(GD|GND)3\b", texto) or compacto in {"3", "GD3", "GND3"} or compacto.startswith("3OUTRAS"):
+        return "GD3"
+    if re.search(r"\b(GD|GND)4\b", texto) or compacto in {"4", "GD4", "GND4"} or compacto.startswith("4INVESTIMENTOS"):
+        return "GD4"
+    return "NÃO INFORMADO"
+
+
+@st.cache_data(ttl=300)
+def carregar_dados_planejamento_nl():
+    """Versão enxuta da integração da NL, exclusiva para análise de metas."""
+    try:
+        docs = ler_csv_url(LINK_NL_DOCUMENTOS)
+        relacoes = ler_csv_url(LINK_NL_RELACOES)
+    except Exception:
+        return pd.DataFrame()
+    if docs.empty:
+        return pd.DataFrame()
+
+    docs.columns = [str(c).strip() for c in docs.columns]
+    relacoes.columns = [str(c).strip() for c in relacoes.columns]
+    col_ne_docs = next((c for c in docs.columns if any(x in c.upper() for x in ["DOCUMENTONE", "NE", "EMPENHO"])), docs.columns[0])
+    col_valor = next((c for c in docs.columns if c.strip().upper() == "VALOR"), docs.columns[-1])
+    col_data = next((c for c in docs.columns if "DATA" in c.upper()), None)
+    col_grupo_docs = next((c for c in docs.columns if c.strip().upper() == "GRUPO"), None)
+    col_fonte_docs = next((c for c in docs.columns if "FONTE" in c.upper()), None)
+    col_status_docs = next((c for c in docs.columns if c.strip().upper() == "STATUS"), None)
+    col_tipo_docs = next((c for c in docs.columns if "TIPO" in c.upper() and "NL" in c.upper()), None)
+
+    def chave_ne(serie):
+        return serie.fillna("").astype(str).str.strip().str.upper().str.replace(r"\.0$", "", regex=True).str.replace(r"[^A-Z0-9]", "", regex=True)
+
+    def moeda(serie):
+        def converter(valor):
+            texto = str(valor).strip().replace("R$", "").replace(" ", "")
+            if "," in texto and "." in texto:
+                texto = texto.replace(".", "").replace(",", ".")
+            elif "," in texto:
+                texto = texto.replace(",", ".")
+            return pd.to_numeric(texto, errors="coerce")
+        return serie.map(converter).fillna(0.0)
+
+    docs["NE_Chave"] = chave_ne(docs[col_ne_docs])
+    docs["Valor_Executado"] = moeda(docs[col_valor])
+    docs["Data_DT"] = pd.to_datetime(docs[col_data], errors="coerce") if col_data else pd.NaT
+    docs["Mês"] = docs["Data_DT"].dt.strftime("%m/%Y").fillna("Não informado")
+    docs["Grupo_Base"] = docs[col_grupo_docs].apply(classificar_grupo_planejamento) if col_grupo_docs else "NÃO INFORMADO"
+    docs["Fonte_Base"] = docs[col_fonte_docs].fillna("NÃO INFORMADA").astype(str).str.strip() if col_fonte_docs else "NÃO INFORMADA"
+    docs["Status"] = docs[col_status_docs].fillna("Não informado").astype(str).str.strip() if col_status_docs else "Não informado"
+    docs["Tipo de NL"] = docs[col_tipo_docs].fillna("Não informado").astype(str).str.strip() if col_tipo_docs else "Não informado"
+
+    col_ne_rel = next((c for c in relacoes.columns if any(x in c.upper() for x in ["DOCUMENTONE", "NE", "EMPENHO"])), relacoes.columns[0])
+    col_fonte = next((c for c in relacoes.columns if "FONTE" in c.upper()), None)
+    col_objeto = next((c for c in relacoes.columns if "OBJETO" in c.upper()), None)
+    col_grupo_rel = next((c for c in relacoes.columns if c.strip().upper() == "GRUPO"), None)
+    relacoes["NE_Chave"] = chave_ne(relacoes[col_ne_rel])
+    relacoes["Fonte"] = relacoes[col_fonte].fillna("NÃO INFORMADA").astype(str).str.strip() if col_fonte else "NÃO INFORMADA"
+    relacoes["Objeto"] = relacoes[col_objeto].fillna("NÃO INFORMADO").astype(str).str.strip() if col_objeto else "NÃO INFORMADO"
+    relacoes["Grupo_Relacao"] = relacoes[col_grupo_rel].apply(classificar_grupo_planejamento) if col_grupo_rel else "NÃO INFORMADO"
+    relacoes = relacoes[relacoes["NE_Chave"] != ""].drop_duplicates("NE_Chave")
+
+    dados = docs.merge(relacoes[["NE_Chave", "Fonte", "Objeto", "Grupo_Relacao"]], on="NE_Chave", how="left")
+    dados["Fonte"] = dados["Fonte"].fillna("").astype(str).str.strip()
+    dados.loc[dados["Fonte"].isin(["", "NAN", "NÃO INFORMADA"]), "Fonte"] = dados.loc[
+        dados["Fonte"].isin(["", "NAN", "NÃO INFORMADA"]), "Fonte_Base"
+    ]
+    dados["Fonte"] = dados["Fonte"].replace("", "NÃO INFORMADA")
+    dados["Objeto"] = dados["Objeto"].fillna("NÃO INFORMADO")
+    dados["Grupo"] = dados["Grupo_Relacao"].fillna("NÃO INFORMADO")
+    sem_grupo = dados["Grupo"] == "NÃO INFORMADO"
+    dados.loc[sem_grupo, "Grupo"] = dados.loc[sem_grupo, "Grupo_Base"]
+    return dados[["Mês", "Data_DT", "Fonte", "Grupo", "Objeto", "Status", "Tipo de NL", "Valor_Executado"]]
+
+
+@st.cache_data(ttl=300)
+def carregar_base_nl_espelho_planejamento():
+    """Replica o mesmo relacionamento Fonte/Objeto/Grupo usado no painel NL."""
+    try:
+        df1 = ler_csv_url(LINK_NL_DOCUMENTOS)
+        df2 = ler_csv_url(LINK_NL_RELACOES)
+    except Exception:
+        return pd.DataFrame()
+    if df1.empty:
+        return pd.DataFrame()
+
+    df1.columns = [str(c).strip() for c in df1.columns]
+    df2.columns = [str(c).strip() for c in df2.columns]
+
+    def chave_ne(serie):
+        return (
+            serie.fillna("").astype(str).str.strip().str.upper()
+            .str.replace(r"\.0$", "", regex=True)
+            .str.replace(r"[^A-Z0-9]", "", regex=True)
+        )
+
+    def valor_nl(serie):
+        texto = serie.fillna("0").astype(str)
+        texto = texto.str.replace(r"[R$\s.]", "", regex=True).str.replace(",", ".")
+        return pd.to_numeric(texto, errors="coerce").fillna(0.0)
+
+    col_ne1 = next((c for c in df1.columns if any(p in c.upper() for p in ["NE", "EMPENHO", "DOCUMENTONE"])), df1.columns[0])
+    col_valor = "Valor" if "Valor" in df1.columns else df1.columns[-1]
+    col_data = next((c for c in df1.columns if "data" in c.lower()), None)
+    col_credor = next((c for c in df1.columns if "NOME" in c.upper() and "CREDOR" in c.upper()), None)
+    if col_credor is None:
+        col_credor = next((c for c in df1.columns if "CREDOR" in c.upper()), None)
+    col_numero = next((c for c in df1.columns if c.strip().upper() in ["NÚMERO", "NUMERO"]), None)
+    df1["NE_Chave"] = chave_ne(df1[col_ne1])
+    # Mantém a mesma interpretação de data utilizada no painel de NL.
+    df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce") if col_data else pd.NaT
+    df1["Competencia"] = df1["Data_DT"].dt.strftime("%m/%Y").fillna("Não informada")
+    df1["Grupo_Filtro"] = df1["Grupo"].fillna("Todos").astype(str).str.strip() if "Grupo" in df1.columns else "Todos"
+    df1["Status_Filtro"] = df1["Status"].fillna("Não informado").astype(str).str.strip() if "Status" in df1.columns else "Não informado"
+    col_tipo = next((c for c in df1.columns if "TIPO" in c.upper() and "NL" in c.upper()), None)
+    df1["Tipo_NL_Filtro"] = df1[col_tipo].fillna("Não informado").astype(str).str.strip() if col_tipo else "Não informado"
+    df1["Valor_Total_Limpo"] = valor_nl(df1[col_valor])
+    df1["Credor_NL"] = df1[col_credor].fillna("Não informado").astype(str).str.strip() if col_credor else "Não informado"
+    df1["Numero_NL"] = df1[col_numero].fillna("").astype(str).str.strip() if col_numero else ""
+
+    col_ne2 = "DocumentoNE" if "DocumentoNE" in df2.columns else next((c for c in df2.columns if "NE" in c.upper()), df2.columns[0])
+    col_fonte2 = "Fonte" if "Fonte" in df2.columns else next((c for c in df2.columns if "FONTE" in c.upper()), None)
+    col_objeto2 = "Objeto da Despesa" if "Objeto da Despesa" in df2.columns else next((c for c in df2.columns if "OBJETO" in c.upper()), None)
+    col_grupo2 = "Grupo" if "Grupo" in df2.columns else next((c for c in df2.columns if "GRUPO" in c.upper()), None)
+    df2["NE_Chave"] = chave_ne(df2[col_ne2])
+    df2["Fonte_Relacao"] = df2[col_fonte2].fillna("NÃO INFORMADA").astype(str).str.strip() if col_fonte2 else "NÃO INFORMADA"
+    df2["Objeto_Relacao"] = df2[col_objeto2].fillna("NÃO INFORMADO").astype(str).str.strip() if col_objeto2 else "NÃO INFORMADO"
+    df2["Grupo_Relacao"] = df2[col_grupo2].fillna("NÃO INFORMADO").astype(str).str.strip() if col_grupo2 else "NÃO INFORMADO"
+    df2 = df2[df2["NE_Chave"] != ""].drop_duplicates(subset=["NE_Chave"])
+
+    base = pd.merge(
+        df1,
+        df2[["NE_Chave", "Fonte_Relacao", "Objeto_Relacao", "Grupo_Relacao"]],
+        on="NE_Chave",
+        how="left",
+    )
+    base["Fonte_Relacao"] = base["Fonte_Relacao"].fillna("NÃO INFORMADA")
+    base["Objeto_Relacao"] = base["Objeto_Relacao"].fillna("NÃO INFORMADO")
+    base["Grupo_Relacao"] = base["Grupo_Relacao"].fillna("NÃO INFORMADO")
+    base["Grupo_Classificado"] = base["Grupo_Relacao"].apply(classificar_grupo_planejamento)
+    sem_grupo = base["Grupo_Classificado"] == "NÃO INFORMADO"
+    base.loc[sem_grupo, "Grupo_Classificado"] = base.loc[sem_grupo, "Grupo_Filtro"].apply(classificar_grupo_planejamento)
+    return base
+
+
+@st.cache_data(ttl=300)
+def carregar_historico_ob_fonte_500():
+    """Histórico pago da mesma BASE consolidada exibida no painel de OB."""
+    link_base_ob = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/pub?gid=1786485134&single=true&output=csv"
+    try:
+        df = ler_csv_url(link_base_ob)
+    except Exception:
+        return pd.DataFrame()
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    for coluna in ["Número", "NE", "Data Emissão", "Valor", "Fonte", "Nome do Credor", "Tipo de OB", "GRUPO", "Despesa"]:
+        if coluna not in df.columns:
+            df[coluna] = None
+    df = df.dropna(subset=["Valor"]).copy()
+
+    # Mesma chave de segurança usada no painel de Pagamentos (OB).
+    chaves = []
+    for coluna in ["Número", "NE", "Data Emissão", "Valor", "Fonte", "Nome do Credor", "Tipo de OB"]:
+        chave = f"__historico_{coluna}"
+        if coluna == "Valor":
+            df[chave] = converter_valor_monetario(df[coluna]).round(2)
+        elif coluna == "Data Emissão":
+            data = pd.to_datetime(df[coluna], errors="coerce", dayfirst=True)
+            df[chave] = data.dt.strftime("%Y-%m-%d").fillna(df[coluna].fillna("").astype(str).str.strip().str.upper())
+        else:
+            df[chave] = df[coluna].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+        chaves.append(chave)
+    df = df.drop_duplicates(subset=chaves, keep="first").copy()
+
+    df["Valor_Pago"] = converter_valor_monetario(df["Valor"])
+    datas = pd.to_datetime(df["Data Emissão"], errors="coerce", dayfirst=True)
+    mapa_meses = {
+        1: "Jan/2026", 2: "Fev/2026", 3: "Mar/2026", 4: "Abr/2026",
+        5: "Mai/2026", 6: "Jun/2026", 7: "Jul/2026", 8: "Ago/2026",
+        9: "Set/2026", 10: "Out/2026", 11: "Nov/2026", 12: "Dez/2026",
+    }
+    df["Mês"] = datas.dt.month.map(mapa_meses).fillna("Não identificado")
+    grupo_texto = df["GRUPO"].fillna("").astype(str).str.upper()
+    df["Grupo"] = np.where(
+        grupo_texto.str.contains("INVEST|4", regex=True),
+        "4 - INVESTIMENTOS",
+        "3 - OUTRAS DESPESAS CORRENTES",
+    )
+    despesa_texto = df["Despesa"].fillna("").astype(str).str.upper()
+    df["Tipo de Despesa"] = np.select(
+        [
+            despesa_texto.str.contains("DEA|EXERC|ANTERIOR|RECONHECIMENTO", regex=True),
+            despesa_texto.str.contains("RP|RESTO|PAGAR", regex=True),
+        ],
+        ["DEA", "RP"],
+        default="CORRENTE",
+    )
+    fonte_500 = df["Fonte"].fillna("").astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False)
+    return df.loc[fonte_500, ["Número", "Mês", "Grupo", "Tipo de Despesa", "Valor_Pago"]]
+
+
+# -------------------------------------------------------------------------
+# NAVEGAÇÃO PRINCIPAL ENTRE AS TELAS
+# -------------------------------------------------------------------------
+# Mantém a tela selecionada durante a atualização do nome exibido no menu.
+if st.session_state.get("tela_atual") == "Planejamento NL":
+    st.session_state["tela_atual"] = "Planejar Priorização"
+
+opcoes_tela = ["Pagamentos (OB)", "Liquidação (NL)", "Planejar Priorização"]
+if (
+    "seletor_tela_global" not in st.session_state
+    or st.session_state["seletor_tela_global"] not in opcoes_tela
+):
+    st.session_state["seletor_tela_global"] = st.session_state["tela_atual"]
+
+with st.container(key="topo_navegacao"):
+    st.markdown(
+        """
+        <div class='barra-sistema'>
+            <span class='marca-sistema'>🏛️ SEAF | Painel de Controle Financeiro</span>
+            <span class='exercicio-sistema'>EXERCÍCIO 2026</span>
+        </div>
+        """,
+        unsafe_allow_html=True,
+    )
+    tela_selecionada = st.segmented_control(
+        "Módulos do sistema",
+        options=opcoes_tela,
+        format_func=lambda opcao: {
+            "Pagamentos (OB)": "💳 Pagamentos (OB)",
+            "Liquidação (NL)": "📑 Liquidação (NL)",
+            "Planejar Priorização": "🎯 Planejar Priorização",
+        }[opcao],
+        selection_mode="single",
+        key="seletor_tela_global",
+        label_visibility="collapsed",
+    )
+st.session_state["tela_atual"] = tela_selecionada or st.session_state["tela_atual"]
 
 st.sidebar.markdown("---")
 
@@ -2484,3 +3217,1292 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
     else:
         st.warning("Aguardando carregamento e relacionamento das planilhas...")
+
+elif st.session_state["tela_atual"] == "Planejar Priorização":
+    st.markdown(
+        "<h2 class='titulo-pagina'>🎯 Priorização da Semana — Exercício 2026</h2>",
+        unsafe_allow_html=True,
+    )
+
+    base_nl_espelho = carregar_base_nl_espelho_planejamento()
+    if base_nl_espelho.empty:
+        st.warning("Não foi possível carregar a base de Liquidações para o planejamento.")
+        st.stop()
+    dados_planejamento = pd.DataFrame(
+        {
+            "Mês": base_nl_espelho["Competencia"],
+            "Data_DT": base_nl_espelho["Data_DT"],
+            "Fonte": base_nl_espelho["Fonte_Relacao"],
+            "Grupo": base_nl_espelho["Grupo_Classificado"],
+            "Objeto": base_nl_espelho["Objeto_Relacao"],
+            "Status": base_nl_espelho["Status_Filtro"],
+            "Tipo de NL": base_nl_espelho["Tipo_NL_Filtro"],
+            "Credor": base_nl_espelho["Credor_NL"],
+            "Número NL": base_nl_espelho["Numero_NL"],
+            "Valor_Executado": base_nl_espelho["Valor_Total_Limpo"],
+        }
+    )
+
+    # A pactuação deste fluxo é exclusiva da Fonte 500. O usuário informa um
+    # valor mensal por grupo e organiza, com base nas NL, as prioridades das 4 semanas.
+    def ordenar_mes_planejamento(valor):
+        try:
+            return datetime.datetime.strptime(str(valor), "%m/%Y")
+        except ValueError:
+            return datetime.datetime.max
+
+    base_fonte_500 = dados_planejamento[
+        dados_planejamento["Fonte"].astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False)
+    ].copy()
+    if base_fonte_500.empty:
+        st.warning("Não há liquidações identificadas para a Fonte 500.")
+        st.stop()
+
+    # O planejamento deste exercício trabalha exclusivamente com competências de 2026.
+    meses_500 = sorted(
+        [mes for mes in base_fonte_500["Mês"].dropna().unique() if str(mes).endswith("/2026")],
+        key=ordenar_mes_planejamento,
+    )
+    grupos_500 = sorted(base_fonte_500["Grupo"].dropna().astype(str).unique())
+    tipos_nl_500 = sorted(base_fonte_500["Tipo de NL"].dropna().astype(str).unique())
+    if not meses_500:
+        st.warning("Não há competências de 2026 identificadas na Fonte 500.")
+        st.stop()
+    grupos_validos_planejamento = [
+        grupo for grupo in st.session_state["mem_plan_grupos"] if grupo in grupos_500
+    ]
+    if "grupos_planejamento_nl" not in st.session_state:
+        st.session_state["grupos_planejamento_nl"] = grupos_validos_planejamento
+    tipos_validos_planejamento = [
+        tipo for tipo in st.session_state["mem_plan_tipos_nl"] if tipo in tipos_nl_500
+    ]
+    if "tipos_nl_planejamento_nl" not in st.session_state:
+        st.session_state["tipos_nl_planejamento_nl"] = tipos_validos_planejamento
+    # O seletor abaixo controla somente o mês em que a programação será feita.
+    # Para que os totais sejam idênticos aos da tela de NL, a disponibilidade
+    # considera todo o histórico da Fonte 500, inclusive NL de competências
+    # anteriores (por exemplo, RPP de 2025 liquidado no exercício atual).
+    meses_aplicados = sorted(
+        base_fonte_500["Mês"].dropna().astype(str).unique(),
+        key=ordenar_mes_planejamento,
+    )
+    # A programação pode ser feita para o mês mais atual da consulta ou para
+    # qualquer mês posterior do exercício, mesmo antes de existirem NL nele.
+    ultimo_mes_fonte = max(ordenar_mes_planejamento(mes) for mes in meses_aplicados)
+    meses_programacao = [
+        f"{numero_mes:02d}/2026"
+        for numero_mes in range(ultimo_mes_fonte.month, 13)
+    ]
+    if (
+        "mes_planejamento_semana_nl" not in st.session_state
+        or st.session_state["mes_planejamento_semana_nl"] not in meses_programacao
+    ):
+        mes_memoria = st.session_state["mem_plan_mes_programacao"]
+        st.session_state["mes_planejamento_semana_nl"] = (
+            mes_memoria if mes_memoria in meses_programacao else meses_programacao[0]
+        )
+    st.sidebar.markdown("#### 🎯 Planejamento semanal — Fonte 500")
+    grupos_consulta = st.sidebar.multiselect(
+        "Grupos",
+        grupos_500,
+        key="grupos_planejamento_nl",
+        placeholder="Todos os grupos",
+        on_change=sincronizar_filtro,
+        args=("mem_plan_grupos", "grupos_planejamento_nl"),
+    )
+    tipos_nl_consulta = st.sidebar.multiselect(
+        "Tipos de NL",
+        tipos_nl_500,
+        key="tipos_nl_planejamento_nl",
+        placeholder="Todos os tipos de NL",
+        on_change=sincronizar_filtro,
+        args=("mem_plan_tipos_nl", "tipos_nl_planejamento_nl"),
+    )
+    mes_planejado = st.sidebar.selectbox(
+        "Mês para programar as semanas",
+        meses_programacao,
+        key="mes_planejamento_semana_nl",
+        on_change=sincronizar_filtro,
+        args=("mem_plan_mes_programacao", "mes_planejamento_semana_nl"),
+    )
+    grupos_aplicados = grupos_consulta if grupos_consulta else grupos_500
+    tipos_nl_aplicados = tipos_nl_consulta if tipos_nl_consulta else tipos_nl_500
+    grupo_planejado = " + ".join(grupos_aplicados)
+
+    # Resumo sem limitar pelo mês: é o mesmo recorte exibido na tela NL quando
+    # Fonte 500 e o grupo selecionado estão ativos. O mês fica só para planejar semanas.
+    base_resumo_nl = base_fonte_500[
+        (base_fonte_500["Grupo"].astype(str).isin(grupos_aplicados))
+        & (base_fonte_500["Tipo de NL"].astype(str).isin(tipos_nl_aplicados))
+    ].copy()
+    # A consulta de grupos filtra apenas o catálogo de objetos. O detalhamento
+    # preserva todas as NLs da Fonte 500, inclusive RPP/DEA de exercícios
+    # anteriores, para que uma troca GD3/GD4 não apague itens já programados.
+    base_detalhamento_nl = base_fonte_500.copy()
+    # Os objetos das semanas vêm do recorte atual da NL. O mês de programação
+    # identifica a pactuação, inclusive quando for um mês futuro.
+    base_selecionada = base_resumo_nl.copy()
+    valor_total_resumo = float(base_resumo_nl["Valor_Executado"].sum())
+    valor_gd3_mes_500 = float(
+        base_resumo_nl.loc[base_resumo_nl["Grupo"].astype(str).str.upper() == "GD3", "Valor_Executado"].sum()
+    )
+    valor_gd4_mes_500 = float(
+        base_resumo_nl.loc[base_resumo_nl["Grupo"].astype(str).str.upper() == "GD4", "Valor_Executado"].sum()
+    )
+    qtd_liquidacoes_resumo = int(len(base_resumo_nl))
+
+    def quadro_resumo_planejamento(df, coluna, titulo):
+        resumo = df.groupby(coluna, dropna=False)["Valor_Executado"].sum().sort_values(ascending=False)
+        linhas = "".join(
+            f"<tr><td style='padding:7px;'>{item}</td><td style='padding:7px; text-align:center;'>{formatar_brl(valor)}</td></tr>"
+            for item, valor in resumo.items()
+        )
+        return f"""
+        <div style='border:1px solid #cbd5e1; border-radius:7px; overflow:hidden; margin-bottom:12px;'>
+          <table style='width:100%; border-collapse:collapse; font-size:13px;'>
+            <thead><tr style='background:#dbe7f3; color:#002b49;'>
+              <th style='padding:7px; text-align:left;'>{titulo}</th>
+              <th style='padding:7px; text-align:center;'>SOMA DE VALOR</th>
+            </tr></thead>
+            <tbody>{linhas}
+              <tr style='background:#e8f0f7; border-top:2px solid #2d6a9f; font-weight:700;'>
+                <td style='padding:7px;'>TOTAL GERAL</td>
+                <td style='padding:7px; text-align:center;'>{formatar_brl(resumo.sum())}</td>
+              </tr>
+            </tbody>
+          </table>
+        </div>"""
+
+    st.markdown("#### Liquidações disponíveis para priorização")
+    st.caption(
+        f"Fonte 500 | Meses: {', '.join(meses_aplicados)} | Grupos: {', '.join(grupos_aplicados)}. "
+        "Selecione no painel NL os mesmos filtros para conferir os valores."
+    )
+    card_qtd, card_total, card_gd3, card_gd4 = st.columns(4)
+    with card_qtd:
+        st.markdown(
+            f"""<div class='metric-card'>
+                <p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>QTD DE LIQUIDAÇÕES</p>
+                <h3 style='color:#002b49; margin:5px 0;'>{f'{qtd_liquidacoes_resumo:,}'.replace(',', '.')}</h3>
+                <p style='color:#28a745; font-size:11px; margin:0;'>📋 Documentos NL</p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    with card_total:
+        st.markdown(
+            f"""<div class='metric-card'>
+                <p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL</p>
+                <h3 style='color:#028090; margin:5px 0;'>{formatar_brl(valor_total_resumo)}</h3>
+                <p style='color:#6c757d; font-size:11px; margin:0;'>Total Liquidado</p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    with card_gd3:
+        st.markdown(
+            f"""<div class='metric-card'>
+                <p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD3</p>
+                <h3 style='color:#f77f00; margin:5px 0;'>{formatar_brl(valor_gd3_mes_500)}</h3>
+                <p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD3</p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+    with card_gd4:
+        st.markdown(
+            f"""<div class='metric-card'>
+                <p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD4</p>
+                <h3 style='color:#2563eb; margin:5px 0;'>{formatar_brl(valor_gd4_mes_500)}</h3>
+                <p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD4</p>
+            </div>""",
+            unsafe_allow_html=True,
+        )
+
+    # Respiro visual entre os indicadores e os gráficos de apoio.
+    st.markdown("<div style='height:18px;'></div>", unsafe_allow_html=True)
+
+    # Painel de apoio à reunião: leitura visual do status e do tipo de NL,
+    # usando o espaço antes ocupado por duas tabelas resumidas.
+    coluna_resumos, coluna_historico = st.columns([1, 1.55], gap="large")
+    with coluna_resumos:
+        st.markdown(
+            """
+            <style>
+            div[data-testid="stPlotlyChart"] {
+                background: linear-gradient(145deg, #ffffff 0%, #f8fafc 100%);
+                border: 1px solid #d9e3ed;
+                border-radius: 12px;
+                box-shadow: 0 8px 18px rgba(15, 42, 68, 0.12);
+                box-sizing: border-box;
+                overflow: hidden;
+                padding: 10px 10px 6px;
+                margin: 0 0 14px;
+            }
+            </style>
+            """,
+            unsafe_allow_html=True,
+        )
+        resumo_tipo_grafico = (
+            base_resumo_nl.groupby("Tipo de NL", dropna=False, as_index=False)["Valor_Executado"]
+            .sum()
+            .sort_values("Valor_Executado", ascending=False)
+        )
+        resumo_tipo_grafico["Tipo de NL"] = resumo_tipo_grafico["Tipo de NL"].fillna("Não informado")
+        def rotulo_valor_compacto(valor):
+            """Rótulo curto para não cortar valores no gráfico horizontal."""
+            valor = float(valor or 0)
+            if abs(valor) >= 1_000_000:
+                return f"R$ {valor / 1_000_000:.1f} mi".replace(".", ",")
+            if abs(valor) >= 1_000:
+                return f"R$ {valor / 1_000:.0f} mil".replace(".", ",")
+            return f"R$ {valor:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
+
+        resumo_tipo_grafico["Rótulo"] = resumo_tipo_grafico["Valor_Executado"].apply(
+            rotulo_valor_compacto
+        )
+        grafico_tipo = px.bar(
+            resumo_tipo_grafico,
+            x="Valor_Executado",
+            y="Tipo de NL",
+            orientation="h",
+            text="Rótulo",
+            color="Tipo de NL",
+            color_discrete_map={
+                "Orçamentária": "#0f4c5c",
+                "RPP": "#2c7a7b",
+                "RPNP": "#b7791f",
+                "Não informado": "#64748b",
+            },
+        )
+        grafico_tipo.update_traces(
+            textposition="outside",
+            cliponaxis=False,
+            marker=dict(line=dict(color="#e6edf3", width=1.5)),
+            hovertemplate="<b>%{y}</b><br>R$ %{x:,.0f}<extra></extra>",
+        )
+        grafico_tipo.update_layout(
+            title={"text": "Valores por tipo de NL", "font": {"size": 15, "color": "#002b49"}},
+            # A margem maior e os rótulos compactos impedem o corte à direita.
+            margin=dict(l=8, r=110, t=42, b=8),
+            height=225,
+            showlegend=False,
+            paper_bgcolor="rgba(0,0,0,0)",
+            plot_bgcolor="rgba(0,0,0,0)",
+            hoverlabel=dict(bgcolor="#002b49", font_color="#ffffff"),
+            xaxis=dict(visible=False, showgrid=False),
+            yaxis=dict(
+                title=None,
+                categoryorder="array",
+                categoryarray=resumo_tipo_grafico["Tipo de NL"].tolist(),
+                autorange="reversed",
+            ),
+            separators=",.",
+        )
+        st.plotly_chart(grafico_tipo, use_container_width=True, key="grafico_tipo_planejamento")
+
+        st.markdown(
+            "<div style='border-top:1px solid #dbe4ee; margin:12px 8px 14px;'></div>",
+            unsafe_allow_html=True,
+        )
+
+        # O status é uma informação de conferência: a tabela é mais direta e
+        # legível que o gráfico de pizza para a tomada de decisão.
+        st.markdown("##### Status das liquidações")
+        st.html(quadro_resumo_planejamento(base_resumo_nl, "Status", "STATUS"))
+
+    with coluna_historico:
+        st.markdown("##### Histórico de pagamentos consolidados — Fonte 500")
+        ordem_meses_500 = ["Jan/2026", "Fev/2026", "Mar/2026", "Abr/2026", "Mai/2026", "Jun/2026", "Jul/2026", "Ago/2026"]
+        historico_ob_500 = carregar_historico_ob_fonte_500()
+        if historico_ob_500.empty:
+            st.info("Ainda não há pagamentos consolidados da Fonte 500 na base de OB.")
+        else:
+            resumo_historico_500 = (
+                historico_ob_500.groupby("Mês", as_index=False)
+                .agg(**{"Qtd. Docs": ("Número", "count"), "Total Pago": ("Valor_Pago", "sum")})
+                .set_index("Mês")
+                .reindex(ordem_meses_500, fill_value=0.0)
+                .reset_index()
+            )
+            linhas_historico = ""
+            for _, linha in resumo_historico_500.iterrows():
+                qtd_docs = f"{int(linha['Qtd. Docs']):,}".replace(",", ".")
+                linhas_historico += (
+                    f"<tr style='border-bottom:1px solid #f1f5f9;'>"
+                    f"<td style='padding:8px 12px; text-align:left; color:#334155;'>{linha['Mês']}</td>"
+                    f"<td style='padding:8px 12px; text-align:center; color:#334155;'>{qtd_docs}</td>"
+                    f"<td style='padding:8px 12px; text-align:right; color:#0f172a; font-weight:600;'>{formatar_brl(linha['Total Pago'])}</td>"
+                    f"</tr>"
+                )
+            total_documentos_500 = int(resumo_historico_500["Qtd. Docs"].sum())
+            total_pago_500 = float(resumo_historico_500["Total Pago"].sum())
+            # st.html evita que o Markdown acrescente um parágrafo vazio após a
+            # tabela, mantendo a borda inferior encostada no Total Geral.
+            st.html(
+                f"""
+                <div style='border:1px solid #e2e8f0; border-radius:8px; overflow:hidden; background:#fff; line-height:normal; margin:0; padding:0; display:block;'>
+                  <table style='width:100%; height:auto !important; border-collapse:collapse; border-spacing:0; margin:0 !important; padding:0; display:table !important;'>
+                    <thead><tr style='background:#f8fafc; border-bottom:1px solid #e2e8f0;'>
+                      <th style='padding:10px 12px; color:#475569; font-size:11px; text-align:left;'>MÊS DE REFERÊNCIA</th>
+                      <th style='padding:10px 12px; color:#475569; font-size:11px; text-align:center;'>QTD. DOCS</th>
+                      <th style='padding:10px 12px; color:#475569; font-size:11px; text-align:right;'>TOTAL PAGO</th>
+                    </tr></thead>
+                    <tbody>{linhas_historico}</tbody>
+                    <tfoot><tr style='background:#f8fafc; border-top:2px solid #002b49; font-weight:700;'>
+                      <td style='padding:10px 12px; color:#002b49; border-bottom:0;'>📊 TOTAL GERAL</td>
+                      <td style='padding:10px 12px; text-align:center; color:#002b49; border-bottom:0;'>{f'{total_documentos_500:,}'.replace(',', '.')}</td>
+                      <td style='padding:10px 12px; text-align:right; color:#002b49; border-bottom:0;'>{formatar_brl(total_pago_500)}</td>
+                    </tr></tfoot>
+                  </table>
+                </div>
+                """,
+            )
+
+    objetos_disponiveis = (
+        base_selecionada.groupby(["Grupo", "Objeto"], as_index=False)
+        .agg(
+            **{
+                "Qtd. NL": ("Número NL", lambda serie: serie[serie.astype(str).str.strip() != ""].nunique()),
+                "Competências": (
+                    "Mês",
+                    lambda serie: ", ".join(
+                        sorted(
+                            {str(valor) for valor in serie.dropna() if str(valor).strip()},
+                            key=ordenar_mes_planejamento,
+                        )
+                    ),
+                ),
+                "Tipos de NL": (
+                    "Tipo de NL",
+                    lambda serie: ", ".join(
+                        sorted({str(valor) for valor in serie.dropna() if str(valor).strip()})
+                    ),
+                ),
+                "Valor_Executado": ("Valor_Executado", "sum"),
+            }
+        )
+        .sort_values("Valor_Executado", ascending=False)
+    )
+
+    # A lista de objetos vem antes da programação: é a referência para a reunião.
+    st.divider()
+    st.markdown("### 1. Objetos disponíveis para programar")
+    st.caption(
+        f"Competência de programação: {mes_planejado} | Grupos: {grupo_planejado}. "
+        "A disponibilidade inclui RPP/DEA e demais liquidações de exercícios anteriores da Fonte 500."
+    )
+    objetos_referencia = objetos_disponiveis.copy()
+    objetos_referencia.insert(
+        0,
+        "Código",
+        objetos_referencia["Objeto"].fillna("").astype(str).str.extract(r"^\s*([0-9]+)", expand=False).fillna(""),
+    )
+    objetos_referencia = objetos_referencia.rename(columns={"Valor_Executado": "Disponível na NL"})
+    # Exibição fixa no padrão brasileiro: ponto para milhares e vírgula para centavos.
+    objetos_referencia["Disponível na NL"] = objetos_referencia["Disponível na NL"].apply(formatar_brl)
+    objetos_visualizacao = objetos_referencia[[
+        "Grupo", "Código", "Objeto", "Competências", "Tipos de NL", "Qtd. NL", "Disponível na NL"
+    ]].copy()
+    objetos_visualizacao["Qtd. NL"] = objetos_visualizacao["Qtd. NL"].fillna(0).astype(int).astype(str)
+    objetos_visualizacao = objetos_visualizacao.rename(
+        columns={"Objeto": "Objeto da despesa"}
+    )
+    renderizar_tabela_priorizacao(
+        objetos_visualizacao,
+        colunas_centralizadas={"Grupo", "Código", "Qtd. NL", "Disponível na NL"},
+        altura_maxima=360,
+        template_colunas=["7%", "7%", "34%", "13%", "15%", "7%", "17%"],
+    )
+
+    chave_planejamento = "FONTE_500"
+    chave_prioridades = f"prioridades_{mes_planejado}_{chave_planejamento}"
+
+    # Carrega a programação somente uma vez por sessão. Assim, navegar entre
+    # as telas não perde o que já foi montado e a planilha vira o registro
+    # permanente para uma nova abertura do sistema.
+    if "priorizacao_google_carregada" not in st.session_state:
+        retorno_google = carregar_priorizacao_google()
+        st.session_state["priorizacao_google_carregada"] = True
+        st.session_state["priorizacao_google_erro"] = retorno_google.get("erro", "")
+        st.session_state["programacao_google_salva"] = pd.DataFrame(
+            retorno_google.get("programacao", [])
+        )
+        pactuados_google = pd.DataFrame(retorno_google.get("pactuados", []))
+        if pactuados_google.empty:
+            st.session_state["pactuados_fonte500"] = pd.DataFrame(
+                columns=["Mês", "Grupo", "Pactuado Mensal"]
+            )
+        else:
+            pactuados_google = pactuados_google.rename(
+                columns={
+                    "Mes": "Mês",
+                    "Valor_Pactuado": "Pactuado Mensal",
+                    "Fonte": "Fonte",
+                }
+            )
+            if "Grupo" not in pactuados_google.columns:
+                pactuados_google["Grupo"] = chave_planejamento
+            if "Mês" not in pactuados_google.columns:
+                pactuados_google["Mês"] = ""
+            if "Pactuado Mensal" not in pactuados_google.columns:
+                pactuados_google["Pactuado Mensal"] = 0.0
+            pactuados_google["Pactuado Mensal"] = pd.to_numeric(
+                pactuados_google["Pactuado Mensal"], errors="coerce"
+            ).fillna(0.0)
+            st.session_state["pactuados_fonte500"] = pactuados_google[
+                ["Mês", "Grupo", "Pactuado Mensal"]
+            ].copy()
+
+    if "pactuados_fonte500" not in st.session_state:
+        st.session_state["pactuados_fonte500"] = pd.DataFrame(
+            columns=["Mês", "Grupo", "Pactuado Mensal"]
+        )
+
+    chave_pactuado = (
+        (st.session_state["pactuados_fonte500"]["Mês"] == mes_planejado)
+        & (st.session_state["pactuados_fonte500"]["Grupo"] == chave_planejamento)
+    )
+    registros_pactuados = st.session_state["pactuados_fonte500"]
+    pactuado_atual = (
+        float(registros_pactuados.loc[chave_pactuado, "Pactuado Mensal"].iloc[0])
+        if chave_pactuado.any()
+        else (54_000_000.0 if mes_planejado == "09/2026" else 0.0)
+    )
+
+    st.markdown("### 2. Defina o teto do mês")
+    entrada_pactuado, descricao = st.columns([1, 2])
+    with entrada_pactuado:
+        pactuado_mensal = st.number_input(
+            "Pactuado mensal — Fonte 500",
+            min_value=0.0,
+            value=pactuado_atual,
+            step=1000.0,
+            format="%.2f",
+            key=f"pactuado_{mes_planejado}_{chave_planejamento}",
+        )
+    with descricao:
+        st.caption(
+            "Digite o teto pactuado do mês. Em setembro/2026 o valor inicial sugerido é R$ 54.000.000,00. "
+            "Cada valor informado nas semanas reduz automaticamente o saldo do pactuado."
+        )
+    if chave_pactuado.any():
+        st.session_state["pactuados_fonte500"].loc[chave_pactuado, "Pactuado Mensal"] = pactuado_mensal
+    else:
+        st.session_state["pactuados_fonte500"] = pd.concat(
+            [
+                st.session_state["pactuados_fonte500"],
+                pd.DataFrame([[mes_planejado, chave_planejamento, pactuado_mensal]], columns=["Mês", "Grupo", "Pactuado Mensal"]),
+            ],
+            ignore_index=True,
+        )
+
+    if chave_prioridades not in st.session_state:
+        semanas_padrao = ["Semana 1", "Semana 2", "Semana 3", "Semana 4"]
+        st.session_state[chave_prioridades] = {
+            semana: pd.DataFrame(columns=["Objeto", "Valor Prioridade", "Observação"])
+            for semana in semanas_padrao
+        }
+
+        # Reconstrói a tela a partir das NLs detalhadas salvas. Cada NL salva
+        # continua marcada para pagamento; as demais do objeto ficam excluídas.
+        # Isso permite reabrir o sistema sem duplicar valores.
+        programacao_google = st.session_state.get("programacao_google_salva", pd.DataFrame())
+        if isinstance(programacao_google, pd.DataFrame) and not programacao_google.empty:
+            programacao_google = programacao_google.rename(
+                columns={
+                    "Mes": "Mês de programação",
+                    "Numero_NL": "Número NL",
+                    "Tipo_NL": "Tipo de NL",
+                    "Valor_Programado": "Valor programado",
+                    "Observacao": "Observação",
+                }
+            )
+            for coluna in ["Mês de programação", "Semana", "Objeto", "Número NL"]:
+                if coluna not in programacao_google.columns:
+                    programacao_google[coluna] = ""
+            fonte_programacao = (
+                programacao_google["Fonte"]
+                if "Fonte" in programacao_google.columns
+                else pd.Series("500", index=programacao_google.index)
+            )
+            registros_mes = programacao_google[
+                (programacao_google["Mês de programação"].astype(str) == mes_planejado)
+                & (fonte_programacao.astype(str).str.contains("500", na=False))
+            ].copy()
+            for semana in semanas_padrao:
+                registros_semana = registros_mes[
+                    registros_mes["Semana"].astype(str) == semana
+                ].copy()
+                if registros_semana.empty:
+                    continue
+                linhas_restauradas = []
+                for objeto, grupo_objeto in registros_semana.groupby("Objeto", dropna=False, sort=False):
+                    valor_restaurado = pd.to_numeric(
+                        grupo_objeto.get("Valor programado", pd.Series(dtype=float)), errors="coerce"
+                    ).fillna(0.0).sum()
+                    observacao_restaurada = str(
+                        grupo_objeto.get("Observação", pd.Series([""])).fillna("").iloc[0]
+                    )
+                    linhas_restauradas.append({
+                        "Objeto": str(objeto),
+                        "Valor Prioridade": float(valor_restaurado),
+                        "Observação": observacao_restaurada,
+                    })
+                st.session_state[chave_prioridades][semana] = pd.DataFrame(linhas_restauradas)
+
+                objetos_restaurados = [linha["Objeto"] for linha in linhas_restauradas]
+                detalhe_restaurado = base_detalhamento_nl[
+                    base_detalhamento_nl["Objeto"].astype(str).isin(objetos_restaurados)
+                ][["Objeto", "Número NL", "Credor", "Valor_Executado"]].copy()
+                detalhe_restaurado = detalhe_restaurado.rename(columns={"Valor_Executado": "Valor da NL"})
+                nls_mantidas = set(registros_semana["Número NL"].astype(str))
+                detalhe_restaurado["Excluir da semana"] = ~detalhe_restaurado["Número NL"].astype(str).isin(nls_mantidas)
+                detalhe_restaurado["Valor da NL"] = detalhe_restaurado["Valor da NL"].apply(formatar_brl)
+                detalhe_chave_restaurada = f"detalhe_nl_{chave_prioridades}_{semana}"
+                st.session_state[detalhe_chave_restaurada] = detalhe_restaurado[
+                    ["Objeto", "Número NL", "Credor", "Valor da NL", "Excluir da semana"]
+                ].copy()
+                assinatura_restaurada = "|".join(sorted(
+                    detalhe_restaurado["Objeto"].astype(str) + "::" + detalhe_restaurado["Número NL"].astype(str)
+                ))
+                st.session_state[f"{detalhe_chave_restaurada}_assinatura"] = assinatura_restaurada
+
+    # Um mesmo objeto pode aparecer em mais de um grupo na referência acima.
+    # Para a priorização, o limite é a soma das NLs dos grupos selecionados.
+    limites_objetos = (
+        base_selecionada.groupby("Objeto", as_index=False)["Valor_Executado"].sum()
+    )
+    limite_por_objeto = limites_objetos.set_index("Objeto")["Valor_Executado"].to_dict()
+    opcoes_objeto = limites_objetos.sort_values("Objeto")["Objeto"].tolist()
+
+    def limpar_semana_planejamento(chave, semana):
+        st.session_state[chave][semana] = pd.DataFrame(
+            columns=["Objeto", "Valor Prioridade", "Observação"]
+        )
+        st.session_state.pop(f"editor_{chave}_{semana}", None)
+
+    st.markdown("### 3. Monte as prioridades semanais")
+    st.caption("Escolha os objetos e distribua o valor de pagamento. Você pode limpar uma semana inteira quando precisar refazer o cenário.")
+    abas_semanais = st.tabs(["Semana 1", "Semana 2", "Semana 3", "Semana 4"])
+    prioridades_semanais = []
+    for aba, semana in zip(abas_semanais, ["Semana 1", "Semana 2", "Semana 3", "Semana 4"]):
+        with aba:
+            st.caption("Selecione os objetos prioritários e informe quanto será programado para pagamento nesta semana.")
+            # Fluxo vertical: primeiro o objeto, depois seus credores e NLs.
+            col_grade = st.container()
+            col_detalhes = st.container()
+            with col_grade:
+                st.button(
+                    "🗑️ Limpar semana",
+                    key=f"limpar_{chave_prioridades}_{semana}",
+                    on_click=limpar_semana_planejamento,
+                    args=(chave_prioridades, semana),
+                )
+                escolha_col, adicionar_col = st.columns([5, 1])
+                objeto_novo = escolha_col.selectbox(
+                    "Adicionar objeto à semana",
+                    opcoes_objeto,
+                    index=None,
+                    placeholder="Pesquise e selecione um objeto",
+                    key=f"novo_objeto_{chave_prioridades}_{semana}",
+                )
+                if adicionar_col.button(
+                    "Adicionar",
+                    key=f"adicionar_objeto_{chave_prioridades}_{semana}",
+                    use_container_width=True,
+                ):
+                    if not objeto_novo:
+                        st.warning("Selecione um objeto antes de adicioná-lo à semana.")
+                    else:
+                        objetos_atuais = (
+                            st.session_state[chave_prioridades][semana]["Objeto"]
+                            .fillna("").astype(str).str.strip().tolist()
+                        )
+                        if objeto_novo in objetos_atuais:
+                            st.info("Esse objeto já está incluído nesta semana.")
+                        else:
+                            valor_inicial = float(limite_por_objeto.get(objeto_novo, 0.0))
+                            nova_linha = pd.DataFrame([{
+                                "Objeto": objeto_novo,
+                                "Valor Prioridade": valor_inicial,
+                                "Observação": "",
+                                "Disponível na NL": formatar_brl(valor_inicial),
+                            }])
+                            st.session_state[chave_prioridades][semana] = pd.concat(
+                                [st.session_state[chave_prioridades][semana], nova_linha],
+                                ignore_index=True,
+                            )
+                            st.rerun()
+                tabela_semana = st.session_state[chave_prioridades][semana].copy()
+                tabela_semana = tabela_semana.drop(columns=["Código"], errors="ignore")
+                objetos_escolhidos = (
+                    tabela_semana.get("Objeto", pd.Series(dtype=str)).fillna("").astype(str).str.strip()
+                )
+                objetos_escolhidos = objetos_escolhidos[objetos_escolhidos != ""].unique().tolist()
+                detalhe_chave = f"detalhe_nl_{chave_prioridades}_{semana}"
+
+                # A grade abaixo substitui o data_editor plano: cada objeto é uma linha expansível
+                # e traz, dentro dele, os credores e as NLs que poderão ser excluídas.
+                if not objetos_escolhidos:
+                    prioridade_editada = pd.DataFrame(columns=["Objeto", "Valor Prioridade", "Observação", "Disponível na NL"])
+                    st.info("Adicione um objeto acima para montar a semana.")
+                else:
+                    detalhamento_nl = base_detalhamento_nl[
+                        base_detalhamento_nl["Objeto"].isin(objetos_escolhidos)
+                    ][["Objeto", "Número NL", "Credor", "Valor_Executado"]].copy()
+                    detalhamento_nl = detalhamento_nl.rename(columns={"Valor_Executado": "Valor da NL"})
+                    detalhamento_nl = detalhamento_nl[
+                        detalhamento_nl["Número NL"].fillna("").astype(str).str.strip() != ""
+                    ].copy()
+                    assinatura_detalhe = "|".join(sorted(
+                        detalhamento_nl["Objeto"].astype(str) + "::" + detalhamento_nl["Número NL"].astype(str)
+                    ))
+                    detalhe_anterior = st.session_state.get(detalhe_chave)
+                    if (
+                        detalhe_anterior is None
+                        or "Objeto" not in detalhe_anterior.columns
+                        or st.session_state.get(f"{detalhe_chave}_assinatura") != assinatura_detalhe
+                    ):
+                        detalhe_anterior = detalhamento_nl[["Objeto", "Número NL", "Credor", "Valor da NL"]].copy()
+                        detalhe_anterior["Valor da NL"] = detalhe_anterior["Valor da NL"].apply(formatar_brl)
+                        detalhe_anterior["Excluir da semana"] = False
+                        st.session_state[detalhe_chave] = detalhe_anterior
+                        st.session_state[f"{detalhe_chave}_assinatura"] = assinatura_detalhe
+
+                    # Renderizar todas as NLs de todos os objetos a cada clique
+                    # deixava a tela lenta. O cenário continua completo, mas o
+                    # detalhamento pesado é aberto para um objeto por vez.
+                    st.markdown("##### Objetos incluídos na semana")
+                    chave_objeto_detalhe = f"objeto_detalhe_{chave_prioridades}_{semana}"
+                    if st.session_state.get(chave_objeto_detalhe) not in objetos_escolhidos:
+                        st.session_state[chave_objeto_detalhe] = objetos_escolhidos[0]
+                    if len(objetos_escolhidos) == 1:
+                        # Com um único objeto, a linha expansível abaixo já é
+                        # suficiente; não repetimos o nome em um seletor.
+                        objeto_detalhado = objetos_escolhidos[0]
+                    else:
+                        objeto_detalhado = st.selectbox(
+                            "Detalhar objeto",
+                            objetos_escolhidos,
+                            key=chave_objeto_detalhe,
+                        )
+
+                    # O data_editor informa as alterações da caixa de exclusão no
+                    # início do rerun. Aplicamos essas alterações antes de montar
+                    # os títulos dos objetos, para que "A PROGRAMAR" já venha
+                    # subtraído na mesma interação do usuário.
+                    for indice_objeto, objeto_estado in enumerate([objeto_detalhado]):
+                        indice_objeto = objetos_escolhidos.index(objeto_estado)
+                        detalhes_estado = detalhe_anterior[
+                            detalhe_anterior["Objeto"].astype(str) == str(objeto_estado)
+                        ]
+                        for indice_credor, (_, grupo_estado) in enumerate(
+                            detalhes_estado.groupby("Credor", dropna=False, sort=False)
+                        ):
+                            chave_editor = f"editor_{detalhe_chave}_{indice_objeto}_{indice_credor}"
+                            estado_editor = st.session_state.get(chave_editor, {})
+                            linhas_alteradas = (
+                                estado_editor.get("edited_rows", {})
+                                if isinstance(estado_editor, dict) else {}
+                            )
+                            for indice_linha, alteracoes in linhas_alteradas.items():
+                                if "Excluir da semana" not in alteracoes:
+                                    continue
+                                try:
+                                    numero_nl = str(grupo_estado.iloc[int(indice_linha)]["Número NL"])
+                                except (IndexError, KeyError, TypeError, ValueError):
+                                    continue
+                                mascara = (
+                                    (detalhe_anterior["Objeto"].astype(str) == str(objeto_estado))
+                                    & (detalhe_anterior["Número NL"].astype(str) == numero_nl)
+                                )
+                                detalhe_anterior.loc[mascara, "Excluir da semana"] = bool(
+                                    alteracoes["Excluir da semana"]
+                                )
+                    st.session_state[detalhe_chave] = detalhe_anterior.copy()
+
+                    valores_por_nl = detalhamento_nl.groupby(
+                        detalhamento_nl["Número NL"].astype(str)
+                    )["Valor da NL"].sum()
+                    linhas_prioridade = []
+                    grupos_editados = []
+                    for indice_objeto, linha in tabela_semana.reset_index(drop=True).iterrows():
+                        objeto = str(linha.get("Objeto", "")).strip()
+                        if not objeto:
+                            continue
+                        detalhes_objeto = detalhe_anterior[
+                            detalhe_anterior["Objeto"].astype(str) == objeto
+                        ].copy()
+                        nls_mantidas_objeto = detalhes_objeto.loc[
+                            ~detalhes_objeto["Excluir da semana"].fillna(False), "Número NL"
+                        ].astype(str)
+                        total_objeto = float(valores_por_nl.reindex(nls_mantidas_objeto).fillna(0.0).sum())
+                        chave_objeto = re.sub(r"[^A-Za-z0-9]+", "_", objeto).strip("_")[:70]
+                        with st.expander(
+                            f"{objeto}   |   A PROGRAMAR: {formatar_brl(total_objeto)}",
+                            expanded=False,
+                        ):
+                            cabecalho_objeto = st.columns([2, 2, 1])
+                            cabecalho_objeto[0].markdown(f"**Disponível na NL:** {formatar_brl(total_objeto)}")
+                            observacao = cabecalho_objeto[1].text_input(
+                                "Observação",
+                                value=str(linha.get("Observação", "") or ""),
+                                key=f"obs_{chave_prioridades}_{semana}_{chave_objeto}",
+                            )
+                            remover = cabecalho_objeto[2].checkbox(
+                                "Remover objeto",
+                                value=False,
+                                key=f"remover_{chave_prioridades}_{semana}_{chave_objeto}",
+                            )
+                            if remover:
+                                continue
+                            if objeto != objeto_detalhado:
+                                st.caption("Selecione este objeto no campo acima para abrir os credores e as NLs.")
+                            elif detalhes_objeto.empty:
+                                st.warning("Não há NL detalhada para este objeto na fonte consultada.")
+                            else:
+                                for indice_credor, (credor, grupo_credor) in enumerate(
+                                    detalhes_objeto.groupby("Credor", dropna=False, sort=False)
+                                ):
+                                    grupo_credor = grupo_credor.reset_index(drop=True)
+                                    nls_mantidas = grupo_credor.loc[
+                                        ~grupo_credor["Excluir da semana"].fillna(False), "Número NL"
+                                    ].astype(str)
+                                    total_credor = float(valores_por_nl.reindex(nls_mantidas).fillna(0.0).sum())
+                                    nome_credor = str(credor).strip() if pd.notna(credor) else "Credor não informado"
+                                    with st.expander(
+                                        f"{nome_credor}   •   VALOR TOTAL: {formatar_brl(total_credor)}",
+                                        expanded=False,
+                                    ):
+                                        grupo_editado = st.data_editor(
+                                            grupo_credor[["Número NL", "Valor da NL", "Excluir da semana"]],
+                                            column_config={
+                                                "Número NL": st.column_config.TextColumn("Número NL", disabled=True, width="medium"),
+                                                "Valor da NL": st.column_config.TextColumn("Valor da NL", disabled=True, width="medium"),
+                                                "Excluir da semana": st.column_config.CheckboxColumn("Excluir", width="small"),
+                                            },
+                                            hide_index=True,
+                                            use_container_width=True,
+                                            height=min(48 + (len(grupo_credor) * 36), 260),
+                                            key=f"editor_{detalhe_chave}_{indice_objeto}_{indice_credor}",
+                                        )
+                                    grupo_editado["Objeto"] = objeto
+                                    grupo_editado["Credor"] = credor
+                                    # As alterações do editor são aplicadas no
+                                    # próximo rerun pelo estado do widget acima.
+                            linhas_prioridade.append({
+                                "Objeto": objeto,
+                                "Valor Prioridade": total_objeto,
+                                "Observação": observacao,
+                                "Disponível na NL": formatar_brl(total_objeto),
+                            })
+
+                    prioridade_editada = pd.DataFrame(linhas_prioridade)
+                    st.session_state[chave_prioridades][semana] = prioridade_editada.reset_index(drop=True).copy()
+            prioridade_editada["Semana"] = semana
+            st.session_state[chave_prioridades][semana] = prioridade_editada.drop(columns="Semana").reset_index(drop=True)
+            prioridades_semanais.append(prioridade_editada)
+
+    prioridades = pd.concat(prioridades_semanais, ignore_index=True)
+    prioridades["Valor Prioridade"] = pd.to_numeric(prioridades["Valor Prioridade"], errors="coerce").fillna(0.0)
+    prioridades = prioridades[prioridades["Objeto"].fillna("").astype(str).str.strip() != ""]
+    priorizado_por_objeto = prioridades.groupby("Objeto", as_index=False)["Valor Prioridade"].sum()
+    priorizado_por_objeto["Limite NL"] = priorizado_por_objeto["Objeto"].map(limite_por_objeto).fillna(0.0)
+    priorizado_por_objeto["Excedente"] = (priorizado_por_objeto["Valor Prioridade"] - priorizado_por_objeto["Limite NL"]).clip(lower=0)
+    total_priorizado = prioridades["Valor Prioridade"].sum()
+    total_nl = objetos_disponiveis["Valor_Executado"].sum()
+    meta_semanal = pactuado_mensal / 4
+    saldo_pactuado = pactuado_mensal - total_priorizado
+    saldo_nl = total_nl - total_priorizado
+
+    st.markdown("### 4. Confira o cenário antes de fechar")
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("PACTUADO DO MÊS", formatar_brl(pactuado_mensal))
+    k2.metric("NL DISPONÍVEL", formatar_brl(total_nl))
+    k3.metric("JÁ PRIORIZADO", formatar_brl(total_priorizado))
+    k4.metric("SALDO DO PACTUADO", formatar_brl(saldo_pactuado))
+
+    if pactuado_mensal > 0:
+        percentual_planejado = max(0.0, min(total_priorizado / pactuado_mensal, 1.0))
+        percentual_visual = percentual_planejado * 100
+        st.markdown(
+            f"""
+            <div class='progresso-priorizacao'>
+                <span class='progresso-priorizacao-texto'>
+                    Planejado: <strong>{formatar_brl(total_priorizado)}</strong>
+                    de <strong>{formatar_brl(pactuado_mensal)}</strong>
+                    ({percentual_planejado:.0%})
+                </span>
+                <div class='progresso-priorizacao-trilha'>
+                    <div class='progresso-priorizacao-preenchimento' style='width: {percentual_visual:.2f}%;'></div>
+                </div>
+            </div>
+            """,
+            unsafe_allow_html=True,
+        )
+    else:
+        st.info("Defina o pactuado mensal para acompanhar o percentual já distribuído entre as semanas.")
+
+    if (priorizado_por_objeto["Excedente"] > 0).any():
+        st.warning("Há objeto priorizado acima do valor disponível na NL. Revise os itens destacados na tabela de conferência.")
+
+    resumo_semanal = (
+        prioridades.groupby("Semana", as_index=False)["Valor Prioridade"].sum()
+        .set_index("Semana")
+        .reindex(["Semana 1", "Semana 2", "Semana 3", "Semana 4"], fill_value=0.0)
+        .reset_index()
+    )
+    resumo_semanal["Meta semanal"] = meta_semanal
+    resumo_semanal["Saldo da semana"] = resumo_semanal["Meta semanal"] - resumo_semanal["Valor Prioridade"]
+    resumo_semanal["Percentual da meta"] = np.where(
+        resumo_semanal["Meta semanal"] > 0,
+        (resumo_semanal["Valor Prioridade"] / resumo_semanal["Meta semanal"] * 100),
+        0.0,
+    )
+    resumo_semanal["Percentual exibido"] = resumo_semanal["Percentual da meta"].clip(upper=100)
+    resumo_semanal["Rótulo do gráfico"] = resumo_semanal.apply(
+        lambda linha: f"{formatar_brl(linha['Valor Prioridade'])}  ({linha['Percentual da meta']:.0f}%)",
+        axis=1,
+    )
+    resumo_semanal["Situação"] = np.select(
+        [
+            resumo_semanal["Percentual da meta"] >= 100,
+            resumo_semanal["Percentual da meta"] >= 75,
+        ],
+        ["Meta atingida", "Em andamento"],
+        default="A priorizar",
+    )
+    st.markdown("### 5. Resumo consolidado para envio")
+    st.caption("Conferência final do que foi programado em cada semana. Este é o resumo recomendado para impressão ou envio.")
+
+    # A saída é operacional: uma linha para cada NL que será paga, e não um
+    # total consolidado por objeto. Assim o arquivo pode seguir direto para a
+    # conferência/execução dos pagamentos.
+    linhas_programacao = []
+    for _, prioridade in prioridades.iterrows():
+        semana_programada = str(prioridade.get("Semana", ""))
+        objeto_programado = str(prioridade.get("Objeto", "")).strip()
+        if not objeto_programado:
+            continue
+        detalhe_chave = f"detalhe_nl_{chave_prioridades}_{semana_programada}"
+        detalhe_salvo = st.session_state.get(detalhe_chave, pd.DataFrame())
+        exclusoes_objeto = set()
+        if isinstance(detalhe_salvo, pd.DataFrame) and not detalhe_salvo.empty:
+            exclusoes_objeto = set(
+                detalhe_salvo.loc[
+                    (detalhe_salvo["Objeto"].astype(str) == objeto_programado)
+                    & detalhe_salvo["Excluir da semana"].fillna(False),
+                    "Número NL",
+                ].astype(str)
+            )
+        nls_programadas = base_detalhamento_nl[
+            (base_detalhamento_nl["Objeto"].astype(str) == objeto_programado)
+            & ~base_detalhamento_nl["Número NL"].astype(str).isin(exclusoes_objeto)
+        ].copy()
+        for _, nl in nls_programadas.iterrows():
+            valor_nl = pd.to_numeric(pd.Series([nl.get("Valor_Executado", 0.0)]), errors="coerce").iloc[0]
+            valor_nl = float(valor_nl) if pd.notna(valor_nl) and np.isfinite(valor_nl) else 0.0
+            linhas_programacao.append({
+                "Mês de programação": mes_planejado,
+                "Fonte": "500",
+                "Grupo": nl.get("Grupo", ""),
+                "Tipo de NL": nl.get("Tipo de NL", ""),
+                "Semana": semana_programada,
+                "Objeto": objeto_programado,
+                "Número NL": nl.get("Número NL", ""),
+                "Credor": nl.get("Credor", ""),
+                "Valor programado": valor_nl,
+                "Observação": prioridade.get("Observação", ""),
+            })
+    colunas_envio = [
+        "Mês de programação", "Fonte", "Grupo", "Tipo de NL", "Semana", "Objeto",
+        "Número NL", "Credor", "Valor programado", "Observação",
+    ]
+    programacao_consolidada = pd.DataFrame(linhas_programacao, columns=colunas_envio)
+    if not programacao_consolidada.empty:
+        programacao_consolidada = programacao_consolidada.sort_values(
+            ["Semana", "Grupo", "Tipo de NL", "Objeto", "Credor", "Número NL"]
+        ).reset_index(drop=True)
+
+    # A planilha é gravada somente por solicitação. Fazer um POST a cada clique
+    # de priorização bloqueava a tela e criava filas no Apps Script.
+    pactuados_api = st.session_state["pactuados_fonte500"].rename(
+        columns={"Mês": "Mes", "Pactuado Mensal": "Valor_Pactuado"}
+    ).copy()
+    pactuados_api["Fonte"] = "500"
+    pactuados_api["Atualizado_Em"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    pactuados_api = pactuados_api.reindex(
+        columns=["Mes", "Fonte", "Grupo", "Valor_Pactuado", "Atualizado_Em"]
+    )
+
+    programacao_atual_api = programacao_consolidada.rename(
+        columns={
+            "Mês de programação": "Mes",
+            "Tipo de NL": "Tipo_NL",
+            "Número NL": "Numero_NL",
+            "Valor programado": "Valor_Programado",
+            "Observação": "Observacao",
+        }
+    ).copy()
+    programacao_atual_api["Atualizado_Em"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+    colunas_api_programacao = [
+        "Mes", "Fonte", "Grupo", "Tipo_NL", "Semana", "Objeto", "Numero_NL",
+        "Credor", "Valor_Programado", "Observacao", "Atualizado_Em",
+    ]
+    programacao_atual_api = programacao_atual_api.reindex(columns=colunas_api_programacao)
+
+    programacao_remota = st.session_state.get("programacao_google_salva", pd.DataFrame()).copy()
+    programacao_remota = programacao_remota.rename(
+        columns={
+            "Mês de programação": "Mes",
+            "Tipo de NL": "Tipo_NL",
+            "Número NL": "Numero_NL",
+            "Valor programado": "Valor_Programado",
+            "Observação": "Observacao",
+        }
+    )
+    for coluna in colunas_api_programacao:
+        if coluna not in programacao_remota.columns:
+            programacao_remota[coluna] = "" if coluna != "Valor_Programado" else 0.0
+    programacao_remota = programacao_remota[colunas_api_programacao].copy()
+    substituir_recorte = (
+        (programacao_remota["Mes"].astype(str) == mes_planejado)
+        & (programacao_remota["Grupo"].astype(str).isin([str(grupo) for grupo in grupos_aplicados]))
+    )
+    programacao_para_salvar = pd.concat(
+        [programacao_remota.loc[~substituir_recorte], programacao_atual_api],
+        ignore_index=True,
+    )
+    assinatura_persistencia = json.dumps(
+        {
+            "pactuados": _registros_json(pactuados_api.drop(columns=["Atualizado_Em"])),
+            "programacao": _registros_json(programacao_para_salvar.drop(columns=["Atualizado_Em"])),
+        },
+        ensure_ascii=False,
+        sort_keys=True,
+        default=str,
+    )
+    salvar_coluna, situacao_coluna = st.columns([0.28, 0.72])
+    with salvar_coluna:
+        salvar_agora = st.button(
+            "💾 Salvar priorização",
+            key="salvar_priorizacao_google",
+            type="primary",
+            use_container_width=True,
+        )
+    if salvar_agora:
+        with st.spinner("Gravando a priorização na planilha vinculada..."):
+            try:
+                salvar_priorizacao_google(pactuados_api, programacao_para_salvar)
+                st.session_state["assinatura_priorizacao_google"] = assinatura_persistencia
+                st.session_state["programacao_google_salva"] = programacao_para_salvar.copy()
+                st.session_state["priorizacao_google_erro"] = ""
+                st.session_state["priorizacao_google_salva_em"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+            except Exception as erro:
+                st.session_state["priorizacao_google_erro"] = str(erro)
+    with situacao_coluna:
+        if st.session_state.get("priorizacao_google_erro"):
+            st.warning(
+                "Não foi possível gravar na planilha vinculada: "
+                f"{st.session_state['priorizacao_google_erro']}"
+            )
+        elif st.session_state.get("assinatura_priorizacao_google") == assinatura_persistencia:
+            st.success(
+                "Priorização salva na planilha vinculada"
+                + (f" em {st.session_state.get('priorizacao_google_salva_em')}" if st.session_state.get("priorizacao_google_salva_em") else ".")
+            )
+        else:
+            st.info("Alterações pendentes. Clique em “Salvar priorização” ao concluir o cenário.")
+
+    resumo_envio = resumo_semanal[
+        ["Semana", "Valor Prioridade", "Meta semanal", "Saldo da semana"]
+    ].rename(columns={"Valor Prioridade": "Valor programado"}).copy()
+    total_resumo = pd.DataFrame([{
+        "Semana": "TOTAL GERAL",
+        "Valor programado": total_priorizado,
+        "Meta semanal": pactuado_mensal,
+        "Saldo da semana": saldo_pactuado,
+    }])
+    resumo_envio = pd.concat([resumo_envio, total_resumo], ignore_index=True)
+
+    col_resumo_envio, col_exportar = st.columns([1.5, 0.5])
+    with col_resumo_envio:
+        resumo_visivel = resumo_envio.copy()
+        for coluna_moeda in ["Valor programado", "Meta semanal", "Saldo da semana"]:
+            resumo_visivel[coluna_moeda] = resumo_visivel[coluna_moeda].apply(formatar_brl)
+        resumo_visivel = resumo_visivel.rename(
+            columns={"Meta semanal": "Pactuado", "Saldo da semana": "Saldo"}
+        )
+        renderizar_tabela_priorizacao(
+            resumo_visivel,
+            colunas_centralizadas={"Semana", "Valor programado", "Pactuado", "Saldo"},
+        )
+    with col_exportar:
+        st.metric("TOTAL PROGRAMADO", formatar_brl(total_priorizado))
+        st.metric("SALDO DO PACTUADO", formatar_brl(saldo_pactuado))
+
+    st.markdown("#### Detalhamento consolidado por semana")
+    programacao_visivel = programacao_consolidada.copy()
+    if "Valor programado" in programacao_visivel.columns:
+        programacao_visivel["Valor programado"] = programacao_visivel["Valor programado"].apply(formatar_brl)
+    colunas_visualizacao = [
+        "Semana", "Grupo", "Tipo de NL", "Objeto", "Número NL", "Credor",
+        "Valor programado", "Observação",
+    ]
+    programacao_visivel = programacao_visivel.reindex(columns=colunas_visualizacao)
+    renderizar_tabela_priorizacao(
+        programacao_visivel,
+        colunas_centralizadas={"Semana", "Grupo", "Tipo de NL", "Número NL", "Valor programado"},
+        altura_maxima=360,
+    )
+
+    arquivo_programacao = io.BytesIO()
+    with pd.ExcelWriter(arquivo_programacao, engine="xlsxwriter") as writer:
+        programacao_consolidada.to_excel(writer, sheet_name="Programação Semanal", startrow=2, index=False)
+        resumo_envio.to_excel(writer, sheet_name="Resumo por Semana", startrow=2, index=False)
+        workbook = writer.book
+        formato_titulo = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#002B49", "font_size": 14, "align": "center"})
+        formato_cabecalho = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#315B85", "align": "center", "valign": "vcenter"})
+        formato_moeda = workbook.add_format({"num_format": "R$ #,##0.00", "align": "right"})
+        formato_total = workbook.add_format({"bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#002B49", "num_format": "R$ #,##0.00", "align": "right"})
+        for nome_aba, titulo, dados_exportar in [
+            ("Programação Semanal", "Programação Semanal — Fonte 500", programacao_consolidada),
+            ("Resumo por Semana", "Resumo consolidado por semana — Fonte 500", resumo_envio),
+        ]:
+            aba_exportar = writer.sheets[nome_aba]
+            ultima_coluna = len(dados_exportar.columns) - 1
+            aba_exportar.hide_gridlines(2)
+            aba_exportar.merge_range(0, 0, 0, ultima_coluna, titulo, formato_titulo)
+            aba_exportar.set_row(0, 24)
+            aba_exportar.freeze_panes(3, 0)
+            aba_exportar.autofilter(2, 0, len(dados_exportar) + 2, ultima_coluna)
+            for coluna, cabecalho in enumerate(dados_exportar.columns):
+                aba_exportar.write(2, coluna, cabecalho, formato_cabecalho)
+            aba_exportar.set_column(0, ultima_coluna, 18)
+        aba_programacao = writer.sheets["Programação Semanal"]
+        aba_programacao.set_column("A:A", 18)
+        aba_programacao.set_column("B:C", 12)
+        aba_programacao.set_column("D:D", 12)
+        aba_programacao.set_column("E:E", 10)
+        aba_programacao.set_column("F:F", 55)
+        aba_programacao.set_column("G:G", 18)
+        aba_programacao.set_column("H:H", 50)
+        aba_programacao.set_column("I:I", 18, formato_moeda)
+        aba_programacao.set_column("J:J", 35)
+        aba_resumo = writer.sheets["Resumo por Semana"]
+        aba_resumo.set_column("A:A", 20)
+        aba_resumo.set_column("B:D", 20, formato_moeda)
+        linha_total = len(resumo_envio) + 2
+        for coluna in range(len(resumo_envio.columns)):
+            valor = resumo_envio.iloc[-1, coluna]
+            if coluna == 0:
+                aba_resumo.write(linha_total, coluna, valor, workbook.add_format({"bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#002B49"}))
+            else:
+                # O XlsxWriter não aceita NaN/inf em write_number. Se algum
+                # campo do resumo estiver vazio, preservamos a célula vazia
+                # em vez de interromper a geração do arquivo.
+                numero = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+                if pd.notna(numero) and np.isfinite(numero):
+                    aba_resumo.write_number(linha_total, coluna, float(numero), formato_total)
+                else:
+                    aba_resumo.write_blank(linha_total, coluna, None, formato_total)
+    arquivo_programacao.seek(0)
+    st.download_button(
+        "📥 Baixar resumo consolidado (.xlsx)",
+        arquivo_programacao.getvalue(),
+        file_name=f"programacao_semanal_fonte500_{mes_planejado.replace('/', '-')}.xlsx",
+        mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+    )
+    st.stop()
+
+    def ordenar_mes(valor):
+        try:
+            return datetime.datetime.strptime(str(valor), "%m/%Y")
+        except ValueError:
+            return datetime.datetime.max
+
+    meses_planejamento = sorted(dados_planejamento["Mês"].dropna().unique(), key=ordenar_mes)
+    fontes_planejamento = sorted(dados_planejamento["Fonte"].dropna().astype(str).unique())
+    grupos_planejamento = sorted(dados_planejamento["Grupo"].dropna().astype(str).unique())
+    objetos_planejamento = sorted(dados_planejamento["Objeto"].dropna().astype(str).unique())
+
+    st.sidebar.markdown("#### 🎯 Filtros — Planejamento NL")
+    filtro_mes_plan = st.sidebar.multiselect("Mês de referência", meses_planejamento, key="plan_meses")
+    filtro_fonte_plan = st.sidebar.multiselect("Fonte de recurso", fontes_planejamento, key="plan_fontes")
+    filtro_grupo_plan = st.sidebar.multiselect("Grupo", grupos_planejamento, key="plan_grupos")
+    filtro_objeto_plan = st.sidebar.multiselect("Objeto da despesa", objetos_planejamento, key="plan_objetos")
+
+    realizado = dados_planejamento.copy()
+    if filtro_mes_plan:
+        realizado = realizado[realizado["Mês"].isin(filtro_mes_plan)]
+    if filtro_fonte_plan:
+        realizado = realizado[realizado["Fonte"].isin(filtro_fonte_plan)]
+    if filtro_grupo_plan:
+        realizado = realizado[realizado["Grupo"].isin(filtro_grupo_plan)]
+    if filtro_objeto_plan:
+        realizado = realizado[realizado["Objeto"].isin(filtro_objeto_plan)]
+
+    modelo_pactuado = (
+        dados_planejamento.groupby(["Mês", "Fonte", "Grupo", "Objeto"], as_index=False)["Valor_Executado"]
+        .sum()
+        .drop(columns="Valor_Executado")
+    )
+    modelo_pactuado["Pactuado Mensal"] = 0.0
+    modelo_pactuado["Meta Semanal"] = 0.0
+
+    arquivo_modelo = modelo_pactuado.head(0).to_csv(index=False).encode("utf-8-sig")
+    col_importar, col_modelo = st.columns([2, 1])
+    with col_importar:
+        arquivo_pactuado = st.file_uploader(
+            "Importar pactuado (.xlsx ou .csv)",
+            type=["xlsx", "csv"],
+            help="Colunas esperadas: Mês, Fonte, Grupo, Objeto, Pactuado Mensal e Meta Semanal.",
+        )
+    with col_modelo:
+        st.download_button(
+            "⬇️ Baixar modelo de pactuado",
+            arquivo_modelo,
+            file_name="modelo_pactuado_nl.csv",
+            mime="text/csv",
+            use_container_width=True,
+        )
+
+    plano_importado = modelo_pactuado.copy()
+    if arquivo_pactuado is not None:
+        try:
+            if arquivo_pactuado.name.lower().endswith(".csv"):
+                plano_importado = pd.read_csv(arquivo_pactuado, sep=None, engine="python")
+            else:
+                plano_importado = pd.read_excel(arquivo_pactuado)
+            plano_importado.columns = [str(c).strip() for c in plano_importado.columns]
+            obrigatorias = ["Mês", "Fonte", "Grupo", "Objeto", "Pactuado Mensal", "Meta Semanal"]
+            faltantes = [c for c in obrigatorias if c not in plano_importado.columns]
+            if faltantes:
+                raise ValueError("Colunas ausentes: " + ", ".join(faltantes))
+            plano_importado = plano_importado[obrigatorias].copy()
+        except Exception as erro:
+            st.error(f"Não foi possível ler o arquivo de pactuado: {erro}")
+            plano_importado = modelo_pactuado.copy()
+
+    identificador_arquivo = (
+        f"{arquivo_pactuado.name}:{len(arquivo_pactuado.getvalue())}:{hash(arquivo_pactuado.getvalue())}"
+        if arquivo_pactuado is not None
+        else None
+    )
+    if (
+        "plano_nl_editavel" not in st.session_state
+        or (
+            identificador_arquivo is not None
+            and st.session_state.get("arquivo_pactuado_atual") != identificador_arquivo
+        )
+    ):
+        st.session_state["plano_nl_editavel"] = plano_importado
+        st.session_state["arquivo_pactuado_atual"] = identificador_arquivo
+
+    with st.expander("✏️ Cadastrar ou ajustar pactuados", expanded=arquivo_pactuado is None):
+        st.caption("Use uma linha por Mês, Fonte, Grupo e Objeto. Depois, baixe a configuração para guardá-la e reutilizá-la.")
+        plano_editado = st.data_editor(
+            st.session_state["plano_nl_editavel"],
+            column_config={
+                "Pactuado Mensal": st.column_config.NumberColumn("Pactuado Mensal", min_value=0.0, format="R$ %.2f"),
+                "Meta Semanal": st.column_config.NumberColumn("Meta Semanal", min_value=0.0, format="R$ %.2f"),
+            },
+            num_rows="dynamic",
+            use_container_width=True,
+            key="editor_pactuado_nl",
+        )
+        st.session_state["plano_nl_editavel"] = plano_editado
+        st.download_button(
+            "💾 Baixar configuração de pactuados",
+            plano_editado.to_csv(index=False).encode("utf-8-sig"),
+            file_name="pactuado_nl_configurado.csv",
+            mime="text/csv",
+        )
+
+    plano = plano_editado.copy()
+    for coluna in ["Pactuado Mensal", "Meta Semanal"]:
+        plano[coluna] = pd.to_numeric(plano[coluna], errors="coerce").fillna(0.0)
+    for coluna in ["Mês", "Fonte", "Grupo", "Objeto"]:
+        plano[coluna] = plano[coluna].fillna("").astype(str).str.strip()
+
+    executado = realizado.groupby(["Mês", "Fonte", "Grupo", "Objeto"], as_index=False)["Valor_Executado"].sum()
+    comparativo = executado.merge(plano, on=["Mês", "Fonte", "Grupo", "Objeto"], how="left")
+    comparativo[["Pactuado Mensal", "Meta Semanal"]] = comparativo[["Pactuado Mensal", "Meta Semanal"]].fillna(0.0)
+    comparativo["Saldo a Executar"] = comparativo["Pactuado Mensal"] - comparativo["Valor_Executado"]
+    comparativo["% Execução"] = np.where(
+        comparativo["Pactuado Mensal"] > 0,
+        comparativo["Valor_Executado"] / comparativo["Pactuado Mensal"],
+        np.nan,
+    )
+    comparativo["Situação"] = np.select(
+        [
+            comparativo["Pactuado Mensal"] <= 0,
+            comparativo["% Execução"] >= 1,
+            comparativo["% Execução"] >= 0.75,
+        ],
+        ["Sem pactuado", "Meta atingida", "Em atenção"],
+        default="Risco de não executar",
+    )
+
+    pactuado_total = comparativo["Pactuado Mensal"].sum()
+    executado_total = comparativo["Valor_Executado"].sum()
+    saldo_total = pactuado_total - executado_total
+    percentual_total = executado_total / pactuado_total if pactuado_total else 0.0
+    k1, k2, k3, k4 = st.columns(4)
+    k1.metric("PACTUADO", formatar_brl(pactuado_total))
+    k2.metric("EXECUTADO (NL)", formatar_brl(executado_total))
+    k3.metric("SALDO A EXECUTAR", formatar_brl(saldo_total))
+    k4.metric("EXECUÇÃO DO PACTUADO", f"{percentual_total:.1%}")
+
+    resumo_mes = comparativo.groupby("Mês", as_index=False).agg(
+        Pactuado=("Pactuado Mensal", "sum"), Executado=("Valor_Executado", "sum"), Meta_Semanal=("Meta Semanal", "sum")
+    )
+    resumo_mes["ordem"] = resumo_mes["Mês"].map(ordenar_mes)
+    resumo_mes = resumo_mes.sort_values("ordem").drop(columns="ordem")
+    col_grafico, col_resumo = st.columns([1.2, 0.8])
+    with col_grafico:
+        st.markdown("#### Pactuado × Executado por mês")
+        grafico_mes = px.bar(
+            resumo_mes.melt(id_vars="Mês", value_vars=["Pactuado", "Executado"], var_name="Indicador", value_name="Valor"),
+            x="Mês", y="Valor", color="Indicador", barmode="group",
+            color_discrete_map={"Pactuado": "#f77f00", "Executado": "#028090"},
+            text_auto=".3s",
+        )
+        grafico_mes.update_layout(yaxis_tickprefix="R$ ", legend_title_text="", margin=dict(l=10, r=10, t=25, b=10))
+        st.plotly_chart(grafico_mes, use_container_width=True)
+    with col_resumo:
+        st.markdown("#### Meta semanal consolidada")
+        meta_semana = comparativo["Meta Semanal"].sum()
+        st.metric("META SEMANAL", formatar_brl(meta_semana))
+        st.caption("Cadastre a meta semanal no pactuado para acompanhar o ritmo de execução nas reuniões semanais.")
+        st.dataframe(
+            resumo_mes[["Mês", "Pactuado", "Executado", "Meta_Semanal"]],
+            column_config={
+                "Pactuado": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Executado": st.column_config.NumberColumn(format="R$ %.2f"),
+                "Meta_Semanal": st.column_config.NumberColumn("Meta semanal", format="R$ %.2f"),
+            },
+            hide_index=True,
+            use_container_width=True,
+        )
+
+    st.markdown("#### Objetos que exigem acompanhamento")
+    criticos = comparativo.groupby("Objeto", as_index=False).agg(
+        Pactuado=("Pactuado Mensal", "sum"), Executado=("Valor_Executado", "sum"), Saldo=("Saldo a Executar", "sum")
+    )
+    criticos["% Execução"] = np.where(criticos["Pactuado"] > 0, criticos["Executado"] / criticos["Pactuado"], np.nan)
+    criticos["Situação"] = np.select(
+        [criticos["Pactuado"] <= 0, criticos["% Execução"] >= 1, criticos["% Execução"] >= 0.75],
+        ["Sem pactuado", "Meta atingida", "Em atenção"], default="Risco de não executar",
+    )
+    criticos = criticos.sort_values(["Situação", "Saldo"], ascending=[True, False])
+    st.dataframe(
+        criticos,
+        column_config={
+            "Pactuado": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Executado": st.column_config.NumberColumn(format="R$ %.2f"),
+            "Saldo": st.column_config.NumberColumn("Saldo a executar", format="R$ %.2f"),
+            "% Execução": st.column_config.NumberColumn(format="%.1f%%"),
+        },
+        hide_index=True,
+        use_container_width=True,
+        height=420,
+    )
