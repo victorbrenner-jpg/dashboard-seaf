@@ -4506,3 +4506,4 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         use_container_width=True,
         height=420,
     )
+
