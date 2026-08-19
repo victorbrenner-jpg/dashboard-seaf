@@ -7,6 +7,7 @@ import re
 import sqlite3
 import urllib.parse
 import urllib.request
+import unicodedata
 import numpy as np
 import pandas as pd
 import plotly.express as px
@@ -956,9 +957,12 @@ def _registros_json(df):
 def carregar_priorizacao_google():
     """Lê pactuados e programação já salvos no Apps Script da Fonte 500."""
     try:
+        # Parâmetro variável evita que uma resposta antiga do endpoint fique
+        # reaproveitada por cache intermediário depois de edição manual na planilha.
+        url_leitura = f"{URL_API_PRIORIZACAO}?_ts={int(datetime.datetime.now().timestamp() * 1000)}"
         req = urllib.request.Request(
-            URL_API_PRIORIZACAO,
-            headers={"User-Agent": "Mozilla/5.0"},
+            url_leitura,
+            headers={"User-Agent": "Mozilla/5.0", "Cache-Control": "no-cache"},
         )
         # A tela não deve ficar bloqueada por uma inicialização lenta do Apps
         # Script. Em caso de falha, o usuário ainda monta o cenário localmente.
@@ -971,13 +975,8 @@ def carregar_priorizacao_google():
         return {"ok": False, "erro": str(erro), "pactuados": [], "programacao": []}
 
 
-def salvar_priorizacao_google(pactuados, programacao):
-    """Substitui o espelho de planejamento na planilha, sem tocar na NL/OB."""
-    carga = {
-        "acao": "salvar_tudo",
-        "pactuados": _registros_json(pactuados),
-        "programacao": _registros_json(programacao),
-    }
+def _post_priorizacao_google(carga, timeout=90):
+    """Envia uma alteração pontual à planilha de priorização."""
     dados = json.dumps(carga, ensure_ascii=False).encode("utf-8")
     req = urllib.request.Request(
         URL_API_PRIORIZACAO,
@@ -985,16 +984,259 @@ def salvar_priorizacao_google(pactuados, programacao):
         headers={
             "Content-Type": "application/json; charset=utf-8",
             "User-Agent": "Mozilla/5.0",
+            "Cache-Control": "no-cache",
         },
         method="POST",
     )
-    # A planilha pode levar alguns segundos para aplicar os dois conjuntos de
-    # dados. Aguarda a confirmação para não criar novas gravações em paralelo.
-    with urllib.request.urlopen(req, timeout=120) as resposta:
+    with urllib.request.urlopen(req, timeout=timeout) as resposta:
         retorno = json.loads(resposta.read().decode("utf-8"))
     if not isinstance(retorno, dict) or retorno.get("ok") is False:
         raise ValueError(str(retorno.get("erro", "A planilha não confirmou a gravação.")))
     return retorno
+
+
+def salvar_pactuado_google(pactuado):
+    """Atualiza somente o pactuado do mês, sem regravar a Programação."""
+    registros = _registros_json(pactuado)
+    if not registros:
+        return {"ok": True}
+    return _post_priorizacao_google({
+        "acao": "salvar_pactuado",
+        "pactuado": registros[0],
+    }, timeout=45)
+
+
+def salvar_mes_priorizacao_google(mes, fonte, pactuado, programacao_mes):
+    """Substitui somente o recorte do mês/fonte em edição."""
+    registros_pactuado = _registros_json(pactuado)
+    return _post_priorizacao_google({
+        "acao": "salvar_mes",
+        "mes": str(mes),
+        "fonte": str(fonte),
+        "pactuado": registros_pactuado[0] if registros_pactuado else {},
+        "programacao": _registros_json(programacao_mes),
+    }, timeout=90)
+
+
+
+
+def _normalizar_nome_campo_priorizacao(nome):
+    """Normaliza cabeçalhos vindos do Apps Script/Google Sheets."""
+    texto = "" if nome is None else str(nome).strip()
+    texto = unicodedata.normalize("NFKD", texto)
+    texto = "".join(ch for ch in texto if not unicodedata.combining(ch))
+    texto = re.sub(r"[^A-Za-z0-9]+", "_", texto).strip("_").upper()
+    return texto
+
+
+def _achar_coluna_priorizacao(df, *aliases):
+    """Localiza coluna mesmo com acento, espaço, hífen ou pequenas variações."""
+    if df is None or df.empty:
+        return None
+    mapa = {_normalizar_nome_campo_priorizacao(c): c for c in df.columns}
+    for alias in aliases:
+        chave = _normalizar_nome_campo_priorizacao(alias)
+        if chave in mapa:
+            return mapa[chave]
+    # fallback: permite prefixos como VALOR_PROGRAMADO / VALOR_PROGRAMA...
+    for alias in aliases:
+        chave = _normalizar_nome_campo_priorizacao(alias)
+        for normalizado, original in mapa.items():
+            if normalizado.startswith(chave) or chave.startswith(normalizado):
+                return original
+    return None
+
+
+def canonicalizar_programacao_priorizacao(registros):
+    """Converte a resposta da aba Programação para um esquema fixo do painel."""
+    df = pd.DataFrame(registros or [])
+    colunas_saida = [
+        "Mes", "Fonte", "Grupo", "Tipo_NL", "Semana", "Objeto",
+        "Numero_NL", "Credor", "Valor_Programado", "Observacao", "Atualizado_Em",
+    ]
+    if df.empty:
+        return pd.DataFrame(columns=colunas_saida)
+
+    aliases = {
+        "Mes": ("Mes", "Mês", "Mês de programação", "Mes de programacao"),
+        "Fonte": ("Fonte",),
+        "Grupo": ("Grupo",),
+        "Tipo_NL": ("Tipo_NL", "Tipo de NL", "Tipo NL"),
+        "Semana": ("Semana",),
+        "Objeto": ("Objeto", "Objeto da Despesa"),
+        "Numero_NL": ("Numero_NL", "Número NL", "Numero NL", "NL"),
+        "Credor": ("Credor", "Nome do Credor"),
+        "Valor_Programado": ("Valor_Programado", "Valor Programado", "Valor_Programa", "Valor"),
+        "Observacao": ("Observacao", "Observação"),
+        "Atualizado_Em": ("Atualizado_Em", "Atualizado Em"),
+    }
+    saida = pd.DataFrame(index=df.index)
+    for destino, nomes in aliases.items():
+        origem = _achar_coluna_priorizacao(df, *nomes)
+        if origem is None:
+            saida[destino] = 0.0 if destino == "Valor_Programado" else ""
+        else:
+            saida[destino] = df[origem]
+
+    saida["Mes"] = saida["Mes"].apply(normalizar_mes_priorizacao)
+    saida["Fonte"] = saida["Fonte"].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    saida["Grupo"] = saida["Grupo"].fillna("").astype(str).str.strip()
+    saida["Tipo_NL"] = saida["Tipo_NL"].fillna("").astype(str).str.strip()
+    saida["Semana"] = saida["Semana"].apply(normalizar_semana_priorizacao)
+    saida["Objeto"] = saida["Objeto"].fillna("").astype(str).str.strip()
+    saida["Numero_NL"] = saida["Numero_NL"].apply(normalizar_numero_nl_priorizacao)
+    saida["Credor"] = saida["Credor"].fillna("").astype(str).str.strip()
+    saida["Valor_Programado"] = converter_valor_monetario(saida["Valor_Programado"])
+    saida["Observacao"] = saida["Observacao"].fillna("").astype(str)
+    return saida[colunas_saida]
+
+
+def canonicalizar_pactuados_priorizacao(registros):
+    """Converte Pactuados para o esquema mensal + distribuição semanal."""
+    df = pd.DataFrame(registros or [])
+    colunas_saida = [
+        "Mes", "Fonte", "Grupo", "Valor_Pactuado",
+        "Pactuado_Semana_1", "Pactuado_Semana_2",
+        "Pactuado_Semana_3", "Pactuado_Semana_4", "Atualizado_Em",
+    ]
+    if df.empty:
+        return pd.DataFrame(columns=colunas_saida)
+    aliases = {
+        "Mes": ("Mes", "Mês"),
+        "Fonte": ("Fonte",),
+        "Grupo": ("Grupo",),
+        "Valor_Pactuado": ("Valor_Pactuado", "Valor Pactuado", "Pactuado Mensal", "Valor"),
+        "Pactuado_Semana_1": ("Pactuado_Semana_1", "Pactuado Semana 1", "Semana 1"),
+        "Pactuado_Semana_2": ("Pactuado_Semana_2", "Pactuado Semana 2", "Semana 2"),
+        "Pactuado_Semana_3": ("Pactuado_Semana_3", "Pactuado Semana 3", "Semana 3"),
+        "Pactuado_Semana_4": ("Pactuado_Semana_4", "Pactuado Semana 4", "Semana 4"),
+        "Atualizado_Em": ("Atualizado_Em", "Atualizado Em"),
+    }
+    saida = pd.DataFrame(index=df.index)
+    colunas_valor = {
+        "Valor_Pactuado", "Pactuado_Semana_1", "Pactuado_Semana_2",
+        "Pactuado_Semana_3", "Pactuado_Semana_4",
+    }
+    for destino, nomes in aliases.items():
+        origem = _achar_coluna_priorizacao(df, *nomes)
+        if origem is None:
+            saida[destino] = 0.0 if destino in colunas_valor else ""
+        else:
+            saida[destino] = df[origem]
+    saida["Mes"] = saida["Mes"].apply(normalizar_mes_priorizacao)
+    saida["Fonte"] = saida["Fonte"].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True)
+    saida["Grupo"] = saida["Grupo"].fillna("").astype(str).str.strip().str.upper()
+    for coluna in colunas_valor:
+        saida[coluna] = converter_valor_monetario(saida[coluna])
+    return saida[colunas_saida]
+
+
+def normalizar_semana_priorizacao(valor):
+    """Aceita Semana 1/01, 1/01 e variações equivalentes da planilha."""
+    texto = "" if pd.isna(valor) else str(valor).strip().upper()
+    if not texto:
+        return ""
+    numeros = re.findall(r"\d+", texto)
+    if numeros:
+        numero = int(numeros[-1])
+        if 1 <= numero <= 4:
+            return f"Semana {numero}"
+    return str(valor).strip()
+
+
+def normalizar_mes_priorizacao(valor):
+    """Normaliza mês da API/planilha para MM/AAAA sem depender do formato digitado.
+
+    O Google Sheets pode exibir 08/2026, mas o Apps Script devolver a célula
+    como uma data ISO (ex.: 2026-08-01T03:00:00.000Z). Por isso tratamos
+    explicitamente os dois formatos.
+    """
+    if valor is None or (isinstance(valor, float) and pd.isna(valor)):
+        return ""
+    if isinstance(valor, (pd.Timestamp, datetime.datetime, datetime.date)):
+        return f"{valor.month:02d}/{valor.year:04d}"
+
+    texto = str(valor).strip()
+    if not texto:
+        return ""
+
+    # Formato visual da planilha: 08/2026, 8/2026, 08-2026 etc.
+    encontrado = re.search(r"(?<!\d)(\d{1,2})[\-/](\d{4})(?!\d)", texto)
+    if encontrado:
+        mes, ano = int(encontrado.group(1)), int(encontrado.group(2))
+        if 1 <= mes <= 12:
+            return f"{mes:02d}/{ano:04d}"
+
+    # Formato ISO devolvido pelo Apps Script/JSON: 2026-08-01T03:00:00.000Z
+    encontrado_iso = re.search(r"(?<!\d)(\d{4})-(\d{1,2})-(\d{1,2})(?:[T\s].*)?$", texto)
+    if encontrado_iso:
+        ano, mes = int(encontrado_iso.group(1)), int(encontrado_iso.group(2))
+        if 1 <= mes <= 12:
+            return f"{mes:02d}/{ano:04d}"
+
+    # Também tenta interpretar outras strings de data válidas vindas do Sheets.
+    # dayfirst=False evita transformar 2026-08-01 em janeiro/agosto por engano.
+    try:
+        data_convertida = pd.to_datetime(texto, errors="coerce", dayfirst=False)
+        if pd.notna(data_convertida):
+            return f"{data_convertida.month:02d}/{data_convertida.year:04d}"
+    except Exception:
+        pass
+
+    # Também aceita rótulos usados manualmente no Google Sheets, como
+    # Ago/2026, Agosto/2026, Set/2026 e Setembro/2026.
+    mapa_meses_pt = {
+        "JAN": 1, "JANEIRO": 1, "FEV": 2, "FEVEREIRO": 2,
+        "MAR": 3, "MARCO": 3, "MARÇO": 3, "ABR": 4, "ABRIL": 4,
+        "MAI": 5, "MAIO": 5, "JUN": 6, "JUNHO": 6,
+        "JUL": 7, "JULHO": 7, "AGO": 8, "AGOSTO": 8,
+        "SET": 9, "SETEMBRO": 9, "OUT": 10, "OUTUBRO": 10,
+        "NOV": 11, "NOVEMBRO": 11, "DEZ": 12, "DEZEMBRO": 12,
+    }
+    encontrado_nome = re.search(r"([A-Za-zÀ-ÿ]+)\s*[\-/ ]\s*(\d{4})", texto)
+    if encontrado_nome:
+        nome_mes = encontrado_nome.group(1).strip().upper().replace(".", "")
+        ano = int(encontrado_nome.group(2))
+        if nome_mes in mapa_meses_pt:
+            return f"{mapa_meses_pt[nome_mes]:02d}/{ano:04d}"
+    try:
+        data = pd.to_datetime(texto, errors="raise", dayfirst=True)
+        return data.strftime("%m/%Y")
+    except Exception:
+        return texto
+
+
+def normalizar_numero_nl_priorizacao(valor):
+    texto = "" if pd.isna(valor) else str(valor).strip().upper()
+    return re.sub(r"\.0$", "", texto)
+
+
+def assinatura_priorizacao_remota(conteudo):
+    """Assinatura estável para detectar edição feita diretamente na planilha."""
+    if not isinstance(conteudo, dict):
+        return ""
+    partes = {}
+    for nome in ("pactuados", "programacao"):
+        registros = conteudo.get(nome, []) or []
+        limpos = []
+        for registro in registros:
+            if not isinstance(registro, dict):
+                continue
+            limpo = {
+                str(chave): _valor_json_seguro(valor)
+                for chave, valor in registro.items()
+                if str(chave).strip().lower() not in {"atualizado_em", "atualizado em"}
+            }
+            limpos.append(limpo)
+        limpos.sort(key=lambda item: json.dumps(item, ensure_ascii=False, sort_keys=True, default=str))
+        partes[nome] = limpos
+    return json.dumps(partes, ensure_ascii=False, sort_keys=True, default=str)
+
+
+@st.cache_data(ttl=20, show_spinner=False)
+def carregar_priorizacao_google_sincronizada(nonce=0):
+    """Relê periodicamente a planilha; nonce permite atualização manual imediata."""
+    return carregar_priorizacao_google()
 
 
 def classificar_grupo_planejamento(valor):
@@ -3455,9 +3697,20 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                 return f"R$ {valor / 1_000:.0f} mil".replace(".", ",")
             return f"R$ {valor:,.0f}".replace(",", "X").replace(".", ",").replace("X", ".")
 
-        resumo_tipo_grafico["Rótulo"] = resumo_tipo_grafico["Valor_Executado"].apply(
-            rotulo_valor_compacto
+        total_tipo_grafico = float(resumo_tipo_grafico["Valor_Executado"].sum())
+        resumo_tipo_grafico["Percentual"] = (
+            resumo_tipo_grafico["Valor_Executado"] / total_tipo_grafico * 100
+            if total_tipo_grafico > 0
+            else 0.0
         )
+        resumo_tipo_grafico["Rótulo"] = resumo_tipo_grafico.apply(
+            lambda linha: (
+                f"{rotulo_valor_compacto(linha['Valor_Executado'])}  •  "
+                f"{float(linha['Percentual']):.1f}%".replace(".", ",")
+            ),
+            axis=1,
+        )
+
         grafico_tipo = px.bar(
             resumo_tipo_grafico,
             x="Valor_Executado",
@@ -3466,37 +3719,73 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
             text="Rótulo",
             color="Tipo de NL",
             color_discrete_map={
-                "Orçamentária": "#0f4c5c",
-                "RPP": "#2c7a7b",
-                "RPNP": "#b7791f",
+                "Orçamentária": "#0b4f6c",
+                "RPP": "#2a7f8e",
+                "RPNP": "#8a6d3b",
                 "Não informado": "#64748b",
             },
+            custom_data=["Percentual"],
         )
         grafico_tipo.update_traces(
             textposition="outside",
             cliponaxis=False,
-            marker=dict(line=dict(color="#e6edf3", width=1.5)),
-            hovertemplate="<b>%{y}</b><br>R$ %{x:,.0f}<extra></extra>",
+            width=0.48,
+            marker_line_width=0,
+            textfont=dict(size=12, color="#475569"),
+            hovertemplate=(
+                "<b>%{y}</b><br>"
+                "Valor: R$ %{x:,.2f}<br>"
+                "Participação: %{customdata[0]:.1f}%<extra></extra>"
+            ),
         )
         grafico_tipo.update_layout(
-            title={"text": "Valores por tipo de NL", "font": {"size": 15, "color": "#002b49"}},
-            # A margem maior e os rótulos compactos impedem o corte à direita.
-            margin=dict(l=8, r=110, t=42, b=8),
-            height=225,
+            title={
+                "text": "Valores por tipo de NL",
+                "x": 0.0,
+                "xanchor": "left",
+                "font": {"size": 15, "color": "#002b49"},
+            },
+            margin=dict(l=18, r=145, t=48, b=12),
+            height=220,
             showlegend=False,
+            bargap=0.38,
             paper_bgcolor="rgba(0,0,0,0)",
             plot_bgcolor="rgba(0,0,0,0)",
-            hoverlabel=dict(bgcolor="#002b49", font_color="#ffffff"),
-            xaxis=dict(visible=False, showgrid=False),
+            hoverlabel=dict(
+                bgcolor="#ffffff",
+                bordercolor="#d7e1ea",
+                font_color="#0f2a44",
+                font_size=12,
+            ),
+            xaxis=dict(
+                visible=False,
+                showgrid=False,
+                zeroline=False,
+                fixedrange=True,
+            ),
             yaxis=dict(
                 title=None,
                 categoryorder="array",
                 categoryarray=resumo_tipo_grafico["Tipo de NL"].tolist(),
                 autorange="reversed",
+                showgrid=False,
+                ticks="",
+                tickfont=dict(size=12, color="#64748b"),
+                fixedrange=True,
             ),
             separators=",.",
         )
-        st.plotly_chart(grafico_tipo, use_container_width=True, key="grafico_tipo_planejamento")
+        st.plotly_chart(
+            grafico_tipo,
+            use_container_width=True,
+            key="grafico_tipo_planejamento",
+            config={
+                "displayModeBar": False,
+                "displaylogo": False,
+                "responsive": True,
+                "scrollZoom": False,
+            },
+        )
 
         st.markdown(
             "<div style='border-top:1px solid #dbe4ee; margin:12px 8px 14px;'></div>",
@@ -3615,82 +3904,210 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
     chave_planejamento = "FONTE_500"
     chave_prioridades = f"prioridades_{mes_planejado}_{chave_planejamento}"
 
-    # Carrega a programação somente uma vez por sessão. Assim, navegar entre
-    # as telas não perde o que já foi montado e a planilha vira o registro
-    # permanente para uma nova abertura do sistema.
-    if "priorizacao_google_carregada" not in st.session_state:
-        retorno_google = carregar_priorizacao_google()
-        st.session_state["priorizacao_google_carregada"] = True
-        st.session_state["priorizacao_google_erro"] = retorno_google.get("erro", "")
-        st.session_state["programacao_google_salva"] = pd.DataFrame(
+    # Sincronização com a planilha de priorização. A leitura deixa de acontecer
+    # apenas uma vez por sessão: o painel verifica periodicamente se a planilha
+    # foi alterada fora do Streamlit e reconstrói o mês atual quando necessário.
+    if "nonce_atualizacao_priorizacao" not in st.session_state:
+        st.session_state["nonce_atualizacao_priorizacao"] = 0
+
+    col_sync1, col_sync2 = st.columns([0.24, 0.76])
+    with col_sync1:
+        atualizar_planilha_agora = st.button(
+            "🔄 Atualizar da planilha",
+            key="atualizar_priorizacao_planilha",
+            use_container_width=True,
+        )
+        if atualizar_planilha_agora:
+            # O clique precisa ser uma recarga FORÇADA, não apenas uma checagem.
+            # Limpa o cache local e usa um nonce único para obter nova resposta.
+            carregar_priorizacao_google_sincronizada.clear()
+            st.session_state["nonce_atualizacao_priorizacao"] = int(
+                datetime.datetime.now().timestamp() * 1000
+            )
+
+    retorno_google = carregar_priorizacao_google_sincronizada(
+        st.session_state["nonce_atualizacao_priorizacao"]
+    )
+    assinatura_remota = assinatura_priorizacao_remota(retorno_google)
+    primeira_sincronizacao = "assinatura_priorizacao_remota" not in st.session_state
+    assinatura_anterior = st.session_state.get("assinatura_priorizacao_remota", "")
+    houve_alteracao_remota = bool(
+        assinatura_anterior and assinatura_remota and assinatura_remota != assinatura_anterior
+    )
+
+    st.session_state["priorizacao_google_carregada"] = True
+    st.session_state["priorizacao_google_erro"] = retorno_google.get("erro", "")
+
+    if retorno_google.get("ok") is not False:
+        # Canonicaliza os campos recebidos. Isso evita que pequenas diferenças
+        # no cabeçalho da planilha (Mes/Mês, Valor_Programado etc.) zerem o painel.
+        programacao_google_api = canonicalizar_programacao_priorizacao(
             retorno_google.get("programacao", [])
         )
-        pactuados_google = pd.DataFrame(retorno_google.get("pactuados", []))
-        if pactuados_google.empty:
+        pactuados_google_api = canonicalizar_pactuados_priorizacao(
+            retorno_google.get("pactuados", [])
+        )
+        st.session_state["programacao_google_salva"] = programacao_google_api.copy()
+
+        if pactuados_google_api.empty:
             st.session_state["pactuados_fonte500"] = pd.DataFrame(
-                columns=["Mês", "Grupo", "Pactuado Mensal"]
+                columns=["Mês", "Grupo", "Pactuado Mensal", "Pactuado Semana 1", "Pactuado Semana 2", "Pactuado Semana 3", "Pactuado Semana 4"]
             )
         else:
-            pactuados_google = pactuados_google.rename(
+            pactuados_google = pactuados_google_api.rename(
                 columns={
                     "Mes": "Mês",
                     "Valor_Pactuado": "Pactuado Mensal",
-                    "Fonte": "Fonte",
+                    "Pactuado_Semana_1": "Pactuado Semana 1",
+                    "Pactuado_Semana_2": "Pactuado Semana 2",
+                    "Pactuado_Semana_3": "Pactuado Semana 3",
+                    "Pactuado_Semana_4": "Pactuado Semana 4",
                 }
-            )
-            if "Grupo" not in pactuados_google.columns:
-                pactuados_google["Grupo"] = chave_planejamento
-            if "Mês" not in pactuados_google.columns:
-                pactuados_google["Mês"] = ""
-            if "Pactuado Mensal" not in pactuados_google.columns:
-                pactuados_google["Pactuado Mensal"] = 0.0
-            pactuados_google["Pactuado Mensal"] = pd.to_numeric(
-                pactuados_google["Pactuado Mensal"], errors="coerce"
-            ).fillna(0.0)
+            ).copy()
+            # A aba é exclusiva da Fonte 500; se Grupo vier vazio, assume a chave
+            # institucional usada pelo painel.
+            pactuados_google.loc[
+                pactuados_google["Grupo"].fillna("").astype(str).str.strip() == "", "Grupo"
+            ] = chave_planejamento
             st.session_state["pactuados_fonte500"] = pactuados_google[
-                ["Mês", "Grupo", "Pactuado Mensal"]
+                ["Mês", "Grupo", "Pactuado Mensal", "Pactuado Semana 1", "Pactuado Semana 2", "Pactuado Semana 3", "Pactuado Semana 4"]
             ].copy()
+
+        # Se a planilha mudou por fora do painel, invalida apenas o recorte do
+        # mês atual. Ele será reconstruído logo abaixo com os dados mais novos.
+        if houve_alteracao_remota or primeira_sincronizacao or atualizar_planilha_agora:
+            # No clique manual, sempre descarta a cópia local do mês e reconstrói
+            # as quatro semanas com exatamente o que a API acabou de retornar.
+            st.session_state.pop(chave_prioridades, None)
+            for semana_sync in ["Semana 1", "Semana 2", "Semana 3", "Semana 4"]:
+                detalhe_sync = f"detalhe_nl_{chave_prioridades}_{semana_sync}"
+                st.session_state.pop(detalhe_sync, None)
+                st.session_state.pop(f"{detalhe_sync}_assinatura", None)
+                st.session_state.pop(f"{detalhe_sync}_restaurado_planilha", None)
+            # Remove estados de editores antigos desse mês para que checkboxes
+            # de uma versão anterior não sobrescrevam o que veio da planilha.
+            prefixo_editor = f"editor_detalhe_nl_{chave_prioridades}_"
+            for chave_estado in list(st.session_state.keys()):
+                if str(chave_estado).startswith(prefixo_editor):
+                    st.session_state.pop(chave_estado, None)
+            st.session_state.pop(f"pactuado_{mes_planejado}_{chave_planejamento}", None)
+            st.session_state["priorizacao_planilha_atualizada_em"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
+
+        st.session_state["assinatura_priorizacao_remota"] = assinatura_remota
+
+    with col_sync2:
+        if st.session_state.get("priorizacao_google_erro"):
+            st.warning("Não foi possível atualizar a priorização da planilha vinculada.")
+        elif atualizar_planilha_agora:
+            qtd_programacao_api = len(retorno_google.get("programacao", []) or [])
+            qtd_pactuados_api = len(retorno_google.get("pactuados", []) or [])
+            prog_diag = canonicalizar_programacao_priorizacao(retorno_google.get("programacao", []))
+            pact_diag = canonicalizar_pactuados_priorizacao(retorno_google.get("pactuados", []))
+            mes_diag = normalizar_mes_priorizacao(mes_planejado)
+            prog_mes_diag = prog_diag[
+                (prog_diag["Mes"] == mes_diag)
+                & (prog_diag["Fonte"].astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False))
+            ].copy()
+            pact_mes_diag = pact_diag[
+                (pact_diag["Mes"] == mes_diag)
+                & (pact_diag["Fonte"].astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False))
+            ].copy()
+            valor_pact_diag = float(pact_mes_diag["Valor_Pactuado"].sum()) if not pact_mes_diag.empty else 0.0
+            total_prog_diag = float(prog_mes_diag["Valor_Programado"].sum()) if not prog_mes_diag.empty else 0.0
+            semanas_diag = ", ".join(
+                f"{semana}: {len(grupo)} NL / {formatar_brl(grupo['Valor_Programado'].sum())}"
+                for semana, grupo in prog_mes_diag.groupby("Semana", sort=True)
+            ) or "nenhuma semana encontrada"
+            st.success(
+                f"Sincronização concluída para {mes_diag}: API total {qtd_programacao_api} programação / "
+                f"{qtd_pactuados_api} pactuado(s). No mês selecionado: {len(prog_mes_diag)} NL, "
+                f"{formatar_brl(total_prog_diag)} programado e {formatar_brl(valor_pact_diag)} pactuado. "
+                f"{semanas_diag}."
+            )
+        elif houve_alteracao_remota:
+            st.success(
+                "Alterações feitas diretamente na planilha foram reconhecidas e aplicadas ao painel."
+            )
+        else:
+            st.caption(
+                "A priorização é sincronizada com a planilha a cada nova interação (cache de até 20 s). "
+                "Use o botão ao lado para forçar a leitura imediata."
+            )
 
     if "pactuados_fonte500" not in st.session_state:
         st.session_state["pactuados_fonte500"] = pd.DataFrame(
-            columns=["Mês", "Grupo", "Pactuado Mensal"]
+            columns=["Mês", "Grupo", "Pactuado Mensal", "Pactuado Semana 1", "Pactuado Semana 2", "Pactuado Semana 3", "Pactuado Semana 4"]
         )
 
-    chave_pactuado = (
-        (st.session_state["pactuados_fonte500"]["Mês"] == mes_planejado)
-        & (st.session_state["pactuados_fonte500"]["Grupo"] == chave_planejamento)
+    mes_planejado_normalizado = normalizar_mes_priorizacao(mes_planejado)
+    colunas_pactuado_estado = [
+        "Mês", "Grupo", "Pactuado Mensal",
+        "Pactuado Semana 1", "Pactuado Semana 2", "Pactuado Semana 3", "Pactuado Semana 4",
+    ]
+    for coluna in colunas_pactuado_estado:
+        if coluna not in st.session_state["pactuados_fonte500"].columns:
+            st.session_state["pactuados_fonte500"][coluna] = 0.0 if "Pactuado" in coluna else ""
+
+    tabela_pactuados_estado = st.session_state["pactuados_fonte500"].copy()
+    tabela_pactuados_estado["Mês"] = tabela_pactuados_estado["Mês"].apply(normalizar_mes_priorizacao)
+    tabela_pactuados_estado["Grupo"] = (
+        tabela_pactuados_estado["Grupo"].fillna("").astype(str).str.strip().str.upper()
     )
-    registros_pactuados = st.session_state["pactuados_fonte500"]
+    chave_pactuado = (
+        (tabela_pactuados_estado["Mês"] == mes_planejado_normalizado)
+        & (tabela_pactuados_estado["Grupo"].isin(["", chave_planejamento.upper()]))
+    )
+    registro_pactuado = (
+        tabela_pactuados_estado.loc[chave_pactuado].iloc[0]
+        if chave_pactuado.any() else None
+    )
     pactuado_atual = (
-        float(registros_pactuados.loc[chave_pactuado, "Pactuado Mensal"].iloc[0])
-        if chave_pactuado.any()
+        float(registro_pactuado.get("Pactuado Mensal", 0.0))
+        if registro_pactuado is not None
         else (54_000_000.0 if mes_planejado == "09/2026" else 0.0)
     )
-
+    # O pactuado semanal não é mais digitado manualmente.
+    # Ele será calculado automaticamente a partir do que já está salvo na
+    # programação de cada semana (histórico) e do que o usuário adicionar
+    # na tela. Assim, trocar de módulo não faz os valores desaparecerem.
     st.markdown("### 2. Defina o teto do mês")
     entrada_pactuado, descricao = st.columns([1, 2])
     with entrada_pactuado:
         pactuado_mensal = st.number_input(
             "Pactuado mensal — Fonte 500",
-            min_value=0.0,
-            value=pactuado_atual,
-            step=1000.0,
-            format="%.2f",
+            min_value=0.0, value=pactuado_atual, step=1000.0, format="%.2f",
             key=f"pactuado_{mes_planejado}_{chave_planejamento}",
         )
     with descricao:
         st.caption(
-            "Digite o teto pactuado do mês. Em setembro/2026 o valor inicial sugerido é R$ 54.000.000,00. "
-            "Cada valor informado nas semanas reduz automaticamente o saldo do pactuado."
+            "Informe somente o teto mensal. O pactuado de cada semana é calculado "
+            "automaticamente pelos objetos/NLs que já estão registrados na semana "
+            "ou que forem adicionados durante o planejamento."
         )
+
+    # Atualiza apenas o teto mensal neste ponto. Os quatro pactuados semanais
+    # são preenchidos mais abaixo, depois que as semanas forem reconstruídas.
+    valores_registro_pactuado = {
+        "Mês": mes_planejado_normalizado,
+        "Grupo": chave_planejamento,
+        "Pactuado Mensal": float(pactuado_mensal),
+    }
     if chave_pactuado.any():
-        st.session_state["pactuados_fonte500"].loc[chave_pactuado, "Pactuado Mensal"] = pactuado_mensal
+        indice_real = tabela_pactuados_estado.loc[chave_pactuado].index[0]
+        for coluna, valor in valores_registro_pactuado.items():
+            st.session_state["pactuados_fonte500"].loc[indice_real, coluna] = valor
     else:
+        novo_registro = {
+            "Mês": mes_planejado_normalizado,
+            "Grupo": chave_planejamento,
+            "Pactuado Mensal": float(pactuado_mensal),
+            "Pactuado Semana 1": 0.0,
+            "Pactuado Semana 2": 0.0,
+            "Pactuado Semana 3": 0.0,
+            "Pactuado Semana 4": 0.0,
+        }
         st.session_state["pactuados_fonte500"] = pd.concat(
-            [
-                st.session_state["pactuados_fonte500"],
-                pd.DataFrame([[mes_planejado, chave_planejamento, pactuado_mensal]], columns=["Mês", "Grupo", "Pactuado Mensal"]),
-            ],
+            [st.session_state["pactuados_fonte500"], pd.DataFrame([novo_registro])],
             ignore_index=True,
         )
 
@@ -3704,8 +4121,10 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         # Reconstrói a tela a partir das NLs detalhadas salvas. Cada NL salva
         # continua marcada para pagamento; as demais do objeto ficam excluídas.
         # Isso permite reabrir o sistema sem duplicar valores.
-        programacao_google = st.session_state.get("programacao_google_salva", pd.DataFrame())
+        programacao_google = st.session_state.get("programacao_google_salva", pd.DataFrame()).copy()
         if isinstance(programacao_google, pd.DataFrame) and not programacao_google.empty:
+            # A resposta já foi canonicalizada na sincronização; renomeia apenas
+            # para os títulos usados internamente na interface.
             programacao_google = programacao_google.rename(
                 columns={
                     "Mes": "Mês de programação",
@@ -3715,28 +4134,40 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                     "Observacao": "Observação",
                 }
             )
-            for coluna in ["Mês de programação", "Semana", "Objeto", "Número NL"]:
+            for coluna in [
+                "Mês de programação", "Semana", "Objeto", "Número NL", "Credor",
+                "Valor programado", "Grupo", "Tipo de NL", "Observação",
+            ]:
                 if coluna not in programacao_google.columns:
-                    programacao_google[coluna] = ""
+                    programacao_google[coluna] = 0.0 if coluna == "Valor programado" else ""
             fonte_programacao = (
                 programacao_google["Fonte"]
                 if "Fonte" in programacao_google.columns
                 else pd.Series("500", index=programacao_google.index)
             )
+            programacao_google["__Mes_Normalizado"] = programacao_google["Mês de programação"].apply(
+                normalizar_mes_priorizacao
+            )
+            programacao_google["__Semana_Normalizada"] = programacao_google["Semana"].apply(
+                normalizar_semana_priorizacao
+            )
+            programacao_google["__Numero_NL_Normalizado"] = programacao_google["Número NL"].apply(
+                normalizar_numero_nl_priorizacao
+            )
             registros_mes = programacao_google[
-                (programacao_google["Mês de programação"].astype(str) == mes_planejado)
+                (programacao_google["__Mes_Normalizado"] == normalizar_mes_priorizacao(mes_planejado))
                 & (fonte_programacao.astype(str).str.contains("500", na=False))
             ].copy()
             for semana in semanas_padrao:
                 registros_semana = registros_mes[
-                    registros_mes["Semana"].astype(str) == semana
+                    registros_mes["__Semana_Normalizada"] == semana
                 ].copy()
                 if registros_semana.empty:
                     continue
                 linhas_restauradas = []
                 for objeto, grupo_objeto in registros_semana.groupby("Objeto", dropna=False, sort=False):
-                    valor_restaurado = pd.to_numeric(
-                        grupo_objeto.get("Valor programado", pd.Series(dtype=float)), errors="coerce"
+                    valor_restaurado = converter_valor_monetario(
+                        grupo_objeto.get("Valor programado", pd.Series(dtype=float))
                     ).fillna(0.0).sum()
                     observacao_restaurada = str(
                         grupo_objeto.get("Observação", pd.Series([""])).fillna("").iloc[0]
@@ -3749,21 +4180,59 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                 st.session_state[chave_prioridades][semana] = pd.DataFrame(linhas_restauradas)
 
                 objetos_restaurados = [linha["Objeto"] for linha in linhas_restauradas]
-                detalhe_restaurado = base_detalhamento_nl[
+
+                # A programação salva na planilha é a fonte de verdade do histórico.
+                # Não dependemos de a NL ainda existir na base atual para restaurar
+                # Semana 1/2 (ou qualquer semana já registrada).
+                detalhe_remoto = registros_semana[[
+                    "Objeto", "Número NL", "Credor", "Valor programado", "Grupo", "Tipo de NL"
+                ]].copy()
+                detalhe_remoto = detalhe_remoto.rename(columns={"Valor programado": "Valor da NL"})
+                detalhe_remoto["Valor da NL"] = converter_valor_monetario(detalhe_remoto["Valor da NL"])
+                detalhe_remoto["Excluir da semana"] = False
+                detalhe_remoto["__Numero_NL_Normalizado"] = detalhe_remoto["Número NL"].apply(
+                    normalizar_numero_nl_priorizacao
+                )
+
+                # Acrescenta as NLs atualmente disponíveis para os mesmos objetos.
+                # As que não estavam salvas naquela semana entram marcadas como
+                # excluídas, preservando exatamente o histórico registrado.
+                detalhe_atual = base_detalhamento_nl[
                     base_detalhamento_nl["Objeto"].astype(str).isin(objetos_restaurados)
-                ][["Objeto", "Número NL", "Credor", "Valor_Executado"]].copy()
-                detalhe_restaurado = detalhe_restaurado.rename(columns={"Valor_Executado": "Valor da NL"})
-                nls_mantidas = set(registros_semana["Número NL"].astype(str))
-                detalhe_restaurado["Excluir da semana"] = ~detalhe_restaurado["Número NL"].astype(str).isin(nls_mantidas)
+                ][["Objeto", "Número NL", "Credor", "Valor_Executado", "Grupo", "Tipo de NL"]].copy()
+                detalhe_atual = detalhe_atual.rename(columns={"Valor_Executado": "Valor da NL"})
+                detalhe_atual["__Numero_NL_Normalizado"] = detalhe_atual["Número NL"].apply(
+                    normalizar_numero_nl_priorizacao
+                )
+                chaves_remotas = set(
+                    detalhe_remoto["Objeto"].astype(str) + "::" + detalhe_remoto["__Numero_NL_Normalizado"].astype(str)
+                )
+                chave_atual = detalhe_atual["Objeto"].astype(str) + "::" + detalhe_atual["__Numero_NL_Normalizado"].astype(str)
+                detalhe_atual = detalhe_atual.loc[~chave_atual.isin(chaves_remotas)].copy()
+                detalhe_atual["Excluir da semana"] = True
+
+                detalhe_restaurado = pd.concat([detalhe_remoto, detalhe_atual], ignore_index=True)
                 detalhe_restaurado["Valor da NL"] = detalhe_restaurado["Valor da NL"].apply(formatar_brl)
                 detalhe_chave_restaurada = f"detalhe_nl_{chave_prioridades}_{semana}"
-                st.session_state[detalhe_chave_restaurada] = detalhe_restaurado[
-                    ["Objeto", "Número NL", "Credor", "Valor da NL", "Excluir da semana"]
-                ].copy()
-                assinatura_restaurada = "|".join(sorted(
-                    detalhe_restaurado["Objeto"].astype(str) + "::" + detalhe_restaurado["Número NL"].astype(str)
+                st.session_state[detalhe_chave_restaurada] = detalhe_restaurado[[
+                    "Objeto", "Número NL", "Credor", "Valor da NL", "Excluir da semana", "Grupo", "Tipo de NL"
+                ]].copy()
+
+                # A assinatura acompanha a base atual, mas o estado acima mantém
+                # também as NLs históricas que já não existem mais nessa base.
+                assinatura_base_atual = "|".join(sorted(
+                    detalhe_atual["Objeto"].astype(str) + "::" + detalhe_atual["Número NL"].astype(str)
                 ))
-                st.session_state[f"{detalhe_chave_restaurada}_assinatura"] = assinatura_restaurada
+                assinatura_base_salva = "|".join(sorted(
+                    base_detalhamento_nl[
+                        base_detalhamento_nl["Objeto"].astype(str).isin(objetos_restaurados)
+                    ]["Objeto"].astype(str) + "::" +
+                    base_detalhamento_nl[
+                        base_detalhamento_nl["Objeto"].astype(str).isin(objetos_restaurados)
+                    ]["Número NL"].astype(str)
+                ))
+                st.session_state[f"{detalhe_chave_restaurada}_assinatura"] = assinatura_base_salva
+                st.session_state[f"{detalhe_chave_restaurada}_restaurado_planilha"] = True
 
     # Um mesmo objeto pode aparecer em mais de um grupo na referência acima.
     # Para a priorização, o limite é a soma das NLs dos grupos selecionados.
@@ -3847,7 +4316,7 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                 else:
                     detalhamento_nl = base_detalhamento_nl[
                         base_detalhamento_nl["Objeto"].isin(objetos_escolhidos)
-                    ][["Objeto", "Número NL", "Credor", "Valor_Executado"]].copy()
+                    ][["Objeto", "Número NL", "Credor", "Valor_Executado", "Grupo", "Tipo de NL"]].copy()
                     detalhamento_nl = detalhamento_nl.rename(columns={"Valor_Executado": "Valor da NL"})
                     detalhamento_nl = detalhamento_nl[
                         detalhamento_nl["Número NL"].fillna("").astype(str).str.strip() != ""
@@ -3856,12 +4325,21 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                         detalhamento_nl["Objeto"].astype(str) + "::" + detalhamento_nl["Número NL"].astype(str)
                     ))
                     detalhe_anterior = st.session_state.get(detalhe_chave)
-                    if (
+                    restaurado_da_planilha = bool(
+                        st.session_state.get(f"{detalhe_chave}_restaurado_planilha", False)
+                    )
+                    precisa_recriar_detalhe = (
                         detalhe_anterior is None
                         or "Objeto" not in detalhe_anterior.columns
-                        or st.session_state.get(f"{detalhe_chave}_assinatura") != assinatura_detalhe
-                    ):
-                        detalhe_anterior = detalhamento_nl[["Objeto", "Número NL", "Credor", "Valor da NL"]].copy()
+                        or (
+                            not restaurado_da_planilha
+                            and st.session_state.get(f"{detalhe_chave}_assinatura") != assinatura_detalhe
+                        )
+                    )
+                    if precisa_recriar_detalhe:
+                        detalhe_anterior = detalhamento_nl[[
+                            "Objeto", "Número NL", "Credor", "Valor da NL", "Grupo", "Tipo de NL"
+                        ]].copy()
                         detalhe_anterior["Valor da NL"] = detalhe_anterior["Valor da NL"].apply(formatar_brl)
                         detalhe_anterior["Excluir da semana"] = False
                         st.session_state[detalhe_chave] = detalhe_anterior
@@ -3919,9 +4397,6 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                                 )
                     st.session_state[detalhe_chave] = detalhe_anterior.copy()
 
-                    valores_por_nl = detalhamento_nl.groupby(
-                        detalhamento_nl["Número NL"].astype(str)
-                    )["Valor da NL"].sum()
                     linhas_prioridade = []
                     grupos_editados = []
                     for indice_objeto, linha in tabela_semana.reset_index(drop=True).iterrows():
@@ -3931,10 +4406,12 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                         detalhes_objeto = detalhe_anterior[
                             detalhe_anterior["Objeto"].astype(str) == objeto
                         ].copy()
-                        nls_mantidas_objeto = detalhes_objeto.loc[
-                            ~detalhes_objeto["Excluir da semana"].fillna(False), "Número NL"
-                        ].astype(str)
-                        total_objeto = float(valores_por_nl.reindex(nls_mantidas_objeto).fillna(0.0).sum())
+                        linhas_mantidas_objeto = detalhes_objeto.loc[
+                            ~detalhes_objeto["Excluir da semana"].fillna(False)
+                        ].copy()
+                        total_objeto = float(
+                            converter_valor_monetario(linhas_mantidas_objeto["Valor da NL"]).sum()
+                        )
                         chave_objeto = re.sub(r"[^A-Za-z0-9]+", "_", objeto).strip("_")[:70]
                         with st.expander(
                             f"{objeto}   |   A PROGRAMAR: {formatar_brl(total_objeto)}",
@@ -3963,10 +4440,12 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                                     detalhes_objeto.groupby("Credor", dropna=False, sort=False)
                                 ):
                                     grupo_credor = grupo_credor.reset_index(drop=True)
-                                    nls_mantidas = grupo_credor.loc[
-                                        ~grupo_credor["Excluir da semana"].fillna(False), "Número NL"
-                                    ].astype(str)
-                                    total_credor = float(valores_por_nl.reindex(nls_mantidas).fillna(0.0).sum())
+                                    linhas_mantidas_credor = grupo_credor.loc[
+                                        ~grupo_credor["Excluir da semana"].fillna(False)
+                                    ].copy()
+                                    total_credor = float(
+                                        converter_valor_monetario(linhas_mantidas_credor["Valor da NL"]).sum()
+                                    )
                                     nome_credor = str(credor).strip() if pd.notna(credor) else "Credor não informado"
                                     with st.expander(
                                         f"{nome_credor}   •   VALOR TOTAL: {formatar_brl(total_credor)}",
@@ -4004,12 +4483,27 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
     prioridades = pd.concat(prioridades_semanais, ignore_index=True)
     prioridades["Valor Prioridade"] = pd.to_numeric(prioridades["Valor Prioridade"], errors="coerce").fillna(0.0)
     prioridades = prioridades[prioridades["Objeto"].fillna("").astype(str).str.strip() != ""]
-    priorizado_por_objeto = prioridades.groupby("Objeto", as_index=False)["Valor Prioridade"].sum()
+    # Validação de disponibilidade: registros já existentes na planilha são
+    # histórico e não devem ser comparados novamente com a NL disponível hoje.
+    programacao_historica = st.session_state.get("programacao_google_salva", pd.DataFrame()).copy()
+    pares_historicos = set()
+    if isinstance(programacao_historica, pd.DataFrame) and not programacao_historica.empty:
+        hist = canonicalizar_programacao_priorizacao(programacao_historica.to_dict(orient="records"))
+        hist = hist[(hist["Mes"] == normalizar_mes_priorizacao(mes_planejado)) & hist["Fonte"].astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False)]
+        pares_historicos = set(zip(hist["Semana"].astype(str), hist["Objeto"].astype(str)))
+
+    prioridades_validacao = prioridades.copy()
+    if not prioridades_validacao.empty:
+        prioridades_validacao["_historico"] = prioridades_validacao.apply(
+            lambda linha: (str(linha.get("Semana", "")), str(linha.get("Objeto", ""))) in pares_historicos, axis=1
+        )
+        prioridades_validacao = prioridades_validacao[~prioridades_validacao["_historico"]].copy()
+    priorizado_por_objeto = prioridades_validacao.groupby("Objeto", as_index=False)["Valor Prioridade"].sum() if not prioridades_validacao.empty else pd.DataFrame(columns=["Objeto", "Valor Prioridade"])
     priorizado_por_objeto["Limite NL"] = priorizado_por_objeto["Objeto"].map(limite_por_objeto).fillna(0.0)
     priorizado_por_objeto["Excedente"] = (priorizado_por_objeto["Valor Prioridade"] - priorizado_por_objeto["Limite NL"]).clip(lower=0)
+
     total_priorizado = prioridades["Valor Prioridade"].sum()
     total_nl = objetos_disponiveis["Valor_Executado"].sum()
-    meta_semanal = pactuado_mensal / 4
     saldo_pactuado = pactuado_mensal - total_priorizado
     saldo_nl = total_nl - total_priorizado
 
@@ -4041,8 +4535,11 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
     else:
         st.info("Defina o pactuado mensal para acompanhar o percentual já distribuído entre as semanas.")
 
-    if (priorizado_por_objeto["Excedente"] > 0).any():
-        st.warning("Há objeto priorizado acima do valor disponível na NL. Revise os itens destacados na tabela de conferência.")
+    if not priorizado_por_objeto.empty and (priorizado_por_objeto["Excedente"] > 0).any():
+        st.warning(
+            "Há uma NOVA priorização acima do valor disponível atualmente na NL. "
+            "O histórico já salvo nas semanas anteriores não entra nessa validação."
+        )
 
     resumo_semanal = (
         prioridades.groupby("Semana", as_index=False)["Valor Prioridade"].sum()
@@ -4050,8 +4547,39 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         .reindex(["Semana 1", "Semana 2", "Semana 3", "Semana 4"], fill_value=0.0)
         .reset_index()
     )
-    resumo_semanal["Meta semanal"] = meta_semanal
-    resumo_semanal["Saldo da semana"] = resumo_semanal["Meta semanal"] - resumo_semanal["Valor Prioridade"]
+
+    # PACTUADO SEMANAL AUTOMÁTICO:
+    # o que está registrado em cada semana é o pactuado daquela semana.
+    # Isso vale tanto para o histórico restaurado da planilha (Semanas 1/2,
+    # por exemplo) quanto para os objetos que o usuário adicionar agora.
+    pactuados_semanais = {
+        str(linha["Semana"]): float(linha["Valor Prioridade"])
+        for _, linha in resumo_semanal.iterrows()
+    }
+    resumo_semanal["Meta semanal"] = resumo_semanal["Semana"].map(pactuados_semanais).fillna(0.0)
+
+    # Persiste também os totais derivados. Eles não dependem de widgets, por
+    # isso permanecem corretos quando o usuário troca entre OB, NL e Priorização.
+    mascara_pactuado_estado = (
+        st.session_state["pactuados_fonte500"]["Mês"].apply(normalizar_mes_priorizacao) == mes_planejado_normalizado
+    ) & (
+        st.session_state["pactuados_fonte500"]["Grupo"].fillna("").astype(str).str.upper().isin(["", chave_planejamento.upper()])
+    )
+    if mascara_pactuado_estado.any():
+        indice_pactuado_estado = st.session_state["pactuados_fonte500"].loc[mascara_pactuado_estado].index[0]
+        for numero in range(1, 5):
+            st.session_state["pactuados_fonte500"].loc[
+                indice_pactuado_estado, f"Pactuado Semana {numero}"
+            ] = float(pactuados_semanais.get(f"Semana {numero}", 0.0))
+
+    # O saldo exibido por semana representa o saldo ACUMULADO do teto mensal
+    # depois do que foi programado até aquela semana. Assim a gestão consegue
+    # acompanhar quanto ainda resta do mês após Semana 1, Semana 2, etc.
+    # O pactuado semanal permanece independente e continua sendo usado para
+    # medir o cumprimento da meta específica de cada semana.
+    resumo_semanal["Programado acumulado"] = resumo_semanal["Valor Prioridade"].cumsum()
+    resumo_semanal["Saldo da semana"] = pactuado_mensal - resumo_semanal["Programado acumulado"]
+
     resumo_semanal["Percentual da meta"] = np.where(
         resumo_semanal["Meta semanal"] > 0,
         (resumo_semanal["Valor Prioridade"] / resumo_semanal["Meta semanal"] * 100),
@@ -4071,7 +4599,7 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         default="A priorizar",
     )
     st.markdown("### 5. Resumo consolidado para envio")
-    st.caption("Conferência final do que foi programado em cada semana. Este é o resumo recomendado para impressão ou envio.")
+    st.caption("Conferência final por semana. O pactuado semanal é calculado automaticamente a partir dos objetos/NLs registrados em cada semana.")
 
     # A saída é operacional: uma linha para cada NL que será paga, e não um
     # total consolidado por objeto. Assim o arquivo pode seguir direto para a
@@ -4084,21 +4612,24 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
             continue
         detalhe_chave = f"detalhe_nl_{chave_prioridades}_{semana_programada}"
         detalhe_salvo = st.session_state.get(detalhe_chave, pd.DataFrame())
-        exclusoes_objeto = set()
         if isinstance(detalhe_salvo, pd.DataFrame) and not detalhe_salvo.empty:
-            exclusoes_objeto = set(
-                detalhe_salvo.loc[
-                    (detalhe_salvo["Objeto"].astype(str) == objeto_programado)
-                    & detalhe_salvo["Excluir da semana"].fillna(False),
-                    "Número NL",
-                ].astype(str)
-            )
-        nls_programadas = base_detalhamento_nl[
-            (base_detalhamento_nl["Objeto"].astype(str) == objeto_programado)
-            & ~base_detalhamento_nl["Número NL"].astype(str).isin(exclusoes_objeto)
-        ].copy()
+            nls_programadas = detalhe_salvo.loc[
+                (detalhe_salvo["Objeto"].astype(str) == objeto_programado)
+                & ~detalhe_salvo["Excluir da semana"].fillna(False)
+            ].copy()
+        else:
+            # Fallback para uma semana recém-montada que ainda não criou estado
+            # detalhado. Mantém o comportamento anterior para novos cenários.
+            nls_programadas = base_detalhamento_nl[
+                base_detalhamento_nl["Objeto"].astype(str) == objeto_programado
+            ].copy()
+            if "Valor_Executado" in nls_programadas.columns:
+                nls_programadas["Valor da NL"] = nls_programadas["Valor_Executado"]
+
         for _, nl in nls_programadas.iterrows():
-            valor_nl = pd.to_numeric(pd.Series([nl.get("Valor_Executado", 0.0)]), errors="coerce").iloc[0]
+            valor_nl = converter_valor_monetario(
+                pd.Series([nl.get("Valor da NL", nl.get("Valor_Executado", 0.0))])
+            ).iloc[0]
             valor_nl = float(valor_nl) if pd.notna(valor_nl) and np.isfinite(valor_nl) else 0.0
             linhas_programacao.append({
                 "Mês de programação": mes_planejado,
@@ -4125,13 +4656,25 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
     # A planilha é gravada somente por solicitação. Fazer um POST a cada clique
     # de priorização bloqueava a tela e criava filas no Apps Script.
     pactuados_api = st.session_state["pactuados_fonte500"].rename(
-        columns={"Mês": "Mes", "Pactuado Mensal": "Valor_Pactuado"}
+        columns={
+            "Mês": "Mes", "Pactuado Mensal": "Valor_Pactuado",
+            "Pactuado Semana 1": "Pactuado_Semana_1",
+            "Pactuado Semana 2": "Pactuado_Semana_2",
+            "Pactuado Semana 3": "Pactuado_Semana_3",
+            "Pactuado Semana 4": "Pactuado_Semana_4",
+        }
     ).copy()
     pactuados_api["Fonte"] = "500"
     pactuados_api["Atualizado_Em"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M:%S")
-    pactuados_api = pactuados_api.reindex(
-        columns=["Mes", "Fonte", "Grupo", "Valor_Pactuado", "Atualizado_Em"]
-    )
+    pactuados_api = pactuados_api.reindex(columns=[
+        "Mes", "Fonte", "Grupo", "Valor_Pactuado",
+        "Pactuado_Semana_1", "Pactuado_Semana_2", "Pactuado_Semana_3", "Pactuado_Semana_4",
+        "Atualizado_Em",
+    ])
+    pactuado_mes_api = pactuados_api[
+        (pactuados_api["Mes"].apply(normalizar_mes_priorizacao) == normalizar_mes_priorizacao(mes_planejado))
+        & (pactuados_api["Grupo"].fillna("").astype(str).str.upper().isin(["", chave_planejamento.upper()]))
+    ].head(1).copy()
 
     programacao_atual_api = programacao_consolidada.rename(
         columns={
@@ -4171,33 +4714,82 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         [programacao_remota.loc[~substituir_recorte], programacao_atual_api],
         ignore_index=True,
     )
-    assinatura_persistencia = json.dumps(
-        {
-            "pactuados": _registros_json(pactuados_api.drop(columns=["Atualizado_Em"])),
-            "programacao": _registros_json(programacao_para_salvar.drop(columns=["Atualizado_Em"])),
-        },
-        ensure_ascii=False,
-        sort_keys=True,
-        default=str,
+    # Assinaturas separadas permitem salvar somente o que realmente mudou.
+    colunas_ordem_assinatura = ["Semana", "Grupo", "Tipo_NL", "Objeto", "Numero_NL", "Credor", "Valor_Programado"]
+    atual_assinatura_df = programacao_atual_api.drop(columns=["Atualizado_Em"], errors="ignore").copy()
+    if not atual_assinatura_df.empty:
+        atual_assinatura_df = atual_assinatura_df.sort_values(
+            [c for c in colunas_ordem_assinatura if c in atual_assinatura_df.columns], kind="stable"
+        ).reset_index(drop=True)
+    assinatura_programacao_atual = json.dumps(
+        _registros_json(atual_assinatura_df), ensure_ascii=False, sort_keys=True, default=str,
     )
+    remoto_mes_assinatura = programacao_remota[
+        (programacao_remota["Mes"].apply(normalizar_mes_priorizacao) == normalizar_mes_priorizacao(mes_planejado))
+        & programacao_remota["Fonte"].astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False)
+    ].copy()
+    remoto_assinatura_df = remoto_mes_assinatura.drop(columns=["Atualizado_Em"], errors="ignore").copy()
+    if not remoto_assinatura_df.empty:
+        remoto_assinatura_df = remoto_assinatura_df.sort_values(
+            [c for c in colunas_ordem_assinatura if c in remoto_assinatura_df.columns], kind="stable"
+        ).reset_index(drop=True)
+    assinatura_programacao_remota = json.dumps(
+        _registros_json(remoto_assinatura_df), ensure_ascii=False, sort_keys=True, default=str,
+    )
+    assinatura_pactuado_atual = json.dumps(
+        _registros_json(pactuado_mes_api.drop(columns=["Atualizado_Em"], errors="ignore")),
+        ensure_ascii=False, sort_keys=True, default=str,
+    )
+
+    # O último pactuado efetivamente lido da API é guardado para detectar se só
+    # o teto/distribuição semanal mudou.
+    pactuado_remoto_canon = canonicalizar_pactuados_priorizacao(retorno_google.get("pactuados", []))
+    pactuado_remoto_mes = pactuado_remoto_canon[
+        (pactuado_remoto_canon["Mes"] == normalizar_mes_priorizacao(mes_planejado))
+        & pactuado_remoto_canon["Fonte"].astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False)
+    ].head(1).copy()
+    assinatura_pactuado_remoto = json.dumps(
+        _registros_json(pactuado_remoto_mes.drop(columns=["Atualizado_Em"], errors="ignore")),
+        ensure_ascii=False, sort_keys=True, default=str,
+    )
+    mudou_programacao = assinatura_programacao_atual != assinatura_programacao_remota
+    mudou_pactuado = assinatura_pactuado_atual != assinatura_pactuado_remoto
+    assinatura_persistencia = json.dumps({
+        "pactuado": assinatura_pactuado_atual,
+        "programacao": assinatura_programacao_atual,
+    }, sort_keys=True)
+
     salvar_coluna, situacao_coluna = st.columns([0.28, 0.72])
     with salvar_coluna:
         salvar_agora = st.button(
-            "💾 Salvar priorização",
-            key="salvar_priorizacao_google",
-            type="primary",
-            use_container_width=True,
+            "💾 Salvar priorização", key="salvar_priorizacao_google", type="primary", use_container_width=True,
         )
     if salvar_agora:
-        with st.spinner("Gravando a priorização na planilha vinculada..."):
+        with st.spinner("Gravando somente as alterações deste mês..."):
             try:
-                salvar_priorizacao_google(pactuados_api, programacao_para_salvar)
+                if mudou_programacao:
+                    salvar_mes_priorizacao_google(
+                        mes_planejado, "500", pactuado_mes_api, programacao_atual_api
+                    )
+                    mensagem_salvamento = "Pactuado e programação do mês salvos."
+                elif mudou_pactuado:
+                    salvar_pactuado_google(pactuado_mes_api)
+                    mensagem_salvamento = "Pactuado mensal/semanal atualizado sem regravar a programação."
+                else:
+                    mensagem_salvamento = "Nenhuma alteração pendente para gravar."
+
                 st.session_state["assinatura_priorizacao_google"] = assinatura_persistencia
+                # Mantém o estado local com o recorte atual; a próxima atualização
+                # manual confirmará a versão persistida no Google Sheets.
                 st.session_state["programacao_google_salva"] = programacao_para_salvar.copy()
+                st.session_state["nonce_atualizacao_priorizacao"] = st.session_state.get("nonce_atualizacao_priorizacao", 0) + 1
+                carregar_priorizacao_google_sincronizada.clear()
                 st.session_state["priorizacao_google_erro"] = ""
                 st.session_state["priorizacao_google_salva_em"] = datetime.datetime.now().strftime("%d/%m/%Y %H:%M")
+                st.session_state["priorizacao_google_mensagem"] = mensagem_salvamento
             except Exception as erro:
                 st.session_state["priorizacao_google_erro"] = str(erro)
+
     with situacao_coluna:
         if st.session_state.get("priorizacao_google_erro"):
             st.warning(
@@ -4206,19 +4798,42 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
             )
         elif st.session_state.get("assinatura_priorizacao_google") == assinatura_persistencia:
             st.success(
-                "Priorização salva na planilha vinculada"
-                + (f" em {st.session_state.get('priorizacao_google_salva_em')}" if st.session_state.get("priorizacao_google_salva_em") else ".")
+                st.session_state.get("priorizacao_google_mensagem", "Priorização salva na planilha vinculada.")
+                + (f" Em {st.session_state.get('priorizacao_google_salva_em')}." if st.session_state.get("priorizacao_google_salva_em") else "")
             )
+        elif mudou_programacao or mudou_pactuado:
+            partes = []
+            if mudou_pactuado:
+                partes.append("pactuado")
+            if mudou_programacao:
+                partes.append("programação")
+            st.info("Alterações pendentes em " + " e ".join(partes) + ". Clique em ‘Salvar priorização’.")
         else:
-            st.info("Alterações pendentes. Clique em “Salvar priorização” ao concluir o cenário.")
+            st.success("Os dados exibidos estão sincronizados com a planilha.")
 
-    resumo_envio = resumo_semanal[
-        ["Semana", "Valor Prioridade", "Meta semanal", "Saldo da semana"]
-    ].rename(columns={"Valor Prioridade": "Valor programado"}).copy()
+    # Resumo executivo: o pactuado mensal continua sendo usado internamente
+    # para calcular o saldo, mas não é repetido como coluna na grade. Em seu
+    # lugar mostramos a quantidade de NLs efetivamente programadas por semana.
+    if programacao_consolidada.empty:
+        qtd_nl_por_semana = pd.Series(dtype="int64")
+        qtd_nl_total = 0
+    else:
+        programacao_qtd = programacao_consolidada.copy()
+        programacao_qtd["Número NL"] = programacao_qtd["Número NL"].fillna("").astype(str).str.strip()
+        programacao_qtd = programacao_qtd[programacao_qtd["Número NL"] != ""]
+        qtd_nl_por_semana = programacao_qtd.groupby("Semana")["Número NL"].nunique()
+        qtd_nl_total = int(programacao_qtd["Número NL"].nunique())
+
+    resumo_envio = resumo_semanal[["Semana", "Valor Prioridade", "Saldo da semana"]].copy()
+    resumo_envio["Qtd. NL"] = resumo_envio["Semana"].map(qtd_nl_por_semana).fillna(0).astype(int)
+    resumo_envio = resumo_envio[["Semana", "Qtd. NL", "Valor Prioridade", "Saldo da semana"]].rename(
+        columns={"Valor Prioridade": "Valor programado"}
+    )
+
     total_resumo = pd.DataFrame([{
         "Semana": "TOTAL GERAL",
+        "Qtd. NL": qtd_nl_total,
         "Valor programado": total_priorizado,
-        "Meta semanal": pactuado_mensal,
         "Saldo da semana": saldo_pactuado,
     }])
     resumo_envio = pd.concat([resumo_envio, total_resumo], ignore_index=True)
@@ -4226,14 +4841,13 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
     col_resumo_envio, col_exportar = st.columns([1.5, 0.5])
     with col_resumo_envio:
         resumo_visivel = resumo_envio.copy()
-        for coluna_moeda in ["Valor programado", "Meta semanal", "Saldo da semana"]:
+        for coluna_moeda in ["Valor programado", "Saldo da semana"]:
             resumo_visivel[coluna_moeda] = resumo_visivel[coluna_moeda].apply(formatar_brl)
-        resumo_visivel = resumo_visivel.rename(
-            columns={"Meta semanal": "Pactuado", "Saldo da semana": "Saldo"}
-        )
+        resumo_visivel["Qtd. NL"] = resumo_visivel["Qtd. NL"].fillna(0).astype(int).astype(str)
+        resumo_visivel = resumo_visivel.rename(columns={"Saldo da semana": "Saldo"})
         renderizar_tabela_priorizacao(
             resumo_visivel,
-            colunas_centralizadas={"Semana", "Valor programado", "Pactuado", "Saldo"},
+            colunas_centralizadas={"Semana", "Qtd. NL", "Valor programado", "Saldo"},
         )
     with col_exportar:
         st.metric("TOTAL PROGRAMADO", formatar_brl(total_priorizado))
@@ -4262,7 +4876,9 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         formato_titulo = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#002B49", "font_size": 14, "align": "center"})
         formato_cabecalho = workbook.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": "#315B85", "align": "center", "valign": "vcenter"})
         formato_moeda = workbook.add_format({"num_format": "R$ #,##0.00", "align": "right"})
+        formato_qtd = workbook.add_format({"num_format": "0", "align": "center"})
         formato_total = workbook.add_format({"bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#002B49", "num_format": "R$ #,##0.00", "align": "right"})
+        formato_total_qtd = workbook.add_format({"bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#002B49", "num_format": "0", "align": "center"})
         for nome_aba, titulo, dados_exportar in [
             ("Programação Semanal", "Programação Semanal — Fonte 500", programacao_consolidada),
             ("Resumo por Semana", "Resumo consolidado por semana — Fonte 500", resumo_envio),
@@ -4289,7 +4905,8 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         aba_programacao.set_column("J:J", 35)
         aba_resumo = writer.sheets["Resumo por Semana"]
         aba_resumo.set_column("A:A", 20)
-        aba_resumo.set_column("B:D", 20, formato_moeda)
+        aba_resumo.set_column("B:B", 12, formato_qtd)
+        aba_resumo.set_column("C:D", 20, formato_moeda)
         linha_total = len(resumo_envio) + 2
         for coluna in range(len(resumo_envio.columns)):
             valor = resumo_envio.iloc[-1, coluna]
@@ -4300,10 +4917,11 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
                 # campo do resumo estiver vazio, preservamos a célula vazia
                 # em vez de interromper a geração do arquivo.
                 numero = pd.to_numeric(pd.Series([valor]), errors="coerce").iloc[0]
+                formato_coluna = formato_total_qtd if resumo_envio.columns[coluna] == "Qtd. NL" else formato_total
                 if pd.notna(numero) and np.isfinite(numero):
-                    aba_resumo.write_number(linha_total, coluna, float(numero), formato_total)
+                    aba_resumo.write_number(linha_total, coluna, float(numero), formato_coluna)
                 else:
-                    aba_resumo.write_blank(linha_total, coluna, None, formato_total)
+                    aba_resumo.write_blank(linha_total, coluna, None, formato_coluna)
     arquivo_programacao.seek(0)
     st.download_button(
         "📥 Baixar resumo consolidado (.xlsx)",
@@ -4506,4 +5124,3 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
         use_container_width=True,
         height=420,
     )
-
