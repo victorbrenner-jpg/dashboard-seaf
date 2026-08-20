@@ -1,3 +1,4 @@
+import base64
 import datetime
 import html
 import io
@@ -13,6 +14,7 @@ import pandas as pd
 import plotly.express as px
 import streamlit as st
 import streamlit.components.v1 as components
+import textwrap
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
@@ -1447,13 +1449,66 @@ def carregar_historico_ob_fonte_500():
 
 
 # -------------------------------------------------------------------------
+# CONEXÃO EXCLUSIVA DA TELA RELATÓRIO 009717
+# -------------------------------------------------------------------------
+URL_API_RELATORIO_009717_PADRAO = "https://script.google.com/macros/s/AKfycbywfyRrszPy3wqbSsrLsFBgd5rTw3d4tNKl3zBmJBknhjAv2bI0qAvzZv3Tk35KkTwI/exec"
+
+
+def chamar_api_relatorio_009717(url_api, acao="status", timeout=120):
+    """Conversa via POST com o Web App usado exclusivamente pelo Relatório 009717."""
+    url_api = (url_api or "").strip()
+    if not url_api:
+        raise ValueError("Informe a URL do Web App do Apps Script.")
+
+    payload = json.dumps(
+        {"acao": str(acao)},
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    req = urllib.request.Request(
+        url_api,
+        data=payload,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "Mozilla/5.0",
+            "Cache-Control": "no-cache",
+            "Pragma": "no-cache",
+        },
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=timeout) as resposta:
+        corpo = resposta.read().decode("utf-8", errors="replace").strip()
+
+    if not corpo:
+        raise ValueError("O Apps Script retornou uma resposta vazia.")
+
+    try:
+        conteudo = json.loads(corpo)
+    except json.JSONDecodeError as erro_json:
+        inicio_resposta = re.sub(r"\s+", " ", corpo[:220]).strip()
+        raise ValueError(
+            "O Apps Script não retornou JSON. "
+            f"Início da resposta recebida: {inicio_resposta!r}"
+        ) from erro_json
+
+    if not isinstance(conteudo, dict):
+        raise ValueError("O Apps Script retornou uma resposta inválida.")
+
+    if conteudo.get("ok") is False:
+        raise ValueError(str(conteudo.get("erro", "Falha ao acessar o relatório.")))
+
+    return conteudo
+
+
+# -------------------------------------------------------------------------
 # NAVEGAÇÃO PRINCIPAL ENTRE AS TELAS
 # -------------------------------------------------------------------------
 # Mantém a tela selecionada durante a atualização do nome exibido no menu.
 if st.session_state.get("tela_atual") == "Planejamento NL":
     st.session_state["tela_atual"] = "Planejar Priorização"
 
-opcoes_tela = ["Pagamentos (OB)", "Liquidação (NL)", "Planejar Priorização"]
+opcoes_tela = ["Pagamentos (OB)", "Liquidação (NL)", "Planejar Priorização", "Relatório 009717"]
 if (
     "seletor_tela_global" not in st.session_state
     or st.session_state["seletor_tela_global"] not in opcoes_tela
@@ -1477,6 +1532,7 @@ with st.container(key="topo_navegacao"):
             "Pagamentos (OB)": "💳 Pagamentos (OB)",
             "Liquidação (NL)": "📑 Liquidação (NL)",
             "Planejar Priorização": "🎯 Planejar Priorização",
+            "Relatório 009717": "📊 Relatório 009717",
         }[opcao],
         selection_mode="single",
         key="seletor_tela_global",
@@ -3459,6 +3515,893 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
     else:
         st.warning("Aguardando carregamento e relacionamento das planilhas...")
+
+elif st.session_state["tela_atual"] == "Relatório 009717":
+    # ---------------------------------------------------------------------
+    # TELA EXCLUSIVA — RELATÓRIO 009717
+    # IMPORTANTE: todas as alterações deste módulo ficam isoladas aqui.
+    # ---------------------------------------------------------------------
+    st.markdown(
+        "<h2 class='titulo-pagina'>📊 Relatório 009717</h2>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='subtitulo-pagina'>Relatório de Pagamento — acompanhamento e conferência executiva</p>",
+        unsafe_allow_html=True,
+    )
+
+    if "url_api_relatorio_009717" not in st.session_state:
+        st.session_state["url_api_relatorio_009717"] = URL_API_RELATORIO_009717_PADRAO
+    if "dados_relatorio_009717" not in st.session_state:
+        st.session_state["dados_relatorio_009717"] = None
+    if "pdf_relatorio_009717" not in st.session_state:
+        st.session_state["pdf_relatorio_009717"] = None
+    if "pdf_relatorio_009717_nome" not in st.session_state:
+        st.session_state["pdf_relatorio_009717_nome"] = "Relatorio_009717.pdf"
+
+    url_api_009717 = st.session_state["url_api_relatorio_009717"].strip()
+
+    if not url_api_009717:
+        st.warning(
+            "A conexão está pronta, mas ainda falta informar a URL de implantação "
+            "do Web App do Apps Script."
+        )
+        url_digitada_009717 = st.text_input(
+            "URL do Web App do Relatório 009717",
+            placeholder="https://script.google.com/macros/s/.../exec",
+            key="campo_url_api_relatorio_009717",
+        ).strip()
+        if url_digitada_009717:
+            st.session_state["url_api_relatorio_009717"] = url_digitada_009717
+            url_api_009717 = url_digitada_009717
+
+    # Ações compactas do módulo — três botões lado a lado.
+    col_conexao_009717, col_atualizar_009717, col_pdf_topo_009717, _espaco_acoes_009717 = st.columns(
+        [0.72, 0.86, 1.02, 2.40]
+    )
+
+    with col_conexao_009717:
+        testar_conexao_009717 = st.button(
+            "🔗 Testar conexão",
+            use_container_width=True,
+            key="btn_testar_conexao_009717",
+            disabled=not bool(url_api_009717),
+        )
+
+    with col_atualizar_009717:
+        atualizar_relatorio_009717 = st.button(
+            "🔄 Atualizar relatório",
+            use_container_width=True,
+            key="btn_atualizar_relatorio_009717",
+            disabled=not bool(url_api_009717),
+            type="primary",
+        )
+
+    with col_pdf_topo_009717:
+        gerar_pdf_topo_009717 = st.button(
+            "📄 Exportar relatório em PDF",
+            use_container_width=True,
+            key="btn_exportar_pdf_009717",
+            disabled=not bool(url_api_009717),
+        )
+
+    if testar_conexao_009717:
+        try:
+            with st.spinner("Testando conexão com o Apps Script..."):
+                retorno = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "status",
+                    timeout=30,
+                )
+            st.success(
+                f"Conexão realizada com sucesso — "
+                f"{retorno.get('planilha', 'planilha localizada')}."
+            )
+        except Exception as erro:
+            st.error(f"Não foi possível conectar ao Apps Script: {erro}")
+
+    if atualizar_relatorio_009717:
+        try:
+            with st.spinner(
+                "Processando cronologia, OB, retenção e recalculando o Relatório 009717..."
+            ):
+                retorno = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "processar",
+                    timeout=180,
+                )
+            st.session_state["dados_relatorio_009717"] = retorno
+            st.session_state["pdf_relatorio_009717"] = None
+            st.success(
+                retorno.get("mensagem", "Relatório atualizado com sucesso.")
+            )
+        except Exception as erro:
+            st.error(f"Falha ao atualizar o Relatório 009717: {erro}")
+
+    # Ao abrir a aplicação novamente, carrega automaticamente o último relatório
+    # calculado no Google Sheets. Isso substitui o antigo botão "Carregar atual".
+    if (
+        st.session_state.get("dados_relatorio_009717") is None
+        and url_api_009717
+    ):
+        try:
+            with st.spinner("Carregando o último Relatório 009717..."):
+                retorno_inicial_009717 = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "ler",
+                    timeout=60,
+                )
+            st.session_state["dados_relatorio_009717"] = retorno_inicial_009717
+        except Exception as erro:
+            st.warning(
+                "Não foi possível carregar automaticamente o último relatório. "
+                f"Use 'Atualizar Relatório'. Detalhe: {erro}"
+            )
+
+    dados_009717 = st.session_state.get("dados_relatorio_009717")
+
+    if isinstance(dados_009717, dict):
+        foi_pago_009717 = dados_009717.get("foi_pago", {}) or {}
+        cabecalho_009717 = foi_pago_009717.get("cabecalho", []) or []
+        linhas_009717 = foi_pago_009717.get("linhas", []) or []
+
+        st.caption(
+            f"Última atualização: "
+            f"{dados_009717.get('atualizado_em', 'não informada')}"
+        )
+
+        if cabecalho_009717 and linhas_009717:
+            df_009717 = pd.DataFrame(
+                linhas_009717,
+                columns=cabecalho_009717,
+            )
+
+            def _localizar_coluna_009717(df, *nomes):
+                mapa = {
+                    unicodedata.normalize("NFKD", str(coluna))
+                    .encode("ascii", "ignore")
+                    .decode("ascii")
+                    .strip()
+                    .upper()
+                    .replace("_", " "): coluna
+                    for coluna in df.columns
+                }
+                for nome in nomes:
+                    chave = (
+                        unicodedata.normalize("NFKD", str(nome))
+                        .encode("ascii", "ignore")
+                        .decode("ascii")
+                        .strip()
+                        .upper()
+                        .replace("_", " ")
+                    )
+                    if chave in mapa:
+                        return mapa[chave]
+                return None
+
+            col_fonte_009717 = _localizar_coluna_009717(
+                df_009717,
+                "Fonte",
+            )
+            col_credor_009717 = _localizar_coluna_009717(
+                df_009717,
+                "Nome do Credor",
+                "Credor",
+            )
+            col_natureza_009717 = _localizar_coluna_009717(
+                df_009717,
+                "Natureza Despesa",
+                "Natureza da Despesa",
+                "Natureza",
+            )
+            col_valor_009717 = _localizar_coluna_009717(
+                df_009717,
+                "Valor",
+            )
+            col_ob_009717 = _localizar_coluna_009717(
+                df_009717,
+                "OB_NUMERO",
+                "OB Numero",
+                "OB",
+            )
+            col_status_009717 = _localizar_coluna_009717(
+                df_009717,
+                "STATUS_OB",
+                "Status OB",
+                "Status",
+            )
+
+            colunas_obrigatorias_009717 = {
+                "Fonte": col_fonte_009717,
+                "Credor": col_credor_009717,
+                "Natureza": col_natureza_009717,
+                "Valor": col_valor_009717,
+                "OB": col_ob_009717,
+                "Status": col_status_009717,
+            }
+            faltantes_009717 = [
+                nome
+                for nome, coluna in colunas_obrigatorias_009717.items()
+                if coluna is None
+            ]
+
+            if faltantes_009717:
+                st.error(
+                    "Não foi possível montar a visão executiva. "
+                    "Colunas não encontradas na aba FOI_PAGO: "
+                    + ", ".join(faltantes_009717)
+                )
+            else:
+                df_exec_009717 = pd.DataFrame(
+                    {
+                        "Fonte": df_009717[col_fonte_009717],
+                        "Credor": df_009717[col_credor_009717],
+                        "Natureza": df_009717[col_natureza_009717],
+                        "Valor": converter_valor_monetario(
+                            df_009717[col_valor_009717]
+                        ),
+                        "OB": df_009717[col_ob_009717],
+                        "Status_Original": df_009717[col_status_009717],
+                    }
+                )
+
+                def _status_executivo_009717(valor):
+                    texto_status = str(valor or "").strip().upper()
+                    if "NÃO PAGO" in texto_status or "NAO PAGO" in texto_status:
+                        return "Não pago"
+                    if "RETEN" in texto_status:
+                        return "Retenção"
+                    if "PAGO" in texto_status:
+                        return "Pago"
+                    return "Sem status"
+
+                df_exec_009717["Status"] = (
+                    df_exec_009717["Status_Original"]
+                    .apply(_status_executivo_009717)
+                )
+
+                df_exec_009717["Fonte"] = (
+                    df_exec_009717["Fonte"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_exec_009717["Credor"] = (
+                    df_exec_009717["Credor"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_exec_009717["Natureza"] = (
+                    df_exec_009717["Natureza"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_exec_009717["OB"] = (
+                    df_exec_009717["OB"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+
+                # ---------------------------------------------------------
+                # FILTROS EXECUTIVOS — BARRA LATERAL RESERVADA
+                # ---------------------------------------------------------
+                status_disponiveis_009717 = [
+                    status
+                    for status in ["Pago", "Não pago", "Retenção", "Sem status"]
+                    if status in df_exec_009717["Status"].unique()
+                ]
+
+                fontes_disponiveis_009717 = sorted(
+                    [
+                        valor
+                        for valor in df_exec_009717["Fonte"].unique()
+                        if valor
+                    ]
+                )
+
+                credores_disponiveis_009717 = sorted(
+                    [
+                        valor
+                        for valor in df_exec_009717["Credor"].unique()
+                        if valor
+                    ]
+                )
+
+                naturezas_disponiveis_009717 = sorted(
+                    [
+                        valor
+                        for valor in df_exec_009717["Natureza"].unique()
+                        if valor
+                    ]
+                )
+
+                st.sidebar.markdown("#### 🔎 Filtros — Relatório 009717")
+
+                status_sel_009717 = st.sidebar.multiselect(
+                    "Status do pagamento",
+                    options=status_disponiveis_009717,
+                    default=[],
+                    placeholder="Todos",
+                    key="filtro_status_009717",
+                )
+
+                st.sidebar.divider()
+
+                fonte_sel_009717 = st.sidebar.multiselect(
+                    "Fonte",
+                    options=fontes_disponiveis_009717,
+                    default=[],
+                    placeholder="Todas",
+                    key="filtro_fonte_009717",
+                )
+
+                st.sidebar.divider()
+
+                credor_sel_009717 = st.sidebar.multiselect(
+                    "Credor",
+                    options=credores_disponiveis_009717,
+                    default=[],
+                    placeholder="Todos",
+                    key="filtro_credor_009717",
+                )
+
+                st.sidebar.divider()
+
+                natureza_sel_009717 = st.sidebar.multiselect(
+                    "Natureza",
+                    options=naturezas_disponiveis_009717,
+                    default=[],
+                    placeholder="Todas",
+                    key="filtro_natureza_009717",
+                )
+
+                st.sidebar.divider()
+                st.sidebar.caption(
+                    "Os cards e a tabela respondem aos filtros selecionados."
+                )
+
+                df_filtrado_009717 = df_exec_009717.copy()
+
+                if status_sel_009717:
+                    df_filtrado_009717 = df_filtrado_009717[
+                        df_filtrado_009717["Status"].isin(status_sel_009717)
+                    ]
+
+                if fonte_sel_009717:
+                    df_filtrado_009717 = df_filtrado_009717[
+                        df_filtrado_009717["Fonte"].isin(fonte_sel_009717)
+                    ]
+
+                if credor_sel_009717:
+                    df_filtrado_009717 = df_filtrado_009717[
+                        df_filtrado_009717["Credor"].isin(credor_sel_009717)
+                    ]
+
+                if natureza_sel_009717:
+                    df_filtrado_009717 = df_filtrado_009717[
+                        df_filtrado_009717["Natureza"].isin(natureza_sel_009717)
+                    ]
+
+                # ---------------------------------------------------------
+                # CARDS EXECUTIVOS
+                # ---------------------------------------------------------
+                # Base dos cards financeiros respeita Fonte/Credor/Natureza.
+                # O filtro de Status fica refletido no card "Valor em exibição".
+                df_base_cards_009717 = df_exec_009717.copy()
+
+                if fonte_sel_009717:
+                    df_base_cards_009717 = df_base_cards_009717[
+                        df_base_cards_009717["Fonte"].isin(fonte_sel_009717)
+                    ]
+                if credor_sel_009717:
+                    df_base_cards_009717 = df_base_cards_009717[
+                        df_base_cards_009717["Credor"].isin(credor_sel_009717)
+                    ]
+                if natureza_sel_009717:
+                    df_base_cards_009717 = df_base_cards_009717[
+                        df_base_cards_009717["Natureza"].isin(natureza_sel_009717)
+                    ]
+
+                valor_total_pago_009717 = float(
+                    df_base_cards_009717.loc[
+                        df_base_cards_009717["Status"] == "Pago",
+                        "Valor",
+                    ].sum()
+                )
+                valor_total_nao_pago_009717 = float(
+                    df_base_cards_009717.loc[
+                        df_base_cards_009717["Status"] == "Não pago",
+                        "Valor",
+                    ].sum()
+                )
+                valor_filtrado_009717 = float(
+                    df_filtrado_009717["Valor"].sum()
+                )
+                qtd_filtrada_009717 = int(len(df_filtrado_009717))
+
+                card_1, card_2, card_3, card_4 = st.columns(4)
+
+                with card_1:
+                    st.markdown(
+                        f"""
+                        <div class='metric-card'>
+                            <p style='color:#6c757d;font-size:11px;font-weight:bold;margin:0;'>
+                                VALOR TOTAL PAGO
+                            </p>
+                            <h3 style='color:#028090;margin:5px 0;'>
+                                {formatar_brl(valor_total_pago_009717)}
+                            </h3>
+                            <p style='color:#6c757d;font-size:11px;margin:0;'>
+                                Pagamentos confirmados por OB
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                with card_2:
+                    st.markdown(
+                        f"""
+                        <div class='metric-card'>
+                            <p style='color:#6c757d;font-size:11px;font-weight:bold;margin:0;'>
+                                VALOR NÃO PAGO
+                            </p>
+                            <h3 style='color:#9f2d2d;margin:5px 0;'>
+                                {formatar_brl(valor_total_nao_pago_009717)}
+                            </h3>
+                            <p style='color:#6c757d;font-size:11px;margin:0;'>
+                                Registros ainda sem OB
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                with card_3:
+                    st.markdown(
+                        f"""
+                        <div class='metric-card'>
+                            <p style='color:#6c757d;font-size:11px;font-weight:bold;margin:0;'>
+                                VALOR EM EXIBIÇÃO
+                            </p>
+                            <h3 style='color:#005691;margin:5px 0;'>
+                                {formatar_brl(valor_filtrado_009717)}
+                            </h3>
+                            <p style='color:#6c757d;font-size:11px;margin:0;'>
+                                Conforme os filtros selecionados
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                with card_4:
+                    st.markdown(
+                        f"""
+                        <div class='metric-card'>
+                            <p style='color:#6c757d;font-size:11px;font-weight:bold;margin:0;'>
+                                REGISTROS EM EXIBIÇÃO
+                            </p>
+                            <h3 style='color:#002b49;margin:5px 0;'>
+                                {qtd_filtrada_009717}
+                            </h3>
+                            <p style='color:#6c757d;font-size:11px;margin:0;'>
+                                Linhas visíveis na conferência
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+                # ---------------------------------------------------------
+                # EXPORTAÇÃO DO RELATÓRIO
+                # O botão fica no topo, ao lado de Testar e Atualizar.
+                # ---------------------------------------------------------
+                col_pdf_1, col_pdf_2 = st.columns([1.05, 2.95])
+                gerar_pdf_009717 = gerar_pdf_topo_009717
+
+                if gerar_pdf_009717:
+                    try:
+                        with st.spinner(
+                            "Gerando o PDF consolidado diretamente da aba RELATORIO_SIAFIN..."
+                        ):
+                            retorno_pdf_009717 = chamar_api_relatorio_009717(
+                                url_api_009717,
+                                "pdf",
+                                timeout=120,
+                            )
+
+                        conteudo_pdf_base64 = retorno_pdf_009717.get(
+                            "pdf_base64",
+                            "",
+                        )
+                        if not conteudo_pdf_base64:
+                            raise ValueError(
+                                "O Apps Script não retornou o conteúdo do PDF."
+                            )
+
+                        st.session_state["pdf_relatorio_009717"] = (
+                            base64.b64decode(conteudo_pdf_base64)
+                        )
+                        st.session_state["pdf_relatorio_009717_nome"] = (
+                            retorno_pdf_009717.get("nome_arquivo")
+                            or "Relatorio_009717.pdf"
+                        )
+                        st.success(
+                            retorno_pdf_009717.get(
+                                "mensagem",
+                                "PDF consolidado gerado com sucesso.",
+                            )
+                        )
+                    except Exception as erro:
+                        st.session_state["pdf_relatorio_009717"] = None
+                        st.error(
+                            f"Falha ao gerar o PDF do Relatório 009717: {erro}"
+                        )
+
+                pdf_pronto_009717 = st.session_state.get(
+                    "pdf_relatorio_009717"
+                )
+
+                # ---------------------------------------------------------
+                # CABEÇALHO DA TABELA + DOWNLOAD COMPACTO
+                # O download fica alinhado à direita, imediatamente acima
+                # da tabela, evitando a aparência de botão solto na tela.
+                # ---------------------------------------------------------
+                col_titulo_tabela_009717, col_download_tabela_009717 = st.columns(
+                    [3.75, 1.05],
+                    vertical_alignment="bottom",
+                )
+
+                with col_titulo_tabela_009717:
+                    st.markdown(
+                        """
+                        <div style="margin-top:14px; margin-bottom:8px;">
+                            <span style="
+                                color:#002b49;
+                                font-size:17px;
+                                font-weight:800;
+                            ">Conferência dos pagamentos</span>
+                            <div style="
+                                color:#64748b;
+                                font-size:12px;
+                                margin-top:2px;
+                            ">
+                                Fonte, credor, natureza, valor, OB e situação do pagamento
+                            </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                if pdf_pronto_009717:
+                    with col_download_tabela_009717:
+                        st.download_button(
+                            "⬇️ Baixar PDF consolidado",
+                            data=pdf_pronto_009717,
+                            file_name=st.session_state.get(
+                                "pdf_relatorio_009717_nome",
+                                "Relatorio_009717.pdf",
+                            ),
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="download_pdf_009717",
+                        )
+
+                # ---------------------------------------------------------
+                # TABELA EXECUTIVA — SOMENTE AS COLUNAS NECESSÁRIAS
+                # ---------------------------------------------------------
+
+                tabela_009717 = df_filtrado_009717[
+                    [
+                        "Fonte",
+                        "Credor",
+                        "Natureza",
+                        "Valor",
+                        "OB",
+                        "Status",
+                    ]
+                ].copy()
+
+                if tabela_009717.empty:
+                    st.info(
+                        "Nenhum registro encontrado para os filtros selecionados."
+                    )
+                else:
+                    # -----------------------------------------------------
+                    # FORMATAÇÃO EXECUTIVA DA TABELA
+                    # -----------------------------------------------------
+                    def formatar_brl_tabela_009717(valor):
+                        try:
+                            numero = float(valor)
+                        except (TypeError, ValueError):
+                            numero = 0.0
+
+                        texto_valor = f"{numero:,.2f}"
+                        texto_valor = (
+                            texto_valor
+                            .replace(",", "X")
+                            .replace(".", ",")
+                            .replace("X", ".")
+                        )
+                        return f"R$ {texto_valor}"
+
+                    def formatar_status_tabela_009717(status):
+                        status_limpo = str(status or "").strip().lower()
+
+                        if status_limpo == "pago":
+                            return (
+                                "<span class='status-009717 status-pago-009717'>"
+                                "✅ Pago"
+                                "</span>"
+                            )
+
+                        if status_limpo in {"não pago", "nao pago"}:
+                            return (
+                                "<span class='status-009717 status-nao-pago-009717'>"
+                                "❌ Não pago"
+                                "</span>"
+                            )
+
+                        if status_limpo in {"retenção", "retencao"}:
+                            return (
+                                "<span class='status-009717 status-retencao-009717'>"
+                                "🟡 Retenção"
+                                "</span>"
+                            )
+
+                        return (
+                            "<span class='status-009717 status-neutro-009717'>"
+                            f"{html.escape(str(status or 'Sem status'))}"
+                            "</span>"
+                        )
+
+                    linhas_html_009717 = []
+
+                    for _, linha_009717 in tabela_009717.iterrows():
+                        fonte_html = html.escape(str(linha_009717["Fonte"] or ""))
+                        credor_html = html.escape(str(linha_009717["Credor"] or ""))
+                        natureza_html = html.escape(str(linha_009717["Natureza"] or ""))
+                        ob_html = html.escape(str(linha_009717["OB"] or ""))
+                        valor_html = formatar_brl_tabela_009717(
+                            linha_009717["Valor"]
+                        )
+                        status_html = formatar_status_tabela_009717(
+                            linha_009717["Status"]
+                        )
+
+                        linhas_html_009717.append(
+                            f"""
+                            <tr>
+                                <td class="fonte-009717" title="{fonte_html}">
+                                    {fonte_html}
+                                </td>
+                                <td class="credor-009717" title="{credor_html}">
+                                    {credor_html}
+                                </td>
+                                <td class="natureza-009717">
+                                    {natureza_html}
+                                </td>
+                                <td class="valor-009717">
+                                    {valor_html}
+                                </td>
+                                <td class="ob-009717" title="{ob_html}">
+                                    {ob_html}
+                                </td>
+                                <td class="status-cell-009717">
+                                    {status_html}
+                                </td>
+                            </tr>
+                            """
+                        )
+
+                    altura_tabela_009717 = min(
+                        640,
+                        56 + (len(tabela_009717) * 43),
+                    )
+
+                    html_tabela_009717 = textwrap.dedent(
+                        f"""
+                        <style>
+                            .tabela-executiva-wrap-009717 {{
+                                width: 100%;
+                                max-height: {altura_tabela_009717}px;
+                                overflow: auto;
+                                border: 1px solid #d7e0e8;
+                                border-radius: 10px;
+                                background: #ffffff;
+                                box-shadow: 0 3px 12px rgba(15, 40, 65, 0.05);
+                            }}
+
+                            .tabela-executiva-009717 {{
+                                width: 100%;
+                                border-collapse: separate;
+                                border-spacing: 0;
+                                table-layout: fixed;
+                                font-family: inherit;
+                                font-size: 12px;
+                                color: #243746;
+                            }}
+
+                            .tabela-executiva-009717 thead th {{
+                                position: sticky;
+                                top: 0;
+                                z-index: 2;
+                                background: #087da0;
+                                color: #ffffff;
+                                font-size: 11px;
+                                font-weight: 800;
+                                letter-spacing: 0.35px;
+                                text-transform: uppercase;
+                                padding: 11px 12px;
+                                border-right: 1px solid rgba(255,255,255,0.20);
+                                border-bottom: 1px solid #066b89;
+                                text-align: left;
+                            }}
+
+                            .tabela-executiva-009717 thead th:first-child {{
+                                border-top-left-radius: 9px;
+                            }}
+
+                            .tabela-executiva-009717 thead th:last-child {{
+                                border-top-right-radius: 9px;
+                                border-right: none;
+                            }}
+
+                            .tabela-executiva-009717 tbody td {{
+                                padding: 10px 12px;
+                                border-bottom: 1px solid #e6ebef;
+                                border-right: 1px solid #edf1f4;
+                                background: #ffffff;
+                                vertical-align: middle;
+                                line-height: 1.25;
+                            }}
+
+                            .tabela-executiva-009717 tbody tr:nth-child(even) td {{
+                                background: #f8fafc;
+                            }}
+
+                            .tabela-executiva-009717 tbody tr:hover td {{
+                                background: #eef7fb;
+                            }}
+
+                            .tabela-executiva-009717 tbody td:last-child {{
+                                border-right: none;
+                            }}
+
+                            .tabela-executiva-009717 .fonte-009717 {{
+                                width: 18%;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                            }}
+
+                            .tabela-executiva-009717 .credor-009717 {{
+                                width: 24%;
+                                font-weight: 600;
+                                color: #18384f;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                            }}
+
+                            .tabela-executiva-009717 .natureza-009717 {{
+                                width: 10%;
+                                text-align: center;
+                                font-variant-numeric: tabular-nums;
+                            }}
+
+                            .tabela-executiva-009717 .valor-009717 {{
+                                width: 14%;
+                                text-align: right;
+                                white-space: nowrap;
+                                color: #0b5f7a;
+                                font-weight: 800;
+                                font-variant-numeric: tabular-nums;
+                            }}
+
+                            .tabela-executiva-009717 .ob-009717 {{
+                                width: 24%;
+                                white-space: nowrap;
+                                overflow: hidden;
+                                text-overflow: ellipsis;
+                                font-size: 11px;
+                                color: #374151;
+                            }}
+
+                            .tabela-executiva-009717 .status-cell-009717 {{
+                                width: 10%;
+                                text-align: center;
+                                white-space: nowrap;
+                            }}
+
+                            .status-009717 {{
+                                display: inline-flex;
+                                align-items: center;
+                                justify-content: center;
+                                gap: 4px;
+                                min-width: 92px;
+                                padding: 5px 9px;
+                                border-radius: 999px;
+                                font-size: 11px;
+                                font-weight: 800;
+                            }}
+
+                            .status-pago-009717 {{
+                                color: #08743f;
+                                background: #e8f7ef;
+                                border: 1px solid #bde8cf;
+                            }}
+
+                            .status-nao-pago-009717 {{
+                                color: #b42318;
+                                background: #fff0ef;
+                                border: 1px solid #f3c3bf;
+                            }}
+
+                            .status-retencao-009717 {{
+                                color: #8a5a00;
+                                background: #fff7df;
+                                border: 1px solid #f1dea2;
+                            }}
+
+                            .status-neutro-009717 {{
+                                color: #52606d;
+                                background: #f3f5f7;
+                                border: 1px solid #dbe1e5;
+                            }}
+                        </style>
+
+                        <div class="tabela-executiva-wrap-009717">
+                            <table class="tabela-executiva-009717">
+                                <colgroup>
+                                    <col style="width:18%">
+                                    <col style="width:24%">
+                                    <col style="width:10%">
+                                    <col style="width:14%">
+                                    <col style="width:24%">
+                                    <col style="width:10%">
+                                </colgroup>
+                                <thead>
+                                    <tr>
+                                        <th>Fonte</th>
+                                        <th>Credor</th>
+                                        <th style="text-align:center;">Natureza</th>
+                                        <th style="text-align:right;">Valor</th>
+                                        <th>OB</th>
+                                        <th style="text-align:center;">Status OB</th>
+                                    </tr>
+                                </thead>
+                                <tbody>
+                                    {''.join(linhas_html_009717)}
+                                </tbody>
+                            </table>
+                        </div>
+                        """
+                    )
+
+                    # Remove qualquer indentação restante, inclusive das linhas
+                    # HTML geradas dinamicamente, para o Markdown não interpretar
+                    # <tr>/<td> como bloco de código.
+                    html_tabela_009717 = "\n".join(
+                        linha.lstrip()
+                        for linha in html_tabela_009717.splitlines()
+                    )
+
+                    st.markdown(
+                        html_tabela_009717,
+                        unsafe_allow_html=True,
+                    )
+        else:
+            st.info(
+                "Ainda não há dados do relatório para exibir. "
+                "Clique em 'Atualizar Relatório'."
+            )
 
 elif st.session_state["tela_atual"] == "Planejar Priorização":
     st.markdown(
