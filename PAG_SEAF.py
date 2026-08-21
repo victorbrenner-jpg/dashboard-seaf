@@ -2929,28 +2929,65 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             )
             return re.sub(r"[^a-z0-9]+", "", texto.lower())
 
-        coluna_tipo_nl_modelo = next(
-            (
-                coluna
-                for coluna in df_filtrado.columns
-                if normalizar_nome_coluna(coluna) in {"tipodenl", "tiponl"}
-            ),
-            None,
+        def localizar_coluna(*opcoes):
+            opcoes_normalizadas = {
+                normalizar_nome_coluna(opcao) for opcao in opcoes
+            }
+            return next(
+                (
+                    coluna
+                    for coluna in df_filtrado.columns
+                    if normalizar_nome_coluna(coluna) in opcoes_normalizadas
+                ),
+                None,
+            )
+
+        def serie_texto(coluna, padrao=""):
+            if coluna is None:
+                return pd.Series(padrao, index=df_filtrado.index, dtype="object")
+            return df_filtrado[coluna].fillna(padrao).astype(str).str.strip()
+
+        def serie_numero(coluna):
+            if coluna is None:
+                return pd.Series(0.0, index=df_filtrado.index, dtype="float64")
+            return pd.to_numeric(df_filtrado[coluna], errors="coerce").fillna(0.0)
+
+        coluna_credor = localizar_coluna(
+            "Nome do Credor", "Credor", "Entidade / Credor", "Entidade"
         )
-        tipo_nl_modelo = (
-            df_filtrado[coluna_tipo_nl_modelo].fillna("NÃO INFORMADO").astype(str)
-            if coluna_tipo_nl_modelo is not None
-            else pd.Series("NÃO INFORMADO", index=df_filtrado.index)
+        coluna_objeto = localizar_coluna(
+            "Objeto Despesa", "Objeto da Despesa", "Objeto"
         )
+        coluna_grupo = localizar_coluna("GD", "Grupo", "Grupo de Despesa")
+        coluna_numero = localizar_coluna(
+            "Número", "Numero", "NL", "Número NL", "Numero NL"
+        )
+        coluna_status = localizar_coluna(
+            "Status", "Status Comp.", "Status Comp"
+        )
+        coluna_valor = localizar_coluna(
+            "Valor", "Valor Total", "Valor Pago", "Valor Liquidado"
+        )
+        coluna_tipo_nl_modelo = localizar_coluna(
+            "Tipo de NL", "Tipo NL", "Tipo_NL"
+        )
+
+        if coluna_valor is None:
+            raise ValueError(
+                "Não foi localizada uma coluna de valor na base de liquidações."
+            )
+
         base_relatorio_modelo = pd.DataFrame(
             {
-                "Nome do Credor": df_filtrado[coluna_credor].fillna("").astype(str),
-                "Objeto Despesa": df_filtrado[coluna_objeto].fillna("").astype(str),
-                "GD": df_filtrado[coluna_grupo].fillna("NÃO INFORMADO").astype(str),
-                "Número": df_filtrado[coluna_numero].fillna("").astype(str),
-                "Tipo de NL": tipo_nl_modelo,
-                "Status": df_filtrado[coluna_status].fillna("").astype(str),
-                "Valor": pd.to_numeric(df_filtrado[coluna_valor], errors="coerce").fillna(0.0),
+                "Nome do Credor": serie_texto(coluna_credor),
+                "Objeto Despesa": serie_texto(coluna_objeto),
+                "GD": serie_texto(coluna_grupo, padrao="NÃO INFORMADO"),
+                "Número": serie_texto(coluna_numero),
+                "Tipo de NL": serie_texto(
+                    coluna_tipo_nl_modelo, padrao="NÃO INFORMADO"
+                ),
+                "Status": serie_texto(coluna_status),
+                "Valor": serie_numero(coluna_valor),
             }
         ).sort_values(
             ["Objeto Despesa", "Nome do Credor", "Número"], kind="stable"
