@@ -4,6 +4,7 @@ import html
 import io
 import json
 import os
+from pathlib import Path
 import re
 import sqlite3
 import urllib.parse
@@ -2908,7 +2909,136 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         st.markdown(html_final, unsafe_allow_html=True)
 
     def gerar_relatorio_nl_excel(df_filtrado):
-        """Gera o relatório de NL com a base detalhada e o painel-resumo."""
+        """Preenche o modelo oficial sem remover as tabelas dinâmicas nativas."""
+        try:
+            from openpyxl import load_workbook
+        except ModuleNotFoundError as erro:
+            raise ModuleNotFoundError(
+                "O pacote openpyxl não está instalado. Execute: pip install -r requirements.txt"
+            ) from erro
+
+        # A aba-base do modelo tem exatamente estas sete colunas, que alimentam
+        # as tabelas dinâmicas nativas existentes na segunda aba do arquivo.
+        coluna_tipo_nl_modelo = next(
+            (coluna for coluna in df_filtrado.columns if normalizar_nome(coluna) in ["tipodenl", "tipo nl"]),
+            None,
+        )
+        base_relatorio_modelo = pd.DataFrame(
+            {
+                "Nome do Credor": df_filtrado[coluna_credor].fillna("").astype(str),
+                "Objeto Despesa": df_filtrado[coluna_objeto].fillna("").astype(str),
+                "GD": df_filtrado[coluna_grupo].fillna("NÃO INFORMADO").astype(str),
+                "Número": df_filtrado[coluna_numero].fillna("").astype(str),
+                "Tipo de NL": (
+                    df_filtrado[coluna_tipo_nl_modelo].fillna("").astype(str)
+                    if coluna_tipo_nl_modelo
+                    else ""
+                ),
+                "Status": df_filtrado[coluna_status].fillna("").astype(str),
+                "Valor": pd.to_numeric(df_filtrado[coluna_valor], errors="coerce").fillna(0.0),
+            }
+        ).sort_values(
+            ["Objeto Despesa", "Nome do Credor", "Número"], kind="stable"
+        )
+
+        caminho_modelo = (
+            Path(__file__).resolve().parent
+            / "modelos"
+            / "modelo_relatorio_liquidacao.xlsx"
+        )
+        if not caminho_modelo.exists():
+            raise FileNotFoundError(
+                "Modelo não encontrado. Inclua modelos/modelo_relatorio_liquidacao.xlsx no repositório."
+            )
+
+        workbook = load_workbook(caminho_modelo, data_only=False)
+        cabecalhos_esperados = [
+            "Nome do Credor",
+            "Objeto Despesa",
+            "GD",
+            "Número",
+            "Tipo de NL",
+            "Status",
+            "Valor",
+        ]
+
+        def normalizar_cabecalho_excel(valor):
+            texto = unicodedata.normalize("NFKD", str(valor or ""))
+            texto = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
+            return re.sub(r"[^A-Z0-9]+", "", texto.upper())
+
+        conjunto_esperado = {normalizar_cabecalho_excel(cabecalho) for cabecalho in cabecalhos_esperados}
+        aba_base = None
+        linha_cabecalho = None
+        for aba in workbook.worksheets:
+            for linha in range(1, min(aba.max_row, 10) + 1):
+                cabecalhos_encontrados = {
+                    normalizar_cabecalho_excel(aba.cell(linha, coluna).value)
+                    for coluna in range(1, len(cabecalhos_esperados) + 1)
+                }
+                if conjunto_esperado.issubset(cabecalhos_encontrados):
+                    aba_base = aba
+                    linha_cabecalho = linha
+                    break
+            if aba_base is not None:
+                break
+
+        if aba_base is None:
+            raise ValueError(
+                "A aba-base do modelo não foi localizada. O modelo precisa conter as colunas de relatório."
+            )
+
+        for coluna, cabecalho in enumerate(cabecalhos_esperados, start=1):
+            aba_base.cell(linha_cabecalho, coluna).value = cabecalho
+
+        primeira_linha_dados = linha_cabecalho + 1
+        for linha in aba_base.iter_rows(
+            min_row=primeira_linha_dados,
+            max_row=max(aba_base.max_row, primeira_linha_dados),
+            min_col=1,
+            max_col=len(cabecalhos_esperados),
+        ):
+            for celula in linha:
+                celula.value = None
+
+        for numero_linha, registro in enumerate(
+            base_relatorio_modelo.itertuples(index=False, name=None),
+            start=primeira_linha_dados,
+        ):
+            for numero_coluna, valor in enumerate(registro, start=1):
+                if numero_coluna == 3:
+                    grupo = str(valor).replace("GD", "").strip()
+                    valor = int(grupo) if grupo.isdigit() else grupo
+                elif numero_coluna == 7:
+                    valor = float(valor) if pd.notna(valor) else 0.0
+                else:
+                    valor = "" if pd.isna(valor) else str(valor)
+
+                celula = aba_base.cell(numero_linha, numero_coluna, value=valor)
+                if numero_coluna == 7:
+                    celula.number_format = 'R$ #,##0.00'
+
+        # Faz o Excel atualizar os painéis dinâmicos quando o chefe abrir o arquivo.
+        for aba in workbook.worksheets:
+            for tabela_dinamica in getattr(aba, "_pivots", []):
+                cache = getattr(tabela_dinamica, "cache", None)
+                if cache is not None:
+                    cache.refreshOnLoad = True
+                    cache.enableRefresh = True
+
+        try:
+            workbook.calculation.fullCalcOnLoad = True
+            workbook.calculation.forceFullCalc = True
+            workbook.calculation.calcMode = "auto"
+        except AttributeError:
+            pass
+
+        arquivo = io.BytesIO()
+        workbook.save(arquivo)
+        arquivo.seek(0)
+        return arquivo.getvalue()
+
+        """Implementação anterior mantida apenas como referência histórica."""
         coluna_tipo_nl = next(
             (
                 coluna
@@ -3432,8 +3562,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     use_container_width=True,
                     key="btn_baixar_relatorio_nl",
                 )
-            except ModuleNotFoundError:
-                st.error("Instale o pacote xlsxwriter para gerar o relatório.")
+            except (ModuleNotFoundError, FileNotFoundError, RuntimeError, ValueError) as erro:
+                st.error(f"Não foi possível gerar o relatório pelo modelo: {erro}")
 
         if botao_relatorio.button(
             "📊 Gerar Relatório",
