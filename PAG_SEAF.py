@@ -2919,9 +2919,28 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         # A aba-base do modelo tem exatamente estas sete colunas, que alimentam
         # as tabelas dinâmicas nativas existentes na segunda aba do arquivo.
+        # A exportação não deve depender de funções definidas em outra seção
+        # da tela. Assim ela continua funcionando também no Streamlit Cloud.
+        def normalizar_nome_coluna(valor):
+            texto = unicodedata.normalize("NFKD", str(valor or ""))
+            texto = "".join(
+                caractere for caractere in texto
+                if not unicodedata.combining(caractere)
+            )
+            return re.sub(r"[^a-z0-9]+", "", texto.lower())
+
         coluna_tipo_nl_modelo = next(
-            (coluna for coluna in df_filtrado.columns if normalizar_nome(coluna) in ["tipodenl", "tipo nl"]),
+            (
+                coluna
+                for coluna in df_filtrado.columns
+                if normalizar_nome_coluna(coluna) in {"tipodenl", "tiponl"}
+            ),
             None,
+        )
+        tipo_nl_modelo = (
+            df_filtrado[coluna_tipo_nl_modelo].fillna("NÃO INFORMADO").astype(str)
+            if coluna_tipo_nl_modelo is not None
+            else pd.Series("NÃO INFORMADO", index=df_filtrado.index)
         )
         base_relatorio_modelo = pd.DataFrame(
             {
@@ -2929,11 +2948,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 "Objeto Despesa": df_filtrado[coluna_objeto].fillna("").astype(str),
                 "GD": df_filtrado[coluna_grupo].fillna("NÃO INFORMADO").astype(str),
                 "Número": df_filtrado[coluna_numero].fillna("").astype(str),
-                "Tipo de NL": (
-                    df_filtrado[coluna_tipo_nl_modelo].fillna("").astype(str)
-                    if coluna_tipo_nl_modelo
-                    else ""
-                ),
+                "Tipo de NL": tipo_nl_modelo,
                 "Status": df_filtrado[coluna_status].fillna("").astype(str),
                 "Valor": pd.to_numeric(df_filtrado[coluna_valor], errors="coerce").fillna(0.0),
             }
