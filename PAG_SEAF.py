@@ -3115,13 +3115,46 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     f"{get_column_letter(max_coluna)}{ultima_linha_dados}"
                 )
 
+        # Registra o formato monetário também no campo de valor das tabelas
+        # dinâmicas. Formatar apenas a coluna da aba-base não é suficiente:
+        # após a atualização do cache, o Excel pode voltar o painel para Geral.
+        formato_moeda_excel = 'R$ #,##0.00'
+        if formato_moeda_excel in workbook._number_formats:
+            formato_moeda_id = (
+                164 + workbook._number_formats.index(formato_moeda_excel)
+            )
+        else:
+            workbook._number_formats.append(formato_moeda_excel)
+            formato_moeda_id = 164 + len(workbook._number_formats) - 1
+
         # Faz o Excel atualizar os painéis dinâmicos quando o chefe abrir o arquivo.
         for aba in workbook.worksheets:
             for tabela_dinamica in getattr(aba, "_pivots", []):
+                tabela_dinamica.preserveFormatting = True
+                tabela_dinamica.useAutoFormatting = False
+                for campo_valor in (
+                    getattr(tabela_dinamica, "dataFields", None) or []
+                ):
+                    campo_valor.numFmtId = formato_moeda_id
                 cache = getattr(tabela_dinamica, "cache", None)
                 if cache is not None:
                     cache.refreshOnLoad = True
                     cache.enableRefresh = True
+
+            # Preserva o R$ também nos valores já armazenados no modelo, para
+            # que o arquivo apareça formatado mesmo antes do primeiro refresh.
+            colunas_valor_dinamico = {
+                celula.column
+                for linha in aba.iter_rows()
+                for celula in linha
+                if str(celula.value or "").strip().casefold()
+                == "soma de valor"
+            }
+            for numero_coluna in colunas_valor_dinamico:
+                for numero_linha in range(1, aba.max_row + 1):
+                    celula = aba.cell(numero_linha, numero_coluna)
+                    if isinstance(celula.value, (int, float)):
+                        celula.number_format = formato_moeda_excel
 
         try:
             workbook.calculation.fullCalcOnLoad = True
@@ -3666,22 +3699,23 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     df_exportacao["Fonte_Relacao"].isin(fontes_selecionadas)
                 ]
 
-            # O relatório oficial de liquidações contém somente NLs
-            # contabilizadas, independentemente do status selecionado na tela.
-            # Grupo vazio significa todos os grupos e fonte vazia, todas as
-            # fontes; os filtros escolhidos acima continuam sendo respeitados.
+            # Para planejamento da pactuação, o relatório precisa apresentar
+            # simultaneamente NLs contabilizadas e não contabilizadas. O status
+            # escolhido na tela não restringe esta exportação; grupo, fonte,
+            # período, credor e objeto continuam sendo respeitados.
             df_exportacao = df_exportacao[
                 df_exportacao["Status_Filtro"]
                 .fillna("")
                 .astype(str)
                 .str.strip()
                 .str.casefold()
-                .eq("contabilizado")
+                .isin(["contabilizado", "não contabilizado", "nao contabilizado"])
             ].copy()
 
             if df_exportacao.empty:
                 st.warning(
-                    "Não há liquidações contabilizadas para os filtros escolhidos."
+                    "Não há liquidações contabilizadas ou não contabilizadas "
+                    "para os filtros escolhidos."
                 )
                 return
 
