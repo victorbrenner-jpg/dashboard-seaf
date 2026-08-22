@@ -2956,40 +2956,20 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         # O dataframe recebido aqui já passou pelo tratamento da tela de NL.
         # Por isso, as colunas derivadas devem vir primeiro; procurar apenas os
         # nomes da planilha original fazia o relatório sair vazio/zerado.
-        coluna_credor = localizar_coluna(
-            "Credor_Tratado", "Nome do Credor", "Credor",
-            "Entidade / Credor", "Entidade"
-        )
-        coluna_objeto = localizar_coluna(
-            "Objeto_Relacao", "Objeto Despesa", "Objeto da Despesa", "Objeto"
-        )
-        coluna_grupo = localizar_coluna(
-            "Grupo_Classificado", "GD", "Grupo", "Grupo de Despesa"
-        )
-        coluna_numero = localizar_coluna(
-            "NL_Numero", "Número", "Numero", "NL", "Número NL", "Numero NL"
-        )
-        coluna_status = localizar_coluna(
-            "Status_Filtro", "Status", "Status Comp.", "Status Comp"
-        )
-        coluna_valor = localizar_coluna(
-            "Valor_Total_Limpo", "Valor", "Valor Total", "Valor Pago",
-            "Valor Liquidado"
-        )
-        coluna_tipo_nl_modelo = localizar_coluna(
-            "Tipo_NL_Filtro", "Tipo de NL", "Tipo NL", "Tipo_NL"
-        )
-
-        colunas_obrigatorias = {
-            "credor": coluna_credor,
-            "objeto": coluna_objeto,
-            "grupo": coluna_grupo,
-            "número da NL": coluna_numero,
-            "status": coluna_status,
-            "valor": coluna_valor,
-        }
+        # Esta função recebe o dataframe já integrado e filtrado da tela NL.
+        # Usar diretamente as colunas tratadas impede que uma coluna original
+        # homônima (por exemplo, "Valor") seja escolhida por engano.
+        colunas_obrigatorias = [
+            "Credor_Tratado",
+            "Objeto_Relacao",
+            "Grupo_Classificado",
+            "NL_Numero",
+            "Status_Filtro",
+            "Valor_Total_Limpo",
+        ]
         colunas_ausentes = [
-            nome for nome, coluna in colunas_obrigatorias.items() if coluna is None
+            coluna for coluna in colunas_obrigatorias
+            if coluna not in df_filtrado.columns
         ]
         if colunas_ausentes:
             raise ValueError(
@@ -2997,17 +2977,37 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 + ", ".join(colunas_ausentes)
             )
 
+        coluna_tipo_nl_modelo = localizar_coluna(
+            "Tipo_NL_Filtro", "Tipo de NL", "Tipo NL", "Tipo_NL"
+        )
+
         base_relatorio_modelo = pd.DataFrame(
             {
-                "Nome do Credor": serie_texto(coluna_credor),
-                "Objeto Despesa": serie_texto(coluna_objeto),
-                "GD": serie_texto(coluna_grupo, padrao="NÃO INFORMADO"),
-                "Número": serie_texto(coluna_numero),
+                # Credor_Tratado contém o nome vindo da base de NL; não usar
+                # código, CNPJ ou agrupamento. Nomes repetidos são preservados.
+                "Nome do Credor": df_filtrado["Credor_Tratado"].fillna(
+                    "NÃO IDENTIFICADO"
+                ).astype(str).str.strip(),
+                "Objeto Despesa": df_filtrado["Objeto_Relacao"].fillna(
+                    "NÃO INFORMADO"
+                ).astype(str).str.strip(),
+                "GD": df_filtrado["Grupo_Classificado"].fillna(
+                    "NÃO INFORMADO"
+                ).astype(str).str.strip(),
+                "Número": df_filtrado["NL_Numero"].fillna("").astype(
+                    str
+                ).str.strip(),
                 "Tipo de NL": serie_texto(
                     coluna_tipo_nl_modelo, padrao="NÃO INFORMADO"
                 ),
-                "Status": serie_texto(coluna_status),
-                "Valor": serie_numero(coluna_valor),
+                "Status": df_filtrado["Status_Filtro"].fillna("").astype(
+                    str
+                ).str.strip(),
+                # Valor_Total_Limpo já foi convertido pela carga da tela NL.
+                # É este valor associado à NL que deve alimentar o relatório.
+                "Valor": pd.to_numeric(
+                    df_filtrado["Valor_Total_Limpo"], errors="coerce"
+                ).fillna(0.0),
             }
         ).sort_values(
             ["Objeto Despesa", "Nome do Credor", "Número"], kind="stable"
@@ -3018,6 +3018,10 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         if not base_relatorio_modelo["Número"].astype(str).str.strip().ne("").any():
             raise ValueError(
                 "Nenhum número de NL foi encontrado na base filtrada; o arquivo não será gerado vazio."
+            )
+        if base_relatorio_modelo["Valor"].abs().sum() == 0:
+            raise ValueError(
+                "Os registros filtrados foram encontrados, mas todos os valores das NLs estão zerados."
             )
 
         caminho_modelo = (
@@ -3641,7 +3645,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 key="relatorio_nl_grupos",
             )
             df_opcoes_relatorio = filtrar_df_nl(
-                df_base, ign_grp=True, ign_fnt=True
+                df_base, ign_grp=True, ign_sts=True, ign_fnt=True
             )
             if grupos_relatorio:
                 df_opcoes_relatorio = df_opcoes_relatorio[
@@ -3662,8 +3666,23 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     df_exportacao["Fonte_Relacao"].isin(fontes_selecionadas)
                 ]
 
+            # O relatório oficial de liquidações contém somente NLs
+            # contabilizadas, independentemente do status selecionado na tela.
+            # Grupo vazio significa todos os grupos e fonte vazia, todas as
+            # fontes; os filtros escolhidos acima continuam sendo respeitados.
+            df_exportacao = df_exportacao[
+                df_exportacao["Status_Filtro"]
+                .fillna("")
+                .astype(str)
+                .str.strip()
+                .str.casefold()
+                .eq("contabilizado")
+            ].copy()
+
             if df_exportacao.empty:
-                st.warning("Não há liquidações para os filtros escolhidos.")
+                st.warning(
+                    "Não há liquidações contabilizadas para os filtros escolhidos."
+                )
                 return
 
             try:
