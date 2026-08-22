@@ -2912,6 +2912,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         """Preenche o modelo oficial sem remover as tabelas dinâmicas nativas."""
         try:
             from openpyxl import load_workbook
+            from openpyxl.utils import get_column_letter, range_boundaries
         except ModuleNotFoundError as erro:
             raise ModuleNotFoundError(
                 "O pacote openpyxl não está instalado. Execute: pip install -r requirements.txt"
@@ -2952,29 +2953,48 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 return pd.Series(0.0, index=df_filtrado.index, dtype="float64")
             return pd.to_numeric(df_filtrado[coluna], errors="coerce").fillna(0.0)
 
+        # O dataframe recebido aqui já passou pelo tratamento da tela de NL.
+        # Por isso, as colunas derivadas devem vir primeiro; procurar apenas os
+        # nomes da planilha original fazia o relatório sair vazio/zerado.
         coluna_credor = localizar_coluna(
-            "Nome do Credor", "Credor", "Entidade / Credor", "Entidade"
+            "Credor_Tratado", "Nome do Credor", "Credor",
+            "Entidade / Credor", "Entidade"
         )
         coluna_objeto = localizar_coluna(
-            "Objeto Despesa", "Objeto da Despesa", "Objeto"
+            "Objeto_Relacao", "Objeto Despesa", "Objeto da Despesa", "Objeto"
         )
-        coluna_grupo = localizar_coluna("GD", "Grupo", "Grupo de Despesa")
+        coluna_grupo = localizar_coluna(
+            "Grupo_Classificado", "GD", "Grupo", "Grupo de Despesa"
+        )
         coluna_numero = localizar_coluna(
-            "Número", "Numero", "NL", "Número NL", "Numero NL"
+            "NL_Numero", "Número", "Numero", "NL", "Número NL", "Numero NL"
         )
         coluna_status = localizar_coluna(
-            "Status", "Status Comp.", "Status Comp"
+            "Status_Filtro", "Status", "Status Comp.", "Status Comp"
         )
         coluna_valor = localizar_coluna(
-            "Valor", "Valor Total", "Valor Pago", "Valor Liquidado"
+            "Valor_Total_Limpo", "Valor", "Valor Total", "Valor Pago",
+            "Valor Liquidado"
         )
         coluna_tipo_nl_modelo = localizar_coluna(
-            "Tipo de NL", "Tipo NL", "Tipo_NL"
+            "Tipo_NL_Filtro", "Tipo de NL", "Tipo NL", "Tipo_NL"
         )
 
-        if coluna_valor is None:
+        colunas_obrigatorias = {
+            "credor": coluna_credor,
+            "objeto": coluna_objeto,
+            "grupo": coluna_grupo,
+            "número da NL": coluna_numero,
+            "status": coluna_status,
+            "valor": coluna_valor,
+        }
+        colunas_ausentes = [
+            nome for nome, coluna in colunas_obrigatorias.items() if coluna is None
+        ]
+        if colunas_ausentes:
             raise ValueError(
-                "Não foi localizada uma coluna de valor na base de liquidações."
+                "Não foram localizadas as colunas necessárias na base filtrada: "
+                + ", ".join(colunas_ausentes)
             )
 
         base_relatorio_modelo = pd.DataFrame(
@@ -2992,6 +3012,13 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         ).sort_values(
             ["Objeto Despesa", "Nome do Credor", "Número"], kind="stable"
         )
+
+        if base_relatorio_modelo.empty:
+            raise ValueError("A base do relatório ficou vazia após aplicar os filtros.")
+        if not base_relatorio_modelo["Número"].astype(str).str.strip().ne("").any():
+            raise ValueError(
+                "Nenhum número de NL foi encontrado na base filtrada; o arquivo não será gerado vazio."
+            )
 
         caminho_modelo = (
             Path(__file__).resolve().parent
@@ -3070,6 +3097,20 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 if numero_coluna == 7:
                     celula.number_format = 'R$ #,##0.00'
 
+        ultima_linha_dados = primeira_linha_dados + len(base_relatorio_modelo) - 1
+
+        # Se a aba-base usa uma Tabela do Excel como origem das tabelas
+        # dinâmicas, amplia a referência para incluir exatamente os registros
+        # recém-gravados. Sem isso, o arquivo pode conter dados na aba-base, mas
+        # o painel continuar apontando para o intervalo antigo (ou vazio).
+        for tabela in aba_base.tables.values():
+            min_coluna, min_linha, max_coluna, _ = range_boundaries(tabela.ref)
+            if min_linha == linha_cabecalho:
+                tabela.ref = (
+                    f"{get_column_letter(min_coluna)}{linha_cabecalho}:"
+                    f"{get_column_letter(max_coluna)}{ultima_linha_dados}"
+                )
+
         # Faz o Excel atualizar os painéis dinâmicos quando o chefe abrir o arquivo.
         for aba in workbook.worksheets:
             for tabela_dinamica in getattr(aba, "_pivots", []):
@@ -3088,7 +3129,31 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         arquivo = io.BytesIO()
         workbook.save(arquivo)
         arquivo.seek(0)
-        return arquivo.getvalue()
+        conteudo = arquivo.getvalue()
+
+        # Validação pós-gravação: reabre o mesmo conteúdo que será enviado ao
+        # navegador e confirma que a aba-base realmente contém os registros.
+        verificacao = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=False)
+        aba_verificacao = verificacao[aba_base.title]
+        quantidade_gravada = sum(
+            1
+            for linha in aba_verificacao.iter_rows(
+                min_row=primeira_linha_dados,
+                max_row=ultima_linha_dados,
+                min_col=1,
+                max_col=len(cabecalhos_esperados),
+                values_only=True,
+            )
+            if any(valor not in (None, "") for valor in linha)
+        )
+        verificacao.close()
+        if quantidade_gravada != len(base_relatorio_modelo):
+            raise RuntimeError(
+                "Falha ao validar o relatório: "
+                f"esperados {len(base_relatorio_modelo)} registros, "
+                f"mas foram encontrados {quantidade_gravada}."
+            )
+        return conteudo
 
         """Implementação anterior mantida apenas como referência histórica."""
         coluna_tipo_nl = next(
