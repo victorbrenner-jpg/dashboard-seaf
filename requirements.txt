@@ -2,3 +2,5 @@ streamlit==1.58.0
 pandas
 xlsxwriter
 openpyxl>=3.1.5
+numpy
+plotly
