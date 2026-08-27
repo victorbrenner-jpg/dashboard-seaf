@@ -68,6 +68,22 @@ if "mem_nl_comps" not in st.session_state:
     st.session_state["mem_nl_comps"] = []
 if "mem_nl_datas" not in st.session_state:
     st.session_state["mem_nl_datas"] = None
+if "mem_nl_dt_ini" not in st.session_state:
+    intervalo_nl_anterior = st.session_state.get("mem_nl_datas")
+    st.session_state["mem_nl_dt_ini"] = (
+        intervalo_nl_anterior[0]
+        if isinstance(intervalo_nl_anterior, (tuple, list))
+        and len(intervalo_nl_anterior) == 2
+        else None
+    )
+if "mem_nl_dt_fim" not in st.session_state:
+    intervalo_nl_anterior = st.session_state.get("mem_nl_datas")
+    st.session_state["mem_nl_dt_fim"] = (
+        intervalo_nl_anterior[1]
+        if isinstance(intervalo_nl_anterior, (tuple, list))
+        and len(intervalo_nl_anterior) == 2
+        else None
+    )
 if "mem_nl_grupo" not in st.session_state:
     st.session_state["mem_nl_grupo"] = []
 elif isinstance(st.session_state["mem_nl_grupo"], str):
@@ -2906,13 +2922,15 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
     </div>
 </div>"""
 
-        st.markdown(html_final, unsafe_allow_html=True)
+        if hasattr(st, "html"):
+            st.html(html_final)
+        else:
+            st.markdown(html_final, unsafe_allow_html=True)
 
     def gerar_relatorio_nl_excel(df_filtrado):
         """Preenche o modelo oficial sem remover as tabelas dinâmicas nativas."""
         try:
             from openpyxl import load_workbook
-            from openpyxl.utils import get_column_letter, range_boundaries
         except ModuleNotFoundError as erro:
             raise ModuleNotFoundError(
                 "O pacote openpyxl não está instalado. Execute: pip install -r requirements.txt"
@@ -2931,17 +2949,16 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             return re.sub(r"[^a-z0-9]+", "", texto.lower())
 
         def localizar_coluna(*opcoes):
-            opcoes_normalizadas = {
-                normalizar_nome_coluna(opcao) for opcao in opcoes
+            """Localiza uma coluna respeitando a ordem de prioridade informada."""
+            colunas_normalizadas = {
+                normalizar_nome_coluna(coluna): coluna
+                for coluna in df_filtrado.columns
             }
-            return next(
-                (
-                    coluna
-                    for coluna in df_filtrado.columns
-                    if normalizar_nome_coluna(coluna) in opcoes_normalizadas
-                ),
-                None,
-            )
+            for opcao in opcoes:
+                coluna = colunas_normalizadas.get(normalizar_nome_coluna(opcao))
+                if coluna is not None:
+                    return coluna
+            return None
 
         def serie_texto(coluna, padrao=""):
             if coluna is None:
@@ -2951,78 +2968,107 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         def serie_numero(coluna):
             if coluna is None:
                 return pd.Series(0.0, index=df_filtrado.index, dtype="float64")
-            return pd.to_numeric(df_filtrado[coluna], errors="coerce").fillna(0.0)
+            valores = df_filtrado[coluna]
+            if pd.api.types.is_numeric_dtype(valores):
+                return pd.to_numeric(valores, errors="coerce").fillna(0.0)
 
-        # O dataframe recebido aqui já passou pelo tratamento da tela de NL.
-        # Por isso, as colunas derivadas devem vir primeiro; procurar apenas os
-        # nomes da planilha original fazia o relatório sair vazio/zerado.
-        # Esta função recebe o dataframe já integrado e filtrado da tela NL.
-        # Usar diretamente as colunas tratadas impede que uma coluna original
-        # homônima (por exemplo, "Valor") seja escolhida por engano.
-        colunas_obrigatorias = [
-            "Credor_Tratado",
-            "Objeto_Relacao",
-            "Grupo_Classificado",
-            "NL_Numero",
-            "Status_Filtro",
-            "Valor_Total_Limpo",
+            def converter_valor(valor):
+                if pd.isna(valor):
+                    return 0.0
+                if isinstance(valor, (int, float)):
+                    return float(valor)
+
+                texto = str(valor).strip()
+                if texto.lower() in {"", "nan", "none", "null", "-"}:
+                    return 0.0
+
+                negativo = texto.startswith("(") and texto.endswith(")")
+                texto = texto.replace("R$", "").replace("\xa0", "").replace(" ", "")
+                texto = re.sub(r"[^0-9,.\-]", "", texto)
+
+                if "," in texto:
+                    texto = texto.replace(".", "").replace(",", ".")
+                elif texto.count(".") > 1:
+                    texto = texto.replace(".", "")
+
+                try:
+                    numero = float(texto)
+                except (TypeError, ValueError):
+                    return 0.0
+                return -abs(numero) if negativo else numero
+
+            return valores.map(converter_valor).astype(float)
+
+        coluna_credor = localizar_coluna(
+            "Credor_Tratado", "Nome do Credor", "Credor_NL",
+            "Entidade / Credor", "Entidade", "Credor"
+        )
+        coluna_objeto = localizar_coluna(
+            "Objeto_Relacao", "Objeto Despesa", "Objeto da Despesa",
+            "Objeto de Despesa", "Objeto"
+        )
+        coluna_grupo = localizar_coluna(
+            "Grupo_Classificado", "GD", "Grupo_Relacao",
+            "Grupo", "Grupo de Despesa"
+        )
+        coluna_numero = localizar_coluna(
+            "NL_Numero", "Numero_NL", "Número NL", "Numero NL",
+            "Número", "Numero", "NL"
+        )
+        coluna_status = localizar_coluna(
+            "Status_Filtro", "Status", "Status Comp.", "Status Comp"
+        )
+        coluna_valor = localizar_coluna(
+            "Valor_Total_Limpo", "Valor", "Valor Total",
+            "Valor Pago", "Valor Liquidado", "Valor da NL"
+        )
+        coluna_tipo_nl_modelo = localizar_coluna(
+            "Tipo_NL_Filtro", "Tipo_NL", "Tipo de NL", "Tipo NL"
+        )
+
+        campos_obrigatorios = {
+            "credor tratado": coluna_credor,
+            "objeto da despesa": coluna_objeto,
+            "grupo": coluna_grupo,
+            "número da NL": coluna_numero,
+            "valor": coluna_valor,
+        }
+        campos_ausentes = [
+            nome for nome, coluna in campos_obrigatorios.items()
+            if coluna is None
         ]
-        colunas_ausentes = [
-            coluna for coluna in colunas_obrigatorias
-            if coluna not in df_filtrado.columns
-        ]
-        if colunas_ausentes:
+        if campos_ausentes:
             raise ValueError(
-                "Não foram localizadas as colunas necessárias na base filtrada: "
-                + ", ".join(colunas_ausentes)
+                "Não foi possível montar o relatório. Colunas ausentes: "
+                + ", ".join(campos_ausentes)
             )
 
-        coluna_tipo_nl_modelo = localizar_coluna(
-            "Tipo_NL_Filtro", "Tipo de NL", "Tipo NL", "Tipo_NL"
+        grupo_relatorio = serie_texto(coluna_grupo, padrao="NÃO INFORMADO").str.upper()
+        grupo_relatorio = grupo_relatorio.replace(
+            {
+                "GD1": "1",
+                "GD3": "3",
+                "GD4": "4",
+                "": "NÃO INFORMADO",
+                "NAN": "NÃO INFORMADO",
+            }
         )
 
         base_relatorio_modelo = pd.DataFrame(
             {
-                # Credor_Tratado contém o nome vindo da base de NL; não usar
-                # código, CNPJ ou agrupamento. Nomes repetidos são preservados.
-                "Nome do Credor": df_filtrado["Credor_Tratado"].fillna(
-                    "NÃO IDENTIFICADO"
-                ).astype(str).str.strip(),
-                "Objeto Despesa": df_filtrado["Objeto_Relacao"].fillna(
-                    "NÃO INFORMADO"
-                ).astype(str).str.strip(),
-                "GD": df_filtrado["Grupo_Classificado"].fillna(
-                    "NÃO INFORMADO"
-                ).astype(str).str.strip(),
-                "Número": df_filtrado["NL_Numero"].fillna("").astype(
-                    str
-                ).str.strip(),
+                "Nome do Credor": serie_texto(coluna_credor),
+                "Objeto Despesa": serie_texto(coluna_objeto),
+                "GD": grupo_relatorio,
+                "Número": serie_texto(coluna_numero),
                 "Tipo de NL": serie_texto(
                     coluna_tipo_nl_modelo, padrao="NÃO INFORMADO"
                 ),
-                "Status": df_filtrado["Status_Filtro"].fillna("").astype(
-                    str
-                ).str.strip(),
-                # Valor_Total_Limpo já foi convertido pela carga da tela NL.
-                # É este valor associado à NL que deve alimentar o relatório.
-                "Valor": pd.to_numeric(
-                    df_filtrado["Valor_Total_Limpo"], errors="coerce"
-                ).fillna(0.0),
+                "Status": serie_texto(coluna_status),
+                "Valor": serie_numero(coluna_valor),
             }
         ).sort_values(
             ["Objeto Despesa", "Nome do Credor", "Número"], kind="stable"
         )
-
-        if base_relatorio_modelo.empty:
-            raise ValueError("A base do relatório ficou vazia após aplicar os filtros.")
-        if not base_relatorio_modelo["Número"].astype(str).str.strip().ne("").any():
-            raise ValueError(
-                "Nenhum número de NL foi encontrado na base filtrada; o arquivo não será gerado vazio."
-            )
-        if base_relatorio_modelo["Valor"].abs().sum() == 0:
-            raise ValueError(
-                "Os registros filtrados foram encontrados, mas todos os valores das NLs estão zerados."
-            )
 
         caminho_modelo = (
             Path(__file__).resolve().parent
@@ -3101,60 +3147,13 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 if numero_coluna == 7:
                     celula.number_format = 'R$ #,##0.00'
 
-        ultima_linha_dados = primeira_linha_dados + len(base_relatorio_modelo) - 1
-
-        # Se a aba-base usa uma Tabela do Excel como origem das tabelas
-        # dinâmicas, amplia a referência para incluir exatamente os registros
-        # recém-gravados. Sem isso, o arquivo pode conter dados na aba-base, mas
-        # o painel continuar apontando para o intervalo antigo (ou vazio).
-        for tabela in aba_base.tables.values():
-            min_coluna, min_linha, max_coluna, _ = range_boundaries(tabela.ref)
-            if min_linha == linha_cabecalho:
-                tabela.ref = (
-                    f"{get_column_letter(min_coluna)}{linha_cabecalho}:"
-                    f"{get_column_letter(max_coluna)}{ultima_linha_dados}"
-                )
-
-        # Registra o formato monetário também no campo de valor das tabelas
-        # dinâmicas. Formatar apenas a coluna da aba-base não é suficiente:
-        # após a atualização do cache, o Excel pode voltar o painel para Geral.
-        formato_moeda_excel = 'R$ #,##0.00'
-        if formato_moeda_excel in workbook._number_formats:
-            formato_moeda_id = (
-                164 + workbook._number_formats.index(formato_moeda_excel)
-            )
-        else:
-            workbook._number_formats.append(formato_moeda_excel)
-            formato_moeda_id = 164 + len(workbook._number_formats) - 1
-
         # Faz o Excel atualizar os painéis dinâmicos quando o chefe abrir o arquivo.
         for aba in workbook.worksheets:
             for tabela_dinamica in getattr(aba, "_pivots", []):
-                tabela_dinamica.preserveFormatting = True
-                tabela_dinamica.useAutoFormatting = False
-                for campo_valor in (
-                    getattr(tabela_dinamica, "dataFields", None) or []
-                ):
-                    campo_valor.numFmtId = formato_moeda_id
                 cache = getattr(tabela_dinamica, "cache", None)
                 if cache is not None:
                     cache.refreshOnLoad = True
                     cache.enableRefresh = True
-
-            # Preserva o R$ também nos valores já armazenados no modelo, para
-            # que o arquivo apareça formatado mesmo antes do primeiro refresh.
-            colunas_valor_dinamico = {
-                celula.column
-                for linha in aba.iter_rows()
-                for celula in linha
-                if str(celula.value or "").strip().casefold()
-                == "soma de valor"
-            }
-            for numero_coluna in colunas_valor_dinamico:
-                for numero_linha in range(1, aba.max_row + 1):
-                    celula = aba.cell(numero_linha, numero_coluna)
-                    if isinstance(celula.value, (int, float)):
-                        celula.number_format = formato_moeda_excel
 
         try:
             workbook.calculation.fullCalcOnLoad = True
@@ -3166,31 +3165,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         arquivo = io.BytesIO()
         workbook.save(arquivo)
         arquivo.seek(0)
-        conteudo = arquivo.getvalue()
-
-        # Validação pós-gravação: reabre o mesmo conteúdo que será enviado ao
-        # navegador e confirma que a aba-base realmente contém os registros.
-        verificacao = load_workbook(io.BytesIO(conteudo), read_only=True, data_only=False)
-        aba_verificacao = verificacao[aba_base.title]
-        quantidade_gravada = sum(
-            1
-            for linha in aba_verificacao.iter_rows(
-                min_row=primeira_linha_dados,
-                max_row=ultima_linha_dados,
-                min_col=1,
-                max_col=len(cabecalhos_esperados),
-                values_only=True,
-            )
-            if any(valor not in (None, "") for valor in linha)
-        )
-        verificacao.close()
-        if quantidade_gravada != len(base_relatorio_modelo):
-            raise RuntimeError(
-                "Falha ao validar o relatório: "
-                f"esperados {len(base_relatorio_modelo)} registros, "
-                f"mas foram encontrados {quantidade_gravada}."
-            )
-        return conteudo
+        return arquivo.getvalue()
 
         """Implementação anterior mantida apenas como referência histórica."""
         coluna_tipo_nl = next(
@@ -3435,12 +3410,19 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             # Período
             if not ign_per:
                 if st.session_state["mem_nl_tipo_periodo"] == "Por Mês de Competência":
-                    if st.session_state["mem_nl_comps"]:
+                if st.session_state["mem_nl_comps"]:
                         d = d[d["Competencia"].astype(str).isin(st.session_state["mem_nl_comps"])]
                 else:
-                    d_sel = st.session_state["mem_nl_datas"]
-                    if isinstance(d_sel, (tuple, list)) and len(d_sel) == 2:
-                        d = d[(d["Data_DT"] >= pd.to_datetime(d_sel[0])) & (d["Data_DT"] <= pd.to_datetime(d_sel[1]))]
+                    data_inicio = st.session_state.get("mem_nl_dt_ini")
+                    data_fim = st.session_state.get("mem_nl_dt_fim")
+                    if data_inicio and data_fim:
+                        inicio = pd.Timestamp(data_inicio).normalize()
+                        fim = pd.Timestamp(data_fim).normalize()
+                        if inicio <= fim:
+                            datas_nl = pd.to_datetime(
+                                d["Data_DT"], errors="coerce"
+                            ).dt.normalize()
+                            d = d[(datas_nl >= inicio) & (datas_nl <= fim)]
 
             # Grupo
             if not ign_grp and st.session_state["mem_nl_grupo"]:
@@ -3510,29 +3492,62 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 args=("mem_nl_comps", "w_nl_comps"),
             )
         else:
-            data_min = (
-                df_base["Data_DT"].min()
-                if not df_base["Data_DT"].isna().all()
-                else None
-            )
-            data_max = (
-                df_base["Data_DT"].max()
-                if not df_base["Data_DT"].isna().all()
-                else None
-            )
-            val_dt_nl = (
-                st.session_state["mem_nl_datas"]
-                if st.session_state["mem_nl_datas"]
-                else ((data_min, data_max) if data_min and data_max else None)
-            )
+            datas_nl_validas = pd.to_datetime(
+                df_base["Data_DT"], errors="coerce"
+            ).dropna()
 
-            datas_sel = st.sidebar.date_input(
-                "Filtrar Intervalo de Datas:",
-                value=val_dt_nl,
-                key="w_nl_datas",
-                on_change=sincronizar_filtro,
-                args=("mem_nl_datas", "w_nl_datas"),
-            )
+            if datas_nl_validas.empty:
+                st.sidebar.info("Não há datas válidas para filtrar.")
+            else:
+                data_min_nl = datas_nl_validas.min().date()
+                data_max_nl = datas_nl_validas.max().date()
+
+                def ajustar_data_nl(valor, padrao):
+                    data = pd.to_datetime(valor, errors="coerce")
+                    if pd.isna(data):
+                        return padrao
+                    data = data.date()
+                    return min(max(data, data_min_nl), data_max_nl)
+
+                data_ini_padrao = ajustar_data_nl(
+                    st.session_state.get("mem_nl_dt_ini"), data_min_nl
+                )
+                data_fim_padrao = ajustar_data_nl(
+                    st.session_state.get("mem_nl_dt_fim"), data_max_nl
+                )
+                if data_ini_padrao > data_fim_padrao:
+                    data_ini_padrao = data_min_nl
+                    data_fim_padrao = data_max_nl
+
+                col_ini_nl, col_fim_nl = st.sidebar.columns(2)
+                with col_ini_nl:
+                    data_ini_nl = st.date_input(
+                        "Data Inicial:",
+                        value=data_ini_padrao,
+                        min_value=data_min_nl,
+                        max_value=data_max_nl,
+                        format="DD/MM/YYYY",
+                        key="w_nl_dt_ini",
+                        on_change=sincronizar_filtro,
+                        args=("mem_nl_dt_ini", "w_nl_dt_ini"),
+                    )
+                with col_fim_nl:
+                    data_fim_nl = st.date_input(
+                        "Data Final:",
+                        value=data_fim_padrao,
+                        min_value=data_min_nl,
+                        max_value=data_max_nl,
+                        format="DD/MM/YYYY",
+                        key="w_nl_dt_fim",
+                        on_change=sincronizar_filtro,
+                        args=("mem_nl_dt_fim", "w_nl_dt_fim"),
+                    )
+
+                st.session_state["mem_nl_datas"] = (data_ini_nl, data_fim_nl)
+                if data_ini_nl > data_fim_nl:
+                    st.sidebar.error(
+                        "A data inicial deve ser anterior ou igual à data final."
+                    )
 
         st.sidebar.divider()
 
@@ -3678,7 +3693,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 key="relatorio_nl_grupos",
             )
             df_opcoes_relatorio = filtrar_df_nl(
-                df_base, ign_grp=True, ign_sts=True, ign_fnt=True
+                df_base, ign_grp=True, ign_fnt=True
             )
             if grupos_relatorio:
                 df_opcoes_relatorio = df_opcoes_relatorio[
@@ -3699,24 +3714,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     df_exportacao["Fonte_Relacao"].isin(fontes_selecionadas)
                 ]
 
-            # Para planejamento da pactuação, o relatório precisa apresentar
-            # simultaneamente NLs contabilizadas e não contabilizadas. O status
-            # escolhido na tela não restringe esta exportação; grupo, fonte,
-            # período, credor e objeto continuam sendo respeitados.
-            df_exportacao = df_exportacao[
-                df_exportacao["Status_Filtro"]
-                .fillna("")
-                .astype(str)
-                .str.strip()
-                .str.casefold()
-                .isin(["contabilizado", "não contabilizado", "nao contabilizado"])
-            ].copy()
-
             if df_exportacao.empty:
-                st.warning(
-                    "Não há liquidações contabilizadas ou não contabilizadas "
-                    "para os filtros escolhidos."
-                )
+                st.warning("Não há liquidações para os filtros escolhidos.")
                 return
 
             try:
