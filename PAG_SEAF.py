@@ -1472,24 +1472,37 @@ URL_API_RELATORIO_009717_PADRAO = "https://script.google.com/macros/s/AKfycbywfy
 
 
 def chamar_api_relatorio_009717(url_api, acao="status", timeout=120):
-    """Conversa via POST com o Web App usado exclusivamente pelo Relatório 009717."""
+    """Conversa via POST com o Web App usado exclusivamente pelo Relatório 009717.
+
+    O parâmetro _ts impede que proxies/CDNs reutilizem uma resposta anterior.
+    """
     url_api = (url_api or "").strip()
     if not url_api:
         raise ValueError("Informe a URL do Web App do Apps Script.")
 
+    separador = "&" if "?" in url_api else "?"
+    url_chamada = (
+        f"{url_api}{separador}_ts="
+        f"{int(datetime.datetime.now().timestamp() * 1000)}"
+    )
+
     payload = json.dumps(
-        {"acao": str(acao)},
+        {
+            "acao": str(acao),
+            "_ts": int(datetime.datetime.now().timestamp() * 1000),
+        },
         ensure_ascii=False,
     ).encode("utf-8")
 
     req = urllib.request.Request(
-        url_api,
+        url_chamada,
         data=payload,
         headers={
             "Content-Type": "application/json; charset=utf-8",
             "User-Agent": "Mozilla/5.0",
-            "Cache-Control": "no-cache",
+            "Cache-Control": "no-cache, no-store, max-age=0",
             "Pragma": "no-cache",
+            "Expires": "0",
         },
         method="POST",
     )
@@ -3904,15 +3917,28 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
             with st.spinner(
                 "Processando cronologia, OB, retenção e recalculando o Relatório 009717..."
             ):
-                retorno = chamar_api_relatorio_009717(
+                retorno_processamento = chamar_api_relatorio_009717(
                     url_api_009717,
                     "processar",
                     timeout=180,
                 )
+
+                # Depois de processar, relê a aba FOI_PAGO diretamente.
+                # Assim o painel não fica preso ao conteúdo retornado pela
+                # própria ação "processar", que pode representar o layout anterior.
+                retorno = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "ler",
+                    timeout=60,
+                )
+
             st.session_state["dados_relatorio_009717"] = retorno
             st.session_state["pdf_relatorio_009717"] = None
             st.success(
-                retorno.get("mensagem", "Relatório atualizado com sucesso.")
+                retorno_processamento.get(
+                    "mensagem",
+                    "Relatório atualizado com sucesso."
+                )
             )
         except Exception as erro:
             st.error(f"Falha ao atualizar o Relatório 009717: {erro}")
