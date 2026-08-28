@@ -3410,7 +3410,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             # Período
             if not ign_per:
                 if st.session_state["mem_nl_tipo_periodo"] == "Por Mês de Competência":
-                    if st.session_state["mem_nl_comps"]:
+                if st.session_state["mem_nl_comps"]:
                         d = d[d["Competencia"].astype(str).isin(st.session_state["mem_nl_comps"])]
                 else:
                     data_inicio = st.session_state.get("mem_nl_dt_ini")
