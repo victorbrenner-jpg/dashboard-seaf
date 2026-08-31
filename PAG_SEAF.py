@@ -1803,30 +1803,46 @@ def _normalizar_nome_pd(nome):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def carregar_dados_pd():
-    """Lê a aba PD_ABA_TRATADA e entrega um esquema estável para a tela de PD."""
+    """Lê a PD_ABA_TRATADA e replica a relação por NE usada na tela de NL."""
     try:
         bruto = ler_csv_url(LINK_PD_ABA_TRATADA)
+        # Mesma base de relacionamento utilizada pela Liquidação (NL),
+        # correspondente à Base_de_dados_QLIKVIEW publicada como CSV.
+        relacoes = ler_csv_url(LINK_NL_RELACOES)
     except Exception as erro:
         return pd.DataFrame(), str(erro)
 
     if bruto.empty:
         return pd.DataFrame(), "A aba PD_ABA_TRATADA não possui registros para exibir."
+    if relacoes.empty:
+        return pd.DataFrame(), "A Base_de_dados_QLIKVIEW não possui registros para relacionar os PDs."
 
     bruto = bruto.loc[:, ~bruto.columns.duplicated()].copy()
+    relacoes = relacoes.loc[:, ~relacoes.columns.duplicated()].copy()
     bruto.columns = [str(coluna).strip() for coluna in bruto.columns]
+    relacoes.columns = [str(coluna).strip() for coluna in relacoes.columns]
+
     colunas_normalizadas = {
         _normalizar_nome_pd(coluna): coluna for coluna in bruto.columns
     }
+    colunas_rel_normalizadas = {
+        _normalizar_nome_pd(coluna): coluna for coluna in relacoes.columns
+    }
 
     def localizar_coluna(*aliases):
-        # Para a base de PD usamos somente correspondência EXATA após normalização.
-        # A busca parcial anterior fazia, por exemplo, "Objeto da Despesa"
-        # cair indevidamente na coluna genérica "Despesa", pois "despesa"
-        # está contido em "objetodadespesa".
+        # Correspondência exata após normalização para não confundir, por exemplo,
+        # "Objeto da Despesa" com a coluna genérica "Despesa".
         for alias in aliases:
             chave = _normalizar_nome_pd(alias)
             if chave in colunas_normalizadas:
                 return colunas_normalizadas[chave]
+        return None
+
+    def localizar_coluna_relacao(*aliases):
+        for alias in aliases:
+            chave = _normalizar_nome_pd(alias)
+            if chave in colunas_rel_normalizadas:
+                return colunas_rel_normalizadas[chave]
         return None
 
     def serie_texto(*aliases, padrao="NÃO INFORMADO"):
@@ -1835,40 +1851,161 @@ def carregar_dados_pd():
             return pd.Series(padrao, index=bruto.index, dtype="object")
         return bruto[coluna].fillna("").astype(str).str.strip().replace("", padrao)
 
+    def chave_ne(serie):
+        # É exatamente a mesma regra aplicada na tela de NL: remove máscara,
+        # pontuação, espaços e o sufixo .0 antes de fazer o relacionamento.
+        return (
+            serie.fillna("").astype(str).str.strip().str.upper()
+            .str.replace(r"\.0$", "", regex=True)
+            .str.replace(r"[^A-Z0-9]", "", regex=True)
+        )
+
+    def classificar_gd(valor):
+        texto = str(valor or "").strip().upper()
+        compacto = re.sub(r"[^A-Z0-9]", "", texto)
+        if (
+            re.search(r"\bGD1\b", texto)
+            or re.search(r"\bGND1\b", texto)
+            or compacto.startswith("GD1")
+            or compacto.startswith("GND1")
+            or compacto == "1"
+            or compacto.startswith("1PESSOAL")
+        ):
+            return "GD1"
+        if (
+            re.search(r"\bGD3\b", texto)
+            or re.search(r"\bGND3\b", texto)
+            or compacto.startswith("GD3")
+            or compacto.startswith("GND3")
+            or compacto == "3"
+            or compacto.startswith("3OUTRAS")
+        ):
+            return "GD3"
+        if (
+            re.search(r"\bGD4\b", texto)
+            or re.search(r"\bGND4\b", texto)
+            or compacto.startswith("GD4")
+            or compacto.startswith("GND4")
+            or compacto == "4"
+            or compacto.startswith("4INVESTIMENTOS")
+        ):
+            return "GD4"
+        return "NÃO INFORMADO"
+
     coluna_numero = localizar_coluna("Número", "Numero", "Número PD", "Numero PD", "PD")
     coluna_valor = localizar_coluna("Valor", "Valor Total", "Valor PD", "Valor Programado")
-    if coluna_numero is None or coluna_valor is None:
+    coluna_ne_pd = localizar_coluna(
+        "DocumentoNE", "Documento NE", "NE", "Número NE", "Numero NE",
+        "Empenho", "Nota de Empenho", "Documento Empenho"
+    )
+
+    if coluna_numero is None or coluna_valor is None or coluna_ne_pd is None:
+        faltantes = []
+        if coluna_numero is None:
+            faltantes.append("Número do PD")
+        if coluna_valor is None:
+            faltantes.append("Valor")
+        if coluna_ne_pd is None:
+            faltantes.append("identificador NE")
         return pd.DataFrame(), (
-            "A aba PD_ABA_TRATADA precisa conter, no mínimo, as colunas "
-            "Número e Valor. Cabeçalhos encontrados: " + ", ".join(bruto.columns)
+            "A aba PD_ABA_TRATADA precisa conter: " + ", ".join(faltantes)
+            + ". Cabeçalhos encontrados: " + ", ".join(bruto.columns)
         )
+
+    # ---------------- RELAÇÃO COM Base_de_dados_QLIKVIEW ----------------
+    col_ne_rel = localizar_coluna_relacao(
+        "DocumentoNE", "Documento NE", "NE", "Número NE", "Numero NE",
+        "Empenho", "Nota de Empenho"
+    )
+    col_fonte_rel = localizar_coluna_relacao("Fonte", "Fonte de Recurso")
+    col_objeto_rel = localizar_coluna_relacao(
+        "Objeto da Despesa", "Objeto de Despesa", "Objeto Despesa", "Objeto"
+    )
+    col_grupo_rel = localizar_coluna_relacao("Grupo", "GD", "GND", "Grupo de Despesa")
+
+    faltantes_relacao = []
+    if col_ne_rel is None:
+        faltantes_relacao.append("DocumentoNE/NE")
+    if col_objeto_rel is None:
+        faltantes_relacao.append("Objeto da Despesa")
+    if col_grupo_rel is None:
+        faltantes_relacao.append("Grupo")
+    if faltantes_relacao:
+        return pd.DataFrame(), (
+            "A Base_de_dados_QLIKVIEW não possui as colunas necessárias para a relação: "
+            + ", ".join(faltantes_relacao)
+            + ". Cabeçalhos encontrados: " + ", ".join(relacoes.columns)
+        )
+
+    bruto["NE_Chave"] = chave_ne(bruto[coluna_ne_pd])
+    relacoes["NE_Chave"] = chave_ne(relacoes[col_ne_rel])
+    relacoes["Fonte_Relacao"] = (
+        relacoes[col_fonte_rel].fillna("NÃO INFORMADA").astype(str).str.strip()
+        if col_fonte_rel else "NÃO INFORMADA"
+    )
+    relacoes["Objeto_Relacao"] = (
+        relacoes[col_objeto_rel].fillna("NÃO INFORMADO").astype(str).str.strip()
+    )
+    relacoes["Grupo_Relacao"] = (
+        relacoes[col_grupo_rel].fillna("NÃO INFORMADO").astype(str).str.strip()
+    )
+
+    # Mesmo comportamento da tela de NL: uma linha de relacionamento por NE.
+    relacoes_dedup = relacoes[relacoes["NE_Chave"] != ""].drop_duplicates(
+        subset=["NE_Chave"], keep="first"
+    )
+
+    bruto = bruto.merge(
+        relacoes_dedup[["NE_Chave", "Fonte_Relacao", "Objeto_Relacao", "Grupo_Relacao"]],
+        on="NE_Chave",
+        how="left",
+    )
 
     natureza = serie_texto("Natureza", "Natureza da Despesa", padrao="")
     grupo_informado = serie_texto("GD", "Grupo", "GND", padrao="")
     grupo_derivado = natureza.astype(str).str.extract(r"^\s*([134])", expand=False)
-    grupo = grupo_informado.where(grupo_informado.astype(str).str.strip() != "", "")
-    grupo = grupo.replace({"NÃO INFORMADO": ""})
-    grupo = grupo.where(grupo != "", "GD" + grupo_derivado.fillna("NÃO INFORMADO"))
-    grupo = grupo.astype(str).str.upper().replace({"3": "GD3", "4": "GD4", "1": "GD1"})
+    grupo_fallback = grupo_informado.where(grupo_informado.astype(str).str.strip() != "", "")
+    grupo_fallback = grupo_fallback.replace({"NÃO INFORMADO": ""})
+    grupo_fallback = grupo_fallback.where(
+        grupo_fallback != "", "GD" + grupo_derivado.fillna("NÃO INFORMADO")
+    )
+    grupo_fallback = grupo_fallback.astype(str).str.upper().replace(
+        {"3": "GD3", "4": "GD4", "1": "GD1"}
+    )
+
+    grupo_relacionado = bruto["Grupo_Relacao"].fillna("NÃO INFORMADO").apply(classificar_gd)
+    grupo = grupo_relacionado.where(grupo_relacionado != "NÃO INFORMADO", grupo_fallback)
+
+    # Na tela de NL, Objeto e Fonte são determinados pela Base_de_dados_QLIKVIEW
+    # após a combinação pela NE. Se a NE não tiver correspondência, o correto é
+    # sinalizar como não informado em vez de aproveitar uma coluna inadequada da PD.
+    objeto_final = (
+        bruto["Objeto_Relacao"].fillna("NÃO INFORMADO").astype(str).str.strip()
+        .replace({"": "NÃO INFORMADO", "NAN": "NÃO INFORMADO", "NAO INFORMADO": "NÃO INFORMADO"})
+    )
+    fonte_final = (
+        bruto["Fonte_Relacao"].fillna("NÃO INFORMADA").astype(str).str.strip()
+        .replace({"": "NÃO INFORMADA", "NAN": "NÃO INFORMADA", "NAO INFORMADA": "NÃO INFORMADA"})
+    )
 
     dados = pd.DataFrame(
         {
             "Número PD": bruto[coluna_numero].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+            "NE_Chave": bruto["NE_Chave"],
             "Data Emissão": pd.to_datetime(
                 serie_texto("Data Emissão", "Data Emissao", "Data", padrao=""),
                 errors="coerce",
                 dayfirst=True,
             ),
             "UG Pagadora": serie_texto("UG Pagadora", "UG_Pagadora", "UG"),
-            "Fonte": serie_texto("Fonte", "Fonte de Recurso"),
+            # Fonte, Objeto e GD passam a vir prioritariamente da mesma relação
+            # por NE utilizada pela tela de NL.
+            "Fonte": fonte_final,
             "GD": grupo,
             "Despesa": natureza.replace("", "NÃO INFORMADA"),
-            "Objeto da Despesa": serie_texto(
-                "Objeto da Despesa", "Objeto de Despesa", "Objeto Despesa", "Objeto"
-            ),
+            "Objeto da Despesa": objeto_final,
             "Nome do Credor": serie_texto("Nome do Credor", "Credor", "Entidade / Credor", "Entidade"),
             "Tipo de PD": serie_texto("Tipo de PD", "Tipo PD", "Tipo_PD", "Tipo de OB", "OB", "Tipo OB"),
-            # Compatibilidade com qualquer trecho antigo que ainda procure este nome.
             "Tipo de OB": serie_texto("Tipo de PD", "Tipo PD", "Tipo_PD", "Tipo de OB", "OB", "Tipo OB"),
             "Status": serie_texto("Status"),
             "Valor": converter_valor_monetario(bruto[coluna_valor]),
@@ -1876,7 +2013,7 @@ def carregar_dados_pd():
     )
     dados = dados[dados["Número PD"].ne("")].copy()
     dados["UG Pagadora"] = dados["UG Pagadora"].str.replace(r"\.0$", "", regex=True)
-    dados["Fonte"] = dados["Fonte"].str.replace(r"\.0$", "", regex=True)
+    dados["Fonte"] = dados["Fonte"].astype(str).str.replace(r"\.0$", "", regex=True)
     dados["Valor"] = dados["Valor"].fillna(0.0)
     return dados, ""
 
