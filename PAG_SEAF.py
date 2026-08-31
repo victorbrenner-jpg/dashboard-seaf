@@ -892,20 +892,24 @@ def renderizar_tabela_resumo_pd(df, coluna_descricao, titulo_descricao):
 
 
 def gerar_relatorio_pd_excel(df_filtrado):
-    """Preenche o modelo oficial de PD sem remover as tabelas dinâmicas nativas."""
+    """Preenche o modelo oficial de PD preservando 100% da Tabela Dinâmica.
+
+    Importante: esta rotina NÃO abre/salva o arquivo com openpyxl. O openpyxl
+    reescreve os XMLs internos das tabelas dinâmicas e, nesse processo, pode
+    eliminar extensões/formatações do Excel. Aqui alteramos somente o XML da
+    aba-base dentro do .xlsx (que é um arquivo ZIP), mantendo todo o restante
+    do modelo byte a byte — inclusive cores, estilos e configurações das
+    tabelas dinâmicas.
+    """
     if df_filtrado.empty:
         raise ValueError("Não há PDs para exportar com os filtros selecionados.")
 
-    try:
-        from openpyxl import load_workbook
-    except ModuleNotFoundError as erro:
-        raise ModuleNotFoundError(
-            "O pacote openpyxl não está instalado. Execute: pip install -r requirements.txt"
-        ) from erro
+    import zipfile
+    import xml.etree.ElementTree as ET
 
-    # O arquivo modelo possui uma aba-base com sete colunas. Essa base alimenta
-    # as tabelas dinâmicas da aba Tabela_Dinâmica, portanto o modelo precisa ser
-    # aberto e preenchido em vez de criarmos um novo Excel do zero.
+    # ------------------------------------------------------------------
+    # 1) Monta as sete colunas exatamente como o modelo de PD espera.
+    # ------------------------------------------------------------------
     def normalizar_nome_coluna(valor):
         texto = unicodedata.normalize("NFKD", str(valor or ""))
         texto = "".join(
@@ -1013,117 +1017,166 @@ def gerar_relatorio_pd_excel(df_filtrado):
             "modelos/modelo_relatorio_programa_desembolso.xlsx no repositório."
         )
 
-    workbook = load_workbook(caminho_modelo, data_only=False)
-    cabecalhos_esperados = [
-        "Nome do Credor",
-        "Objeto Despesa",
-        "GD",
-        "Número",
-        "Tipo de PD",
-        "Status",
-        "Valor",
-    ]
+    # ------------------------------------------------------------------
+    # 2) Descobre qual XML corresponde à aba 'Relatório Geral PD'.
+    #    Não assumimos que será sempre sheet2.xml.
+    # ------------------------------------------------------------------
+    NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+    NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+    NS_PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
+    NS_XML = "http://www.w3.org/XML/1998/namespace"
 
-    def normalizar_cabecalho_excel(valor):
-        texto = unicodedata.normalize("NFKD", str(valor or ""))
-        texto = "".join(
-            caractere for caractere in texto
-            if not unicodedata.combining(caractere)
-        )
-        return re.sub(r"[^A-Z0-9]+", "", texto.upper())
+    ET.register_namespace("", NS_MAIN)
+    ET.register_namespace("r", NS_REL)
 
-    conjunto_esperado = {
-        normalizar_cabecalho_excel(cabecalho)
-        for cabecalho in cabecalhos_esperados
+    with zipfile.ZipFile(caminho_modelo, "r") as origem:
+        arquivos_modelo = {nome: origem.read(nome) for nome in origem.namelist()}
+
+    workbook_root = ET.fromstring(arquivos_modelo["xl/workbook.xml"])
+    rels_root = ET.fromstring(arquivos_modelo["xl/_rels/workbook.xml.rels"])
+
+    mapa_relacoes = {
+        rel.attrib.get("Id"): rel.attrib.get("Target")
+        for rel in rels_root.findall(f"{{{NS_PKG}}}Relationship")
     }
-    aba_base = None
-    linha_cabecalho = None
-    for aba in workbook.worksheets:
-        for linha in range(1, min(aba.max_row, 10) + 1):
-            cabecalhos_encontrados = {
-                normalizar_cabecalho_excel(aba.cell(linha, coluna).value)
-                for coluna in range(1, len(cabecalhos_esperados) + 1)
-            }
-            if conjunto_esperado.issubset(cabecalhos_encontrados):
-                aba_base = aba
-                linha_cabecalho = linha
-                break
-        if aba_base is not None:
+
+    caminho_aba_base = None
+    for sheet in workbook_root.findall(f".//{{{NS_MAIN}}}sheet"):
+        if sheet.attrib.get("name") == "Relatório Geral PD":
+            rel_id = sheet.attrib.get(f"{{{NS_REL}}}id")
+            alvo = mapa_relacoes.get(rel_id, "")
+            if alvo:
+                caminho_aba_base = "xl/" + alvo.lstrip("/")
             break
 
-    if aba_base is None:
+    if not caminho_aba_base or caminho_aba_base not in arquivos_modelo:
         raise ValueError(
-            "A aba-base do modelo de PD não foi localizada. O modelo precisa "
-            "conter as colunas: " + ", ".join(cabecalhos_esperados)
+            "A aba 'Relatório Geral PD' não foi localizada dentro do modelo."
         )
 
-    # Mantém os cabeçalhos exatamente como o modelo das tabelas dinâmicas espera.
-    for coluna, cabecalho in enumerate(cabecalhos_esperados, start=1):
-        aba_base.cell(linha_cabecalho, coluna).value = cabecalho
+    # ------------------------------------------------------------------
+    # 3) Altera SOMENTE sheetData da aba-base.
+    #    Os XMLs das tabelas dinâmicas, estilos, caches e extensões ficam
+    #    exatamente como estão no arquivo original.
+    # ------------------------------------------------------------------
+    aba_root = ET.fromstring(arquivos_modelo[caminho_aba_base])
+    sheet_data = aba_root.find(f"{{{NS_MAIN}}}sheetData")
+    if sheet_data is None:
+        raise ValueError("A aba-base do modelo não possui sheetData.")
 
-    primeira_linha_dados = linha_cabecalho + 1
+    linhas_existentes = list(sheet_data.findall(f"{{{NS_MAIN}}}row"))
+    if not linhas_existentes:
+        raise ValueError("A aba-base do modelo está vazia.")
 
-    # Limpa somente os dados antigos da base. A aba Tabela_Dinâmica e seus
-    # objetos permanecem intactos.
-    for linha in aba_base.iter_rows(
-        min_row=primeira_linha_dados,
-        max_row=max(aba_base.max_row, primeira_linha_dados),
-        min_col=1,
-        max_col=len(cabecalhos_esperados),
-    ):
-        for celula in linha:
-            celula.value = None
+    # O modelo oficial tem o cabeçalho na linha 1. Mantemos essa linha original
+    # intacta para preservar fonte, preenchimento, bordas e demais atributos.
+    linha_cabecalho = next(
+        (linha for linha in linhas_existentes if linha.attrib.get("r") == "1"),
+        linhas_existentes[0],
+    )
 
-    for numero_linha, registro in enumerate(
+    # Captura os estilos das duas primeiras linhas de dados do próprio modelo.
+    # Ele usa faixas alternadas; ao reconstruir os registros reaplicamos os
+    # mesmos style IDs sem criar nenhum estilo novo.
+    def estilos_da_linha(linha_xml):
+        estilos = {}
+        if linha_xml is None:
+            return estilos
+        for celula in linha_xml.findall(f"{{{NS_MAIN}}}c"):
+            referencia = celula.attrib.get("r", "")
+            coluna = re.sub(r"\d+", "", referencia)
+            if coluna:
+                estilos[coluna] = celula.attrib.get("s")
+        return estilos
+
+    linha_modelo_par = next(
+        (linha for linha in linhas_existentes if linha.attrib.get("r") == "2"),
+        None,
+    )
+    linha_modelo_impar = next(
+        (linha for linha in linhas_existentes if linha.attrib.get("r") == "3"),
+        linha_modelo_par,
+    )
+    estilos_par = estilos_da_linha(linha_modelo_par)
+    estilos_impar = estilos_da_linha(linha_modelo_impar)
+
+    # Remove somente as linhas de dados antigas. O cabeçalho permanece sendo o
+    # mesmo elemento XML que veio do modelo.
+    for linha in linhas_existentes:
+        if linha is not linha_cabecalho:
+            sheet_data.remove(linha)
+
+    colunas_excel = ["A", "B", "C", "D", "E", "F", "G"]
+
+    def adicionar_texto(celula, texto):
+        celula.set("t", "inlineStr")
+        is_node = ET.SubElement(celula, f"{{{NS_MAIN}}}is")
+        t_node = ET.SubElement(is_node, f"{{{NS_MAIN}}}t")
+        texto = "" if texto is None else str(texto)
+        if texto.startswith(" ") or texto.endswith(" "):
+            t_node.set(f"{{{NS_XML}}}space", "preserve")
+        t_node.text = texto
+
+    for indice, registro in enumerate(
         base_relatorio_modelo.itertuples(index=False, name=None),
-        start=primeira_linha_dados,
+        start=2,
     ):
-        for numero_coluna, valor in enumerate(registro, start=1):
+        linha_xml = ET.Element(f"{{{NS_MAIN}}}row", {"r": str(indice), "spans": "1:7"})
+        estilos = estilos_par if indice % 2 == 0 else estilos_impar
+
+        for numero_coluna, (letra_coluna, valor) in enumerate(
+            zip(colunas_excel, registro), start=1
+        ):
+            atributos = {"r": f"{letra_coluna}{indice}"}
+            estilo = estilos.get(letra_coluna)
+            if estilo is not None:
+                atributos["s"] = estilo
+
+            celula = ET.SubElement(linha_xml, f"{{{NS_MAIN}}}c", atributos)
+
             if numero_coluna == 3:
+                # GD fica numérico (1/3/4) como no modelo original.
                 grupo = str(valor).replace("GD", "").strip()
-                valor = int(grupo) if grupo.isdigit() else grupo
+                if grupo.isdigit():
+                    v_node = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
+                    v_node.text = str(int(grupo))
+                else:
+                    adicionar_texto(celula, grupo)
             elif numero_coluna == 7:
-                valor = float(valor) if pd.notna(valor) else 0.0
+                # Valor permanece numérico; a máscara monetária vem do style ID
+                # original da coluna G do modelo.
+                numero = float(valor) if pd.notna(valor) else 0.0
+                v_node = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
+                v_node.text = format(numero, ".15g")
             else:
-                valor = "" if pd.isna(valor) else str(valor)
+                adicionar_texto(celula, "" if pd.isna(valor) else valor)
 
-            celula = aba_base.cell(numero_linha, numero_coluna, value=valor)
-            if numero_coluna == 7:
-                celula.number_format = 'R$ #,##0.00'
+        sheet_data.append(linha_xml)
 
-    # O modelo usa uma fonte dinâmica para as tabelas dinâmicas. Forçamos a
-    # atualização ao abrir o arquivo para que os consolidados reflitam os dados
-    # recém-gravados. Ao mesmo tempo, impedimos que Excel/WPS reaplique o estilo
-    # automático da Tabela Dinâmica durante a atualização, pois isso substituía
-    # as cores institucionais já gravadas no modelo (principalmente os cabeçalhos).
-    for aba in workbook.worksheets:
-        for tabela_dinamica in getattr(aba, "_pivots", []):
-            # Mantém exatamente a formatação existente no arquivo-modelo.
-            tabela_dinamica.preserveFormatting = True
-            tabela_dinamica.useAutoFormatting = False
-            tabela_dinamica.applyNumberFormats = False
-            tabela_dinamica.applyBorderFormats = False
-            tabela_dinamica.applyFontFormats = False
-            tabela_dinamica.applyPatternFormats = False
-            tabela_dinamica.applyAlignmentFormats = False
-            tabela_dinamica.applyWidthHeightFormats = False
+    ultima_linha = max(1, len(base_relatorio_modelo) + 1)
+    dimensao = aba_root.find(f"{{{NS_MAIN}}}dimension")
+    if dimensao is not None:
+        dimensao.set("ref", f"A1:G{ultima_linha}")
 
-            cache = getattr(tabela_dinamica, "cache", None)
-            if cache is not None:
-                cache.refreshOnLoad = True
-                cache.enableRefresh = True
+    # Serializa apenas a aba-base. Nenhum pivotTable*.xml é tocado.
+    arquivos_modelo[caminho_aba_base] = ET.tostring(
+        aba_root,
+        encoding="utf-8",
+        xml_declaration=True,
+    )
 
-    try:
-        workbook.calculation.fullCalcOnLoad = True
-        workbook.calculation.forceFullCalc = True
-        workbook.calculation.calcMode = "auto"
-    except AttributeError:
-        pass
+    # ------------------------------------------------------------------
+    # 4) Reempacota o XLSX preservando todos os demais arquivos do modelo.
+    # ------------------------------------------------------------------
+    arquivo_saida = io.BytesIO()
+    with zipfile.ZipFile(
+        arquivo_saida, "w", compression=zipfile.ZIP_DEFLATED
+    ) as destino:
+        for nome, conteudo in arquivos_modelo.items():
+            destino.writestr(nome, conteudo)
 
-    arquivo = io.BytesIO()
-    workbook.save(arquivo)
-    arquivo.seek(0)
-    return arquivo.getvalue()
+    arquivo_saida.seek(0)
+    return arquivo_saida.getvalue()
 
 def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
     """Gera um resumo mensal único, incluindo valores por tipo de despesa."""
@@ -3476,18 +3529,19 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.markdown(html_final, unsafe_allow_html=True)
 
     def gerar_relatorio_nl_excel(df_filtrado):
-        """Preenche o modelo oficial sem remover as tabelas dinâmicas nativas."""
-        try:
-            from openpyxl import load_workbook
-        except ModuleNotFoundError as erro:
-            raise ModuleNotFoundError(
-                "O pacote openpyxl não está instalado. Execute: pip install -r requirements.txt"
-            ) from erro
+        """Preenche o modelo oficial de NL preservando integralmente a Tabela Dinâmica.
 
-        # A aba-base do modelo tem exatamente estas sete colunas, que alimentam
-        # as tabelas dinâmicas nativas existentes na segunda aba do arquivo.
-        # A exportação não deve depender de funções definidas em outra seção
-        # da tela. Assim ela continua funcionando também no Streamlit Cloud.
+        Assim como no relatório de PD, esta rotina NÃO abre/salva o arquivo com
+        openpyxl. O .xlsx é tratado como um pacote ZIP e somente o XML da aba-base
+        é alterado. Dessa forma, estilos, cores, caches, extensões e XMLs das
+        tabelas dinâmicas permanecem exatamente como estão no modelo original.
+        """
+        if df_filtrado.empty:
+            raise ValueError("Não há NLs para exportar com os filtros selecionados.")
+
+        import zipfile
+        import xml.etree.ElementTree as ET
+
         def normalizar_nome_coluna(valor):
             texto = unicodedata.normalize("NFKD", str(valor or ""))
             texto = "".join(
@@ -3497,7 +3551,6 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             return re.sub(r"[^a-z0-9]+", "", texto.lower())
 
         def localizar_coluna(*opcoes):
-            """Localiza uma coluna respeitando a ordem de prioridade informada."""
             colunas_normalizadas = {
                 normalizar_nome_coluna(coluna): coluna
                 for coluna in df_filtrado.columns
@@ -3523,22 +3576,18 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             def converter_valor(valor):
                 if pd.isna(valor):
                     return 0.0
-                if isinstance(valor, (int, float)):
+                if isinstance(valor, (int, float, np.number)):
                     return float(valor)
-
                 texto = str(valor).strip()
                 if texto.lower() in {"", "nan", "none", "null", "-"}:
                     return 0.0
-
                 negativo = texto.startswith("(") and texto.endswith(")")
                 texto = texto.replace("R$", "").replace("\xa0", "").replace(" ", "")
                 texto = re.sub(r"[^0-9,.\-]", "", texto)
-
                 if "," in texto:
                     texto = texto.replace(".", "").replace(",", ".")
                 elif texto.count(".") > 1:
                     texto = texto.replace(".", "")
-
                 try:
                     numero = float(texto)
                 except (TypeError, ValueError):
@@ -3587,34 +3636,25 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         ]
         if campos_ausentes:
             raise ValueError(
-                "Não foi possível montar o relatório. Colunas ausentes: "
+                "Não foi possível montar o relatório de NL. Colunas ausentes: "
                 + ", ".join(campos_ausentes)
             )
 
         grupo_relatorio = serie_texto(coluna_grupo, padrao="NÃO INFORMADO").str.upper()
-        grupo_relatorio = grupo_relatorio.replace(
-            {
-                "GD1": "1",
-                "GD3": "3",
-                "GD4": "4",
-                "": "NÃO INFORMADO",
-                "NAN": "NÃO INFORMADO",
-            }
-        )
+        grupo_relatorio = grupo_relatorio.replace({
+            "GD1": "1", "GD3": "3", "GD4": "4",
+            "": "NÃO INFORMADO", "NAN": "NÃO INFORMADO",
+        })
 
-        base_relatorio_modelo = pd.DataFrame(
-            {
-                "Nome do Credor": serie_texto(coluna_credor),
-                "Objeto Despesa": serie_texto(coluna_objeto),
-                "GD": grupo_relatorio,
-                "Número": serie_texto(coluna_numero),
-                "Tipo de NL": serie_texto(
-                    coluna_tipo_nl_modelo, padrao="NÃO INFORMADO"
-                ),
-                "Status": serie_texto(coluna_status),
-                "Valor": serie_numero(coluna_valor),
-            }
-        ).sort_values(
+        base_relatorio_modelo = pd.DataFrame({
+            "Nome do Credor": serie_texto(coluna_credor),
+            "Objeto Despesa": serie_texto(coluna_objeto),
+            "GD": grupo_relatorio,
+            "Número": serie_texto(coluna_numero),
+            "Tipo de NL": serie_texto(coluna_tipo_nl_modelo, padrao="NÃO INFORMADO"),
+            "Status": serie_texto(coluna_status, padrao="NÃO INFORMADO"),
+            "Valor": serie_numero(coluna_valor),
+        }).sort_values(
             ["Objeto Despesa", "Nome do Credor", "Número"], kind="stable"
         )
 
@@ -3625,95 +3665,213 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         )
         if not caminho_modelo.exists():
             raise FileNotFoundError(
-                "Modelo não encontrado. Inclua modelos/modelo_relatorio_liquidacao.xlsx no repositório."
+                "Modelo não encontrado. Inclua "
+                "modelos/modelo_relatorio_liquidacao.xlsx no repositório."
             )
 
-        workbook = load_workbook(caminho_modelo, data_only=False)
+        NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
+        NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
+        NS_PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
+        NS_XML = "http://www.w3.org/XML/1998/namespace"
+
+        ET.register_namespace("", NS_MAIN)
+        ET.register_namespace("r", NS_REL)
+
+        with zipfile.ZipFile(caminho_modelo, "r") as origem:
+            arquivos_modelo = {nome: origem.read(nome) for nome in origem.namelist()}
+
+        workbook_root = ET.fromstring(arquivos_modelo["xl/workbook.xml"])
+        rels_root = ET.fromstring(arquivos_modelo["xl/_rels/workbook.xml.rels"])
+        mapa_relacoes = {
+            rel.attrib.get("Id"): rel.attrib.get("Target")
+            for rel in rels_root.findall(f"{{{NS_PKG}}}Relationship")
+        }
+
+        # Shared strings são necessárias apenas para identificar a aba-base
+        # caso os cabeçalhos estejam armazenados como índices compartilhados.
+        shared_strings = []
+        if "xl/sharedStrings.xml" in arquivos_modelo:
+            shared_root = ET.fromstring(arquivos_modelo["xl/sharedStrings.xml"])
+            for si in shared_root.findall(f"{{{NS_MAIN}}}si"):
+                partes = [
+                    t.text or ""
+                    for t in si.iter(f"{{{NS_MAIN}}}t")
+                ]
+                shared_strings.append("".join(partes))
+
+        def texto_celula(celula):
+            tipo = celula.attrib.get("t")
+            if tipo == "inlineStr":
+                return "".join(
+                    (t.text or "") for t in celula.iter(f"{{{NS_MAIN}}}t")
+                )
+            valor = celula.find(f"{{{NS_MAIN}}}v")
+            if valor is None or valor.text is None:
+                return ""
+            if tipo == "s":
+                try:
+                    return shared_strings[int(valor.text)]
+                except (ValueError, IndexError):
+                    return ""
+            return valor.text
+
         cabecalhos_esperados = [
-            "Nome do Credor",
-            "Objeto Despesa",
-            "GD",
-            "Número",
-            "Tipo de NL",
-            "Status",
-            "Valor",
+            "Nome do Credor", "Objeto Despesa", "GD", "Número",
+            "Tipo de NL", "Status", "Valor",
         ]
+        esperado_normalizado = {
+            normalizar_nome_coluna(cabecalho)
+            for cabecalho in cabecalhos_esperados
+        }
 
-        def normalizar_cabecalho_excel(valor):
-            texto = unicodedata.normalize("NFKD", str(valor or ""))
-            texto = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
-            return re.sub(r"[^A-Z0-9]+", "", texto.upper())
-
-        conjunto_esperado = {normalizar_cabecalho_excel(cabecalho) for cabecalho in cabecalhos_esperados}
-        aba_base = None
-        linha_cabecalho = None
-        for aba in workbook.worksheets:
-            for linha in range(1, min(aba.max_row, 10) + 1):
-                cabecalhos_encontrados = {
-                    normalizar_cabecalho_excel(aba.cell(linha, coluna).value)
-                    for coluna in range(1, len(cabecalhos_esperados) + 1)
+        caminho_aba_base = None
+        linha_cabecalho_numero = None
+        for sheet in workbook_root.findall(f".//{{{NS_MAIN}}}sheet"):
+            rel_id = sheet.attrib.get(f"{{{NS_REL}}}id")
+            alvo = mapa_relacoes.get(rel_id, "")
+            if not alvo:
+                continue
+            caminho = "xl/" + alvo.lstrip("/")
+            if caminho not in arquivos_modelo:
+                continue
+            try:
+                raiz_teste = ET.fromstring(arquivos_modelo[caminho])
+            except ET.ParseError:
+                continue
+            dados_teste = raiz_teste.find(f"{{{NS_MAIN}}}sheetData")
+            if dados_teste is None:
+                continue
+            for linha in list(dados_teste.findall(f"{{{NS_MAIN}}}row"))[:10]:
+                encontrados = {
+                    normalizar_nome_coluna(texto_celula(celula))
+                    for celula in linha.findall(f"{{{NS_MAIN}}}c")
+                    if texto_celula(celula)
                 }
-                if conjunto_esperado.issubset(cabecalhos_encontrados):
-                    aba_base = aba
-                    linha_cabecalho = linha
+                if esperado_normalizado.issubset(encontrados):
+                    caminho_aba_base = caminho
+                    linha_cabecalho_numero = int(linha.attrib.get("r", "1"))
                     break
-            if aba_base is not None:
+            if caminho_aba_base:
                 break
 
-        if aba_base is None:
+        if not caminho_aba_base:
             raise ValueError(
-                "A aba-base do modelo não foi localizada. O modelo precisa conter as colunas de relatório."
+                "A aba-base do modelo de NL não foi localizada. "
+                "Ela precisa conter as sete colunas esperadas do relatório."
             )
 
-        for coluna, cabecalho in enumerate(cabecalhos_esperados, start=1):
-            aba_base.cell(linha_cabecalho, coluna).value = cabecalho
+        aba_root = ET.fromstring(arquivos_modelo[caminho_aba_base])
+        sheet_data = aba_root.find(f"{{{NS_MAIN}}}sheetData")
+        linhas_existentes = list(sheet_data.findall(f"{{{NS_MAIN}}}row"))
 
-        primeira_linha_dados = linha_cabecalho + 1
-        for linha in aba_base.iter_rows(
-            min_row=primeira_linha_dados,
-            max_row=max(aba_base.max_row, primeira_linha_dados),
-            min_col=1,
-            max_col=len(cabecalhos_esperados),
-        ):
-            for celula in linha:
-                celula.value = None
+        linha_cabecalho = next(
+            (linha for linha in linhas_existentes
+             if int(linha.attrib.get("r", "0")) == linha_cabecalho_numero),
+            None,
+        )
+        if linha_cabecalho is None:
+            raise ValueError("O cabeçalho da aba-base do modelo de NL não foi localizado.")
 
-        for numero_linha, registro in enumerate(
-            base_relatorio_modelo.itertuples(index=False, name=None),
-            start=primeira_linha_dados,
+        primeira_linha_dados = linha_cabecalho_numero + 1
+
+        def estilos_da_linha(linha_xml):
+            estilos = {}
+            if linha_xml is None:
+                return estilos
+            for celula in linha_xml.findall(f"{{{NS_MAIN}}}c"):
+                referencia = celula.attrib.get("r", "")
+                coluna = re.sub(r"\d+", "", referencia)
+                if coluna:
+                    estilos[coluna] = celula.attrib.get("s")
+            return estilos
+
+        linha_modelo_1 = next(
+            (linha for linha in linhas_existentes
+             if int(linha.attrib.get("r", "0")) == primeira_linha_dados),
+            None,
+        )
+        linha_modelo_2 = next(
+            (linha for linha in linhas_existentes
+             if int(linha.attrib.get("r", "0")) == primeira_linha_dados + 1),
+            linha_modelo_1,
+        )
+        estilos_1 = estilos_da_linha(linha_modelo_1)
+        estilos_2 = estilos_da_linha(linha_modelo_2)
+
+        # Preserva qualquer conteúdo anterior ao cabeçalho e remove somente as
+        # linhas de dados da base. Nenhuma outra aba ou XML é regravado.
+        for linha in list(linhas_existentes):
+            numero = int(linha.attrib.get("r", "0"))
+            if numero > linha_cabecalho_numero:
+                sheet_data.remove(linha)
+
+        colunas_excel = ["A", "B", "C", "D", "E", "F", "G"]
+
+        def adicionar_texto(celula, texto):
+            celula.set("t", "inlineStr")
+            no_is = ET.SubElement(celula, f"{{{NS_MAIN}}}is")
+            no_t = ET.SubElement(no_is, f"{{{NS_MAIN}}}t")
+            texto = "" if texto is None else str(texto)
+            if texto.startswith(" ") or texto.endswith(" "):
+                no_t.set(f"{{{NS_XML}}}space", "preserve")
+            no_t.text = texto
+
+        for offset, registro in enumerate(
+            base_relatorio_modelo.itertuples(index=False, name=None)
         ):
-            for numero_coluna, valor in enumerate(registro, start=1):
+            numero_linha = primeira_linha_dados + offset
+            linha_xml = ET.Element(
+                f"{{{NS_MAIN}}}row",
+                {"r": str(numero_linha), "spans": "1:7"},
+            )
+            estilos = estilos_1 if offset % 2 == 0 else estilos_2
+
+            for numero_coluna, (letra, valor) in enumerate(
+                zip(colunas_excel, registro), start=1
+            ):
+                atributos = {"r": f"{letra}{numero_linha}"}
+                estilo = estilos.get(letra)
+                if estilo is not None:
+                    atributos["s"] = estilo
+                celula = ET.SubElement(linha_xml, f"{{{NS_MAIN}}}c", atributos)
+
                 if numero_coluna == 3:
                     grupo = str(valor).replace("GD", "").strip()
-                    valor = int(grupo) if grupo.isdigit() else grupo
+                    if grupo.isdigit():
+                        no_v = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
+                        no_v.text = str(int(grupo))
+                    else:
+                        adicionar_texto(celula, grupo)
                 elif numero_coluna == 7:
-                    valor = float(valor) if pd.notna(valor) else 0.0
+                    numero = float(valor) if pd.notna(valor) else 0.0
+                    no_v = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
+                    no_v.text = format(numero, ".15g")
                 else:
-                    valor = "" if pd.isna(valor) else str(valor)
+                    adicionar_texto(celula, "" if pd.isna(valor) else valor)
 
-                celula = aba_base.cell(numero_linha, numero_coluna, value=valor)
-                if numero_coluna == 7:
-                    celula.number_format = 'R$ #,##0.00'
+            sheet_data.append(linha_xml)
 
-        # Faz o Excel atualizar os painéis dinâmicos quando o chefe abrir o arquivo.
-        for aba in workbook.worksheets:
-            for tabela_dinamica in getattr(aba, "_pivots", []):
-                cache = getattr(tabela_dinamica, "cache", None)
-                if cache is not None:
-                    cache.refreshOnLoad = True
-                    cache.enableRefresh = True
+        ultima_linha = max(
+            linha_cabecalho_numero,
+            primeira_linha_dados + len(base_relatorio_modelo) - 1,
+        )
+        dimensao = aba_root.find(f"{{{NS_MAIN}}}dimension")
+        if dimensao is not None:
+            dimensao.set("ref", f"A1:G{ultima_linha}")
 
-        try:
-            workbook.calculation.fullCalcOnLoad = True
-            workbook.calculation.forceFullCalc = True
-            workbook.calculation.calcMode = "auto"
-        except AttributeError:
-            pass
+        arquivos_modelo[caminho_aba_base] = ET.tostring(
+            aba_root, encoding="utf-8", xml_declaration=True
+        )
 
-        arquivo = io.BytesIO()
-        workbook.save(arquivo)
-        arquivo.seek(0)
-        return arquivo.getvalue()
+        arquivo_saida = io.BytesIO()
+        with zipfile.ZipFile(
+            arquivo_saida, "w", compression=zipfile.ZIP_DEFLATED
+        ) as destino:
+            for nome, conteudo in arquivos_modelo.items():
+                destino.writestr(nome, conteudo)
+
+        arquivo_saida.seek(0)
+        return arquivo_saida.getvalue()
 
         """Implementação anterior mantida apenas como referência histórica."""
         coluna_tipo_nl = next(
