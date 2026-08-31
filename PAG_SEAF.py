@@ -1819,15 +1819,14 @@ def carregar_dados_pd():
     }
 
     def localizar_coluna(*aliases):
+        # Para a base de PD usamos somente correspondência EXATA após normalização.
+        # A busca parcial anterior fazia, por exemplo, "Objeto da Despesa"
+        # cair indevidamente na coluna genérica "Despesa", pois "despesa"
+        # está contido em "objetodadespesa".
         for alias in aliases:
             chave = _normalizar_nome_pd(alias)
             if chave in colunas_normalizadas:
                 return colunas_normalizadas[chave]
-        for alias in aliases:
-            chave = _normalizar_nome_pd(alias)
-            for normalizada, original in colunas_normalizadas.items():
-                if chave in normalizada or normalizada in chave:
-                    return original
         return None
 
     def serie_texto(*aliases, padrao="NÃO INFORMADO"):
@@ -1864,7 +1863,9 @@ def carregar_dados_pd():
             "Fonte": serie_texto("Fonte", "Fonte de Recurso"),
             "GD": grupo,
             "Despesa": natureza.replace("", "NÃO INFORMADA"),
-            "Objeto da Despesa": serie_texto("Objeto da Despesa", "Objeto", "Objeto Despesa"),
+            "Objeto da Despesa": serie_texto(
+                "Objeto da Despesa", "Objeto de Despesa", "Objeto Despesa", "Objeto"
+            ),
             "Nome do Credor": serie_texto("Nome do Credor", "Credor", "Entidade / Credor", "Entidade"),
             "Tipo de PD": serie_texto("Tipo de PD", "Tipo PD", "Tipo_PD", "Tipo de OB", "OB", "Tipo OB"),
             # Compatibilidade com qualquer trecho antigo que ainda procure este nome.
