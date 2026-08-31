@@ -109,6 +109,27 @@ elif isinstance(st.session_state["mem_nl_fonte"], str):
 if "mem_nl_objetos" not in st.session_state:
     st.session_state["mem_nl_objetos"] = []
 
+# --- MEMÓRIA DA TELA PD (filtros aplicados) ---
+# Os widgets ficam em modo de edição dentro de um formulário. Somente ao
+# clicar em "Aplicar filtros" estes valores passam a controlar o painel e
+# as opções disponíveis nos filtros em cascata.
+if "mem_pd_periodo" not in st.session_state:
+    st.session_state["mem_pd_periodo"] = None
+if "mem_pd_ug" not in st.session_state:
+    st.session_state["mem_pd_ug"] = []
+if "mem_pd_fonte" not in st.session_state:
+    st.session_state["mem_pd_fonte"] = []
+if "mem_pd_gd" not in st.session_state:
+    st.session_state["mem_pd_gd"] = []
+if "mem_pd_despesa" not in st.session_state:
+    st.session_state["mem_pd_despesa"] = []
+if "mem_pd_objeto" not in st.session_state:
+    st.session_state["mem_pd_objeto"] = []
+if "mem_pd_credor" not in st.session_state:
+    st.session_state["mem_pd_credor"] = []
+if "mem_pd_status" not in st.session_state:
+    st.session_state["mem_pd_status"] = []
+
 # --- MEMÓRIA DA TELA 3 (Priorização semanal) ---
 # Os widgets desta tela não são renderizados quando o usuário navega para NL
 # ou OB. Por isso os valores selecionados ficam em chaves independentes.
@@ -255,7 +276,10 @@ st.markdown(
         width: 28px !important;
         max-width: 28px !important;
         overflow: hidden !important;
-        transition: width .22s ease .55s, min-width .22s ease .55s, max-width .22s ease .55s !important;
+        /* Período de tolerância: após escolher uma opção o menu portal fecha
+           antes de o foco retornar ao campo. Sem essa janela a lateral dava
+           a impressão de "fugir" do usuário. */
+        transition: width .22s ease 1.35s, min-width .22s ease 1.35s, max-width .22s ease 1.35s !important;
         background: #f1f5f9 !important;
         border-right: 1px solid #d4e0ea !important;
     }
@@ -268,8 +292,28 @@ st.markdown(
     }
     [data-testid="stSidebar"]:hover,
     [data-testid="stSidebar"]:focus-within,
+    [data-testid="stSidebar"]:has(input:focus),
+    [data-testid="stSidebar"]:has([role="combobox"][aria-expanded="true"]),
     [data-testid="stSidebar"][aria-expanded="false"]:hover,
     [data-testid="stSidebar"][aria-expanded="false"]:focus-within {
+        min-width: 312px !important;
+        width: 312px !important;
+        max-width: 312px !important;
+        overflow-y: auto !important;
+        transition-delay: 0s !important;
+    }
+    /* IMPORTANTE: os menus do multiselect do Streamlit/BaseWeb são
+       renderizados em um portal fora da sidebar. Ao mover o mouse da
+       sidebar para a lista de opções, :hover e :focus-within deixam de
+       valer e a barra começava a se recolher no meio da seleção.
+       Enquanto existir um popover/listbox/menu aberto em qualquer ponto
+       da página, mantemos a sidebar travada na largura expandida. */
+    body:has([data-baseweb="popover"]) [data-testid="stSidebar"],
+    body:has([role="listbox"]) [data-testid="stSidebar"],
+    body:has([role="menu"]) [data-testid="stSidebar"],
+    body:has([data-baseweb="menu"]) [data-testid="stSidebar"],
+    body:has([data-baseweb="select-menu"]) [data-testid="stSidebar"],
+    body:has([role="combobox"][aria-expanded="true"]) [data-testid="stSidebar"] {
         min-width: 312px !important;
         width: 312px !important;
         max-width: 312px !important;
@@ -283,6 +327,74 @@ st.markdown(
     [data-testid="stSidebar"] [data-testid="stSidebarUserContent"] {
         visibility: visible !important;
         opacity: 1 !important;
+    }
+
+    /* Barra de ações dos filtros no espaço superior reservado da sidebar.
+       Os botões continuam pertencendo ao st.form (logo, mantêm a lógica de
+       Aplicar/Limpar), mas visualmente ficam sempre acessíveis no topo. */
+    [data-testid="stSidebar"] [data-testid="stForm"]
+    [data-testid="stHorizontalBlock"]:has([data-testid="stFormSubmitButton"]) {
+        position: fixed !important;
+        top: 116px !important;
+        left: 39px !important;
+        width: 264px !important;
+        z-index: 100006 !important;
+        gap: 7px !important;
+        padding: 0 !important;
+        margin: 0 !important;
+    }
+
+    /* Aplicar: azul institucional, coerente com cabeçalho/aba FILTROS. */
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[kind="primary"],
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid="stBaseButton-primary"],
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid*="BaseButton-primary"] {
+        min-height: 36px !important;
+        border-radius: 7px !important;
+        border: 1px solid #165a8a !important;
+        background: #165a8a !important;
+        color: #ffffff !important;
+        font-weight: 700 !important;
+        box-shadow: 0 2px 6px rgba(22, 90, 138, .18) !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[kind="primary"]:hover,
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid="stBaseButton-primary"]:hover,
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid*="BaseButton-primary"]:hover {
+        border-color: #10456c !important;
+        background: #10456c !important;
+        color: #ffffff !important;
+    }
+
+    /* Limpar: azul-cinza claro. Evita o vermelho, que visualmente comunica
+       erro/perigo e não combina com uma ação rotineira de limpeza de filtro. */
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[kind="secondary"],
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid="stBaseButton-secondary"],
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid*="BaseButton-secondary"] {
+        min-height: 36px !important;
+        border-radius: 7px !important;
+        border: 1px solid #c4ced8 !important;
+        background: #f1f4f7 !important;
+        color: #425466 !important;
+        font-weight: 700 !important;
+        box-shadow: none !important;
+    }
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[kind="secondary"]:hover,
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid="stBaseButton-secondary"]:hover,
+    [data-testid="stSidebar"] [data-testid="stFormSubmitButton"]
+    button[data-testid*="BaseButton-secondary"]:hover {
+        border-color: #aebdca !important;
+        background: #e6ebf0 !important;
+        color: #243b53 !important;
     }
     [data-testid="stSidebar"]::after {
         content: "FILTROS";
@@ -303,6 +415,14 @@ st.markdown(
     }
     [data-testid="stSidebar"]:hover::after,
     [data-testid="stSidebar"]:focus-within::after {
+        display: none;
+    }
+    body:has([data-baseweb="popover"]) [data-testid="stSidebar"]::after,
+    body:has([role="listbox"]) [data-testid="stSidebar"]::after,
+    body:has([role="menu"]) [data-testid="stSidebar"]::after,
+    body:has([data-baseweb="menu"]) [data-testid="stSidebar"]::after,
+    body:has([data-baseweb="select-menu"]) [data-testid="stSidebar"]::after,
+    body:has([role="combobox"][aria-expanded="true"]) [data-testid="stSidebar"]::after {
         display: none;
     }
     .subtitulo-pagina {
@@ -2496,23 +2616,12 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     st.sidebar.markdown("#### 🎯 Filtros — Pagamentos (OB)")
 
-    tipo_filtro_data = st.sidebar.radio(
-        "Como deseja filtrar o período?",
-        options=["Por Mês de Competência", "Por Intervalo de Datas"],
-        index=(
-            0
-            if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência"
-            else 1
-        ),
-        key="w_ob_tipo_data",
-        on_change=sincronizar_filtro,
-        args=("mem_ob_tipo_data", "w_ob_tipo_data"),
-    )
-
     coluna_data = "Data Emissão"
     coluna_objeto = "OBJETO"
 
     # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA OB ---
+    # IMPORTANTE: esta função consulta somente a memória APLICADA. As escolhas
+    # feitas no formulário não alteram o painel até o usuário confirmar.
     def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_cred=False, ign_fnt=False, ign_obj=False):
         d = df.copy()
         if d.empty:
@@ -2559,190 +2668,183 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
         return d
 
-    # CALCULAR OPÇÕES DINÂMICAS PARA CADA WIDGET TELA OB
+    # Opções disponíveis são calculadas a partir dos filtros JÁ APLICADOS.
+    # Ex.: Agosto aplicado + Fonte 500 aplicada => Credor mostra somente o
+    # universo compatível com Agosto + Fonte 500.
     df_para_meses = filtrar_df_ob(df_base, ign_mes=True)
-    lista_meses_fixa = [m for m in ordem_meses_ano if m in df_para_meses["Mes_Extenso"].unique()] if not df_para_meses.empty else []
+    lista_meses_fixa = [
+        m for m in ordem_meses_ano
+        if m in df_para_meses["Mes_Extenso"].unique()
+    ] if not df_para_meses.empty else []
 
-    meses_selecionados = []
-    data_inicio = None
-    data_fim = None
-
-    if tipo_filtro_data == "Por Mês de Competência":
-        validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
-        meses_selecionados = st.sidebar.multiselect(
-            "Filtrar Período de Competência:",
-            options=lista_meses_fixa,
-            default=validos_m_ob,
-            key="w_ob_meses",
-            on_change=sincronizar_filtro,
-            args=("mem_ob_meses", "w_ob_meses"),
-        )
-    else:
-        if not df_base.empty and coluna_data in df_base.columns:
-            datas_convertidas = (
-                pd.to_datetime(
-                    df_base[coluna_data],
-                    format="mixed",
-                    dayfirst=True,
-                    errors="coerce",
-                )
-                .dt.date.dropna()
-            )
-            data_min = (
-                datas_convertidas.min()
-                if not datas_convertidas.empty
-                else datetime.date(2026, 1, 1)
-            )
-            data_max = (
-                datas_convertidas.max()
-                if not datas_convertidas.empty
-                else datetime.date(2026, 12, 31)
-            )
-        else:
-            data_min = datetime.date(2026, 1, 1)
-            data_max = datetime.date(2026, 12, 31)
-
-        val_ini = (
-            st.session_state["mem_ob_dt_ini"]
-            if st.session_state["mem_ob_dt_ini"]
-            else data_min
-        )
-        val_fim = (
-            st.session_state["mem_ob_dt_fim"]
-            if st.session_state["mem_ob_dt_fim"]
-            else data_max
-        )
-
-        col_dt1, col_dt2 = st.sidebar.columns(2)
-        with col_dt1:
-            data_inicio = st.date_input(
-                "Data Inicial:",
-                value=val_ini,
-                format="DD/MM/YYYY",
-                key="w_ob_dt_ini",
-                on_change=sincronizar_filtro,
-                args=("mem_ob_dt_ini", "w_ob_dt_ini"),
-            )
-        with col_dt2:
-            data_fim = st.date_input(
-                "Data Final:",
-                value=val_fim,
-                format="DD/MM/YYYY",
-                key="w_ob_dt_fim",
-                on_change=sincronizar_filtro,
-                args=("mem_ob_dt_fim", "w_ob_dt_fim"),
-            )
-
-    st.sidebar.markdown("---")
-
-    # FILTRO TIPO DE DESPESA (Opções estáticas, seleção afeta os demais)
     opcoes_despesa_ob = [
         "CORRENTE (Dotação do Ano)",
         "RP (Restos a Pagar)",
         "DEA (Exercícios Anteriores)",
     ]
-    despesas_validas_ob = [
-        despesa
-        for despesa in st.session_state["mem_ob_despesa"]
-        if despesa in opcoes_despesa_ob
-    ]
 
-    despesas_selecionadas = st.sidebar.multiselect(
-        "Filtrar por Tipo de Despesa:",
-        options=opcoes_despesa_ob,
-        default=despesas_validas_ob,
-        placeholder="Todas as despesas",
-        key="w_ob_despesa",
-        on_change=sincronizar_filtro,
-        args=("mem_ob_despesa", "w_ob_despesa"),
-    )
-
-    st.sidebar.markdown("---")
-
-    # CREDORES DINÂMICOS
     df_para_credores = filtrar_df_ob(df_base, ign_cred=True)
     nomes_disponiveis = (
-        sorted(
-            [
-                str(n).strip()
-                for n in df_para_credores["Credor_Nome_Tratado"].unique()
-                if n and str(n).lower() != "nan"
-            ]
-        )
-        if not df_para_credores.empty
-        else []
-    )
-    validos_c_ob = [
-        c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis
-    ]
-
-    nomes_selecionados = st.sidebar.multiselect(
-        "Filtrar por Entidade / Credor:",
-        options=nomes_disponiveis,
-        default=validos_c_ob,
-        key="w_ob_credores",
-        on_change=sincronizar_filtro,
-        args=("mem_ob_credores", "w_ob_credores"),
+        sorted([
+            str(n).strip()
+            for n in df_para_credores["Credor_Nome_Tratado"].unique()
+            if n and str(n).lower() != "nan"
+        ])
+        if not df_para_credores.empty else []
     )
 
-    st.sidebar.markdown("---")
-    # FONTES DINÂMICAS
     df_para_fontes = filtrar_df_ob(df_base, ign_fnt=True)
     lista_fontes = (
-        sorted(
-            [
-                str(f).strip()
-                for f in df_para_fontes["Fonte_Tratada"].unique()
-                if f and str(f).lower() != "nan"
-            ]
-        )
-        if not df_para_fontes.empty
-        else []
-    )
-    validos_f_ob = [
-        f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes
-    ]
-
-    fontes_selecionadas = st.sidebar.multiselect(
-        "Filtrar por Fonte de Recurso:",
-        options=lista_fontes,
-        default=validos_f_ob,
-        placeholder="Todas as fontes (Exibe tudo)",
-        key="w_ob_fontes",
-        on_change=sincronizar_filtro,
-        args=("mem_ob_fontes", "w_ob_fontes"),
+        sorted([
+            str(f).strip()
+            for f in df_para_fontes["Fonte_Tratada"].unique()
+            if f and str(f).lower() != "nan"
+        ])
+        if not df_para_fontes.empty else []
     )
 
-    st.sidebar.markdown("---")
-    # OBJETOS DINÂMICOS
     df_para_objetos = filtrar_df_ob(df_base, ign_obj=True)
-
     if not df_para_objetos.empty and coluna_objeto in df_para_objetos.columns:
-        lista_objetos = sorted(
-            [
-                str(obj).strip()
-                for obj in df_para_objetos[coluna_objeto].dropna().unique()
-                if str(obj).lower() != "nan"
-            ]
+        lista_objetos = sorted([
+            str(obj).strip()
+            for obj in df_para_objetos[coluna_objeto].dropna().unique()
+            if str(obj).lower() != "nan"
+        ])
+    else:
+        lista_objetos = []
+
+    validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
+    despesas_validas_ob = [d for d in st.session_state["mem_ob_despesa"] if d in opcoes_despesa_ob]
+    validos_c_ob = [c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis]
+    validos_f_ob = [f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes]
+    validos_o_ob = [o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos]
+
+    # Em formulários, o callback é executado antes de os widgets serem
+    # recriados. Assim, a limpeza remove também uma seleção ainda não aplicada.
+    def limpar_filtros_ob():
+        st.session_state["mem_ob_tipo_data"] = "Por Mês de Competência"
+        st.session_state["mem_ob_meses"] = []
+        st.session_state["mem_ob_dt_ini"] = datetime.date(2026, 1, 1)
+        st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
+        st.session_state["mem_ob_despesa"] = []
+        st.session_state["mem_ob_credores"] = []
+        st.session_state["mem_ob_fontes"] = []
+        st.session_state["mem_ob_objetos"] = []
+        # Não removemos as chaves: o navegador pode reenviar o último valor do
+        # formulário. Ao atribuir os valores vazios, o widget é redesenhado limpo.
+        st.session_state["w_ob_tipo_data"] = "Por Mês de Competência"
+        st.session_state["w_ob_meses"] = []
+        st.session_state["w_ob_dt_ini"] = datetime.date(2026, 1, 1)
+        st.session_state["w_ob_dt_fim"] = datetime.date(2026, 12, 31)
+        st.session_state["w_ob_despesa"] = []
+        st.session_state["w_ob_credores"] = []
+        st.session_state["w_ob_fontes"] = []
+        st.session_state["w_ob_objetos"] = []
+
+    # Formulário impede o rerun a cada clique do multiselect. O usuário pode
+    # selecionar vários itens normalmente e só então aplicar o conjunto.
+    with st.sidebar.form("form_filtros_ob", border=False):
+        tipo_filtro_data = st.radio(
+            "Como deseja filtrar o período?",
+            options=["Por Mês de Competência", "Por Intervalo de Datas"],
+            index=(0 if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência" else 1),
+            key="w_ob_tipo_data",
         )
-        validos_o_ob = [
-            o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos
-        ]
-        objeto_selecionado = st.sidebar.multiselect(
+
+        meses_selecionados = []
+        data_inicio = st.session_state["mem_ob_dt_ini"]
+        data_fim = st.session_state["mem_ob_dt_fim"]
+
+        if tipo_filtro_data == "Por Mês de Competência":
+            meses_selecionados = st.multiselect(
+                "Filtrar Período de Competência:",
+                options=lista_meses_fixa,
+                default=validos_m_ob,
+                key="w_ob_meses",
+            )
+        else:
+            if not df_base.empty and coluna_data in df_base.columns:
+                datas_convertidas = pd.to_datetime(
+                    df_base[coluna_data], format="mixed", dayfirst=True, errors="coerce"
+                ).dt.date.dropna()
+                data_min = datas_convertidas.min() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
+                data_max = datas_convertidas.max() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
+            else:
+                data_min = datetime.date(2026, 1, 1)
+                data_max = datetime.date(2026, 12, 31)
+
+            val_ini = st.session_state["mem_ob_dt_ini"] or data_min
+            val_fim = st.session_state["mem_ob_dt_fim"] or data_max
+            col_dt1, col_dt2 = st.columns(2)
+            with col_dt1:
+                data_inicio = st.date_input(
+                    "Data Inicial:", value=val_ini, format="DD/MM/YYYY", key="w_ob_dt_ini"
+                )
+            with col_dt2:
+                data_fim = st.date_input(
+                    "Data Final:", value=val_fim, format="DD/MM/YYYY", key="w_ob_dt_fim"
+                )
+
+        st.divider()
+        despesas_selecionadas = st.multiselect(
+            "Filtrar por Tipo de Despesa:",
+            options=opcoes_despesa_ob,
+            default=despesas_validas_ob,
+            placeholder="Todas as despesas",
+            key="w_ob_despesa",
+        )
+
+        st.divider()
+        nomes_selecionados = st.multiselect(
+            "Filtrar por Entidade / Credor:",
+            options=nomes_disponiveis,
+            default=validos_c_ob,
+            key="w_ob_credores",
+        )
+
+        st.divider()
+        fontes_selecionadas = st.multiselect(
+            "Filtrar por Fonte de Recurso:",
+            options=lista_fontes,
+            default=validos_f_ob,
+            placeholder="Todas as fontes (Exibe tudo)",
+            key="w_ob_fontes",
+        )
+
+        st.divider()
+        objeto_selecionado = st.multiselect(
             "Filtrar por Objeto de Despesa:",
             options=lista_objetos,
             default=validos_o_ob,
             placeholder="Todos os objetos",
             key="w_ob_objetos",
-            on_change=sincronizar_filtro,
-            args=("mem_ob_objetos", "w_ob_objetos"),
         )
-    else:
-        objeto_selecionado = []
+
+        col_aplicar_ob, col_limpar_ob = st.columns(2, gap="small")
+        with col_aplicar_ob:
+            aplicar_ob = st.form_submit_button(
+                "✅ Aplicar filtros", use_container_width=True, type="primary"
+            )
+        with col_limpar_ob:
+            limpar_ob = st.form_submit_button(
+                "🧹 Limpar filtros", use_container_width=True,
+                on_click=limpar_filtros_ob,
+            )
+
+    if aplicar_ob:
+        st.session_state["mem_ob_tipo_data"] = tipo_filtro_data
+        st.session_state["mem_ob_meses"] = list(meses_selecionados)
+        st.session_state["mem_ob_dt_ini"] = data_inicio
+        st.session_state["mem_ob_dt_fim"] = data_fim
+        st.session_state["mem_ob_despesa"] = list(despesas_selecionadas)
+        st.session_state["mem_ob_credores"] = list(nomes_selecionados)
+        st.session_state["mem_ob_fontes"] = list(fontes_selecionadas)
+        st.session_state["mem_ob_objetos"] = list(objeto_selecionado)
+        st.rerun()
 
     st.sidebar.markdown("---")
 
-    # DATAFRAME FINALMENTE FILTRADO TELA OB
+    # DATAFRAME FINAL: somente filtros que já foram confirmados em Aplicar.
     df_filtrado = filtrar_df_ob(df_base)
 
     st.sidebar.markdown("### 🔄 Atualizar Dados do Painel")
@@ -4155,21 +4257,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
     if not df_base.empty:
         st.sidebar.markdown("#### 📑 Filtros — Liquidação (NL)")
 
-        tipo_periodo = st.sidebar.radio(
-            "Como deseja filtrar o período?",
-            options=["Por Mês de Competência", "Por Intervalo de Datas"],
-            index=(
-                0
-                if st.session_state["mem_nl_tipo_periodo"]
-                == "Por Mês de Competência"
-                else 1
-            ),
-            key="w_nl_tipo_periodo",
-            on_change=sincronizar_filtro,
-            args=("mem_nl_tipo_periodo", "w_nl_tipo_periodo"),
-        )
-
         # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA NL ---
+        # A função lê exclusivamente a memória dos filtros APLICADOS.
         def filtrar_df_nl(df, ign_per=False, ign_grp=False, ign_sts=False, ign_cred=False, ign_fnt=False, ign_obj=False):
             d = df.copy()
             if d.empty:
@@ -4187,16 +4276,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                         inicio = pd.Timestamp(data_inicio).normalize()
                         fim = pd.Timestamp(data_fim).normalize()
                         if inicio <= fim:
-                            datas_nl = pd.to_datetime(
-                                d["Data_DT"], errors="coerce"
-                            ).dt.normalize()
+                            datas_nl = pd.to_datetime(d["Data_DT"], errors="coerce").dt.normalize()
                             d = d[(datas_nl >= inicio) & (datas_nl <= fim)]
 
             # Grupo
             if not ign_grp and st.session_state["mem_nl_grupo"]:
-                d = d[
-                    d["Grupo_Classificado"].isin(st.session_state["mem_nl_grupo"])
-                ]
+                d = d[d["Grupo_Classificado"].isin(st.session_state["mem_nl_grupo"])]
 
             # Status
             if not ign_sts and st.session_state["mem_nl_status"] != "Todos":
@@ -4208,9 +4293,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
             # Fonte
             if not ign_fnt and st.session_state["mem_nl_fonte"]:
-                d = d[
-                    d["Fonte_Relacao"].isin(st.session_state["mem_nl_fonte"])
-                ]
+                d = d[d["Fonte_Relacao"].isin(st.session_state["mem_nl_fonte"])]
 
             # Objeto
             if not ign_obj and st.session_state["mem_nl_objetos"]:
@@ -4218,212 +4301,204 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
             return d
 
-        # CALCULAR OPÇÕES DINÂMICAS TELA NL
-        if tipo_periodo == "Por Mês de Competência":
-            df_para_per = filtrar_df_nl(df_base, ign_per=True)
-            comps_unicas = df_para_per["Competencia"].dropna().astype(str).unique() if not df_para_per.empty else []
-            comps = sorted(
-                [
-                    c
-                    for c in comps_unicas
-                    if c.strip() not in ["Não informada", "nan", "None", ""]
-                ],
-                key=lambda competencia: pd.to_datetime(
-                    f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
-                ),
+        def exibir_competencia_nl(competencia):
+            data_competencia = pd.to_datetime(
+                f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
             )
-
-            def exibir_competencia_nl(competencia):
-                data_competencia = pd.to_datetime(
-                    f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
-                )
-                if pd.isna(data_competencia):
-                    return competencia
-                nomes_meses = [
-                    "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
-                    "Jul", "Ago", "Set", "Out", "Nov", "Dez",
-                ]
-                return f"{nomes_meses[data_competencia.month - 1]}/{data_competencia.year}"
-
-            validos_comp_nl = [
-                c for c in st.session_state["mem_nl_comps"] if c in comps
+            if pd.isna(data_competencia):
+                return competencia
+            nomes_meses = [
+                "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+                "Jul", "Ago", "Set", "Out", "Nov", "Dez",
             ]
+            return f"{nomes_meses[data_competencia.month - 1]}/{data_competencia.year}"
 
-            comp_sel = st.sidebar.multiselect(
-                "Filtrar Período de Competência:",
-                options=comps,
-                default=validos_comp_nl,
-                format_func=exibir_competencia_nl,
-                placeholder="Selecione as opções",
-                key="w_nl_comps",
-                on_change=sincronizar_filtro,
-                args=("mem_nl_comps", "w_nl_comps"),
+        # Opções calculadas somente sobre o conjunto atualmente aplicado.
+        df_para_per = filtrar_df_nl(df_base, ign_per=True)
+        comps_unicas = (
+            df_para_per["Competencia"].dropna().astype(str).unique()
+            if not df_para_per.empty else []
+        )
+        comps = sorted(
+            [c for c in comps_unicas if c.strip() not in ["Não informada", "nan", "None", ""]],
+            key=lambda competencia: pd.to_datetime(
+                f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
+            ),
+        )
+
+        opcoes_grp_nl = ["GD1", "GD3", "GD4"]
+        df_para_sts = filtrar_df_nl(df_base, ign_sts=True)
+        statuses = sorted([
+            s for s in df_para_sts["Status_Filtro"].unique() if s != "Todos"
+        ]) if not df_para_sts.empty else []
+        opcoes_sts_nl = ["Todos"] + statuses
+
+        df_para_cred = filtrar_df_nl(df_base, ign_cred=True)
+        credores = sorted(df_para_cred["Credor_Tratado"].unique()) if not df_para_cred.empty else []
+
+        df_para_fnt = filtrar_df_nl(df_base, ign_fnt=True)
+        fontes = sorted([
+            f for f in df_para_fnt["Fonte_Relacao"].unique() if f != "NÃO INFORMADA"
+        ]) if not df_para_fnt.empty else []
+
+        df_para_obj = filtrar_df_nl(df_base, ign_obj=True)
+        objetos = sorted([
+            o for o in df_para_obj["Objeto_Relacao"].unique() if o != "NÃO INFORMADO"
+        ]) if not df_para_obj.empty else []
+
+        validos_comp_nl = [c for c in st.session_state["mem_nl_comps"] if c in comps]
+        grupos_validos_nl = [g for g in st.session_state["mem_nl_grupo"] if g in opcoes_grp_nl]
+        validos_c_nl = [c for c in st.session_state["mem_nl_credores"] if c in credores]
+        validas_f_nl = [f for f in st.session_state["mem_nl_fonte"] if f in fontes]
+        validos_obj_nl = [o for o in st.session_state["mem_nl_objetos"] if o in objetos]
+        status_aplicado_nl = (
+            st.session_state["mem_nl_status"]
+            if st.session_state["mem_nl_status"] in opcoes_sts_nl else "Todos"
+        )
+
+        datas_nl_validas = pd.to_datetime(df_base["Data_DT"], errors="coerce").dropna()
+        data_min_nl = datas_nl_validas.min().date() if not datas_nl_validas.empty else datetime.date(2026, 1, 1)
+        data_max_nl = datas_nl_validas.max().date() if not datas_nl_validas.empty else datetime.date(2026, 12, 31)
+
+        def ajustar_data_nl(valor, padrao):
+            data = pd.to_datetime(valor, errors="coerce")
+            if pd.isna(data):
+                return padrao
+            data = data.date()
+            return min(max(data, data_min_nl), data_max_nl)
+
+        data_ini_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_ini"), data_min_nl)
+        data_fim_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_fim"), data_max_nl)
+        if data_ini_padrao > data_fim_padrao:
+            data_ini_padrao, data_fim_padrao = data_min_nl, data_max_nl
+
+        def limpar_filtros_nl():
+            st.session_state["mem_nl_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["mem_nl_comps"] = []
+            st.session_state["mem_nl_datas"] = None
+            st.session_state["mem_nl_dt_ini"] = None
+            st.session_state["mem_nl_dt_fim"] = None
+            st.session_state["mem_nl_grupo"] = []
+            st.session_state["mem_nl_status"] = "Todos"
+            st.session_state["mem_nl_credores"] = []
+            st.session_state["mem_nl_fonte"] = []
+            st.session_state["mem_nl_objetos"] = []
+            st.session_state["w_nl_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["w_nl_comps"] = []
+            st.session_state["w_nl_dt_ini"] = data_min_nl
+            st.session_state["w_nl_dt_fim"] = data_max_nl
+            st.session_state["w_nl_grupo"] = []
+            st.session_state["w_nl_status"] = "Todos"
+            st.session_state["w_nl_credores"] = []
+            st.session_state["w_nl_fonte"] = []
+            st.session_state["w_nl_objetos"] = []
+
+        # O formulário elimina o rerun a cada seleção do multiselect.
+        with st.sidebar.form("form_filtros_nl", border=False):
+            tipo_periodo = st.radio(
+                "Como deseja filtrar o período?",
+                options=["Por Mês de Competência", "Por Intervalo de Datas"],
+                index=(0 if st.session_state["mem_nl_tipo_periodo"] == "Por Mês de Competência" else 1),
+                key="w_nl_tipo_periodo",
             )
-        else:
-            datas_nl_validas = pd.to_datetime(
-                df_base["Data_DT"], errors="coerce"
-            ).dropna()
 
-            if datas_nl_validas.empty:
-                st.sidebar.info("Não há datas válidas para filtrar.")
+            comp_sel = list(validos_comp_nl)
+            data_ini_nl = data_ini_padrao
+            data_fim_nl = data_fim_padrao
+
+            if tipo_periodo == "Por Mês de Competência":
+                comp_sel = st.multiselect(
+                    "Filtrar Período de Competência:",
+                    options=comps,
+                    default=validos_comp_nl,
+                    format_func=exibir_competencia_nl,
+                    placeholder="Selecione as opções",
+                    key="w_nl_comps",
+                )
             else:
-                data_min_nl = datas_nl_validas.min().date()
-                data_max_nl = datas_nl_validas.max().date()
-
-                def ajustar_data_nl(valor, padrao):
-                    data = pd.to_datetime(valor, errors="coerce")
-                    if pd.isna(data):
-                        return padrao
-                    data = data.date()
-                    return min(max(data, data_min_nl), data_max_nl)
-
-                data_ini_padrao = ajustar_data_nl(
-                    st.session_state.get("mem_nl_dt_ini"), data_min_nl
-                )
-                data_fim_padrao = ajustar_data_nl(
-                    st.session_state.get("mem_nl_dt_fim"), data_max_nl
-                )
-                if data_ini_padrao > data_fim_padrao:
-                    data_ini_padrao = data_min_nl
-                    data_fim_padrao = data_max_nl
-
-                col_ini_nl, col_fim_nl = st.sidebar.columns(2)
+                col_ini_nl, col_fim_nl = st.columns(2)
                 with col_ini_nl:
                     data_ini_nl = st.date_input(
-                        "Data Inicial:",
-                        value=data_ini_padrao,
-                        min_value=data_min_nl,
-                        max_value=data_max_nl,
-                        format="DD/MM/YYYY",
-                        key="w_nl_dt_ini",
-                        on_change=sincronizar_filtro,
-                        args=("mem_nl_dt_ini", "w_nl_dt_ini"),
+                        "Data Inicial:", value=data_ini_padrao,
+                        min_value=data_min_nl, max_value=data_max_nl,
+                        format="DD/MM/YYYY", key="w_nl_dt_ini",
                     )
                 with col_fim_nl:
                     data_fim_nl = st.date_input(
-                        "Data Final:",
-                        value=data_fim_padrao,
-                        min_value=data_min_nl,
-                        max_value=data_max_nl,
-                        format="DD/MM/YYYY",
-                        key="w_nl_dt_fim",
-                        on_change=sincronizar_filtro,
-                        args=("mem_nl_dt_fim", "w_nl_dt_fim"),
+                        "Data Final:", value=data_fim_padrao,
+                        min_value=data_min_nl, max_value=data_max_nl,
+                        format="DD/MM/YYYY", key="w_nl_dt_fim",
                     )
 
+            st.divider()
+            grupos_sel_nl = st.multiselect(
+                "Filtrar por Grupo:",
+                options=opcoes_grp_nl,
+                default=grupos_validos_nl,
+                placeholder="Todos os grupos (Exibe tudo)",
+                key="w_nl_grupo",
+            )
+
+            status_sel = st.selectbox(
+                "Filtrar por Status:",
+                options=opcoes_sts_nl,
+                index=opcoes_sts_nl.index(status_aplicado_nl),
+                key="w_nl_status",
+            )
+
+            st.divider()
+            credor_sel = st.multiselect(
+                "Filtrar por Entidade / Credor:",
+                options=credores,
+                default=validos_c_nl,
+                placeholder="Selecione as opções",
+                key="w_nl_credores",
+            )
+
+            st.divider()
+            fontes_selecionadas_nl = st.multiselect(
+                "Filtrar por Fonte de Recurso:",
+                options=fontes,
+                default=validas_f_nl,
+                placeholder="Todas as fontes (Exibe tudo)",
+                key="w_nl_fonte",
+            )
+
+            st.divider()
+            objeto_sel = st.multiselect(
+                "Filtrar por Objeto de Despesa:",
+                options=objetos,
+                default=validos_obj_nl,
+                placeholder="Todos os objetos",
+                key="w_nl_objetos",
+            )
+
+            col_aplicar_nl, col_limpar_nl = st.columns(2, gap="small")
+            with col_aplicar_nl:
+                aplicar_nl = st.form_submit_button(
+                    "✅ Aplicar filtros", use_container_width=True, type="primary"
+                )
+            with col_limpar_nl:
+                limpar_nl = st.form_submit_button(
+                    "🧹 Limpar filtros", use_container_width=True,
+                    on_click=limpar_filtros_nl,
+                )
+
+        if aplicar_nl:
+            if tipo_periodo == "Por Intervalo de Datas" and data_ini_nl > data_fim_nl:
+                st.sidebar.error("A data inicial deve ser anterior ou igual à data final.")
+            else:
+                st.session_state["mem_nl_tipo_periodo"] = tipo_periodo
+                st.session_state["mem_nl_comps"] = list(comp_sel)
+                st.session_state["mem_nl_dt_ini"] = data_ini_nl
+                st.session_state["mem_nl_dt_fim"] = data_fim_nl
                 st.session_state["mem_nl_datas"] = (data_ini_nl, data_fim_nl)
-                if data_ini_nl > data_fim_nl:
-                    st.sidebar.error(
-                        "A data inicial deve ser anterior ou igual à data final."
-                    )
-
-        st.sidebar.divider()
-
-        # FILTRO DE GRUPO
-        opcoes_grp_nl = ["GD1", "GD3", "GD4"]
-        grupos_validos_nl = [
-            grupo
-            for grupo in st.session_state["mem_nl_grupo"]
-            if grupo in opcoes_grp_nl
-        ]
-        st.sidebar.multiselect(
-            "Filtrar por Grupo:",
-            options=opcoes_grp_nl,
-            default=grupos_validos_nl,
-            placeholder="Todos os grupos (Exibe tudo)",
-            key="w_nl_grupo",
-            on_change=sincronizar_filtro,
-            args=("mem_nl_grupo", "w_nl_grupo"),
-        )
-
-        # STATUS DINÂMICO
-        df_para_sts = filtrar_df_nl(df_base, ign_sts=True)
-        statuses = sorted(
-            [s for s in df_para_sts["Status_Filtro"].unique() if s != "Todos"]
-        ) if not df_para_sts.empty else []
-        opcoes_sts_nl = ["Todos"] + statuses
-        idx_sts_nl = (
-            opcoes_sts_nl.index(st.session_state["mem_nl_status"])
-            if st.session_state["mem_nl_status"] in opcoes_sts_nl
-            else 0
-        )
-        status_sel = st.sidebar.selectbox(
-            "Filtrar por Status:",
-            options=opcoes_sts_nl,
-            index=idx_sts_nl,
-            key="w_nl_status",
-            on_change=sincronizar_filtro,
-            args=("mem_nl_status", "w_nl_status"),
-        )
-
-        st.sidebar.divider()
-
-        # CREDORES DINÂMICOS
-        df_para_cred = filtrar_df_nl(df_base, ign_cred=True)
-        credores = sorted(df_para_cred["Credor_Tratado"].unique()) if not df_para_cred.empty else []
-        validos_c_nl = [
-            c for c in st.session_state["mem_nl_credores"] if c in credores
-        ]
-        credor_sel = st.sidebar.multiselect(
-            "Filtrar por Entidade / Credor:",
-            options=credores,
-            default=validos_c_nl,
-            placeholder="Selecione as opções",
-            key="w_nl_credores",
-            on_change=sincronizar_filtro,
-            args=("mem_nl_credores", "w_nl_credores"),
-        )
-
-        st.sidebar.divider()
-
-        # FONTES DINÂMICAS
-        df_para_fnt = filtrar_df_nl(df_base, ign_fnt=True)
-        fontes = sorted(
-            [
-                f
-                for f in df_para_fnt["Fonte_Relacao"].unique()
-                if f != "NÃO INFORMADA"
-            ]
-        ) if not df_para_fnt.empty else []
-        validas_f_nl = [
-            fonte
-            for fonte in st.session_state["mem_nl_fonte"]
-            if fonte in fontes
-        ]
-        fontes_selecionadas_nl = st.sidebar.multiselect(
-            "Filtrar por Fonte de Recurso:",
-            options=fontes,
-            default=validas_f_nl,
-            placeholder="Todas as fontes (Exibe tudo)",
-            key="w_nl_fonte",
-            on_change=sincronizar_filtro,
-            args=("mem_nl_fonte", "w_nl_fonte"),
-        )
-
-        st.sidebar.divider()
-
-        # OBJETOS DINÂMICOS
-        df_para_obj = filtrar_df_nl(df_base, ign_obj=True)
-        objetos = sorted(
-            [
-                o
-                for o in df_para_obj["Objeto_Relacao"].unique()
-                if o != "NÃO INFORMADO"
-            ]
-        ) if not df_para_obj.empty else []
-        
-        validos_obj_nl = [
-            o for o in st.session_state["mem_nl_objetos"] if o in objetos
-        ]
-        objeto_sel = st.sidebar.multiselect(
-            "Filtrar por Objeto de Despesa:",
-            options=objetos,
-            default=validos_obj_nl,
-            placeholder="Todos os objetos",
-            key="w_nl_objetos",
-            on_change=sincronizar_filtro,
-            args=("mem_nl_objetos", "w_nl_objetos"),
-        )
+                st.session_state["mem_nl_grupo"] = list(grupos_sel_nl)
+                st.session_state["mem_nl_status"] = status_sel
+                st.session_state["mem_nl_credores"] = list(credor_sel)
+                st.session_state["mem_nl_fonte"] = list(fontes_selecionadas_nl)
+                st.session_state["mem_nl_objetos"] = list(objeto_sel)
+                st.rerun()
 
         st.sidebar.divider()
 
@@ -4634,69 +4709,171 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
         data_min_pd = dados_pd["Data Emissão"].dropna().min()
         data_max_pd = dados_pd["Data Emissão"].dropna().max()
 
-        if pd.notna(data_min_pd) and pd.notna(data_max_pd):
-            intervalo_padrao_pd = (data_min_pd.date(), data_max_pd.date())
-            intervalo_pd = st.sidebar.date_input(
-                "Período de emissão",
-                value=intervalo_padrao_pd,
-                format="DD/MM/YYYY",
-                key="filtro_pd_periodo",
-            )
-        else:
-            intervalo_pd = None
-
         def opcoes_pd(df, coluna):
             return sorted(
                 valor for valor in df[coluna].dropna().astype(str).unique()
                 if valor and valor.upper() != "NÃO INFORMADO"
             )
 
-        filtro_ug_pd = st.sidebar.multiselect(
-            "UG pagadora", opcoes_pd(dados_pd, "UG Pagadora"),
-            key="filtro_pd_ug",
-        )
-        filtro_fonte_pd = st.sidebar.multiselect(
-            "Fonte de recurso", opcoes_pd(dados_pd, "Fonte"),
-            key="filtro_pd_fonte",
-        )
-        filtro_gd_pd = st.sidebar.multiselect(
-            "GD", opcoes_pd(dados_pd, "GD"), key="filtro_pd_gd",
-        )
-        filtro_despesa_pd = st.sidebar.multiselect(
-            "Natureza da despesa", opcoes_pd(dados_pd, "Despesa"),
-            key="filtro_pd_despesa",
-        )
-        filtro_objeto_pd = st.sidebar.multiselect(
-            "Objeto da despesa", opcoes_pd(dados_pd, "Objeto da Despesa"),
-            key="filtro_pd_objeto",
-        )
-        filtro_credor_pd = st.sidebar.multiselect(
-            "Credor", opcoes_pd(dados_pd, "Nome do Credor"),
-            key="filtro_pd_credor",
-        )
-        filtro_status_pd = st.sidebar.multiselect(
-            "Status", opcoes_pd(dados_pd, "Status"), key="filtro_pd_status",
-        )
+        # Filtro PD baseado somente na memória APLICADA. Isso permite que cada
+        # lista seja recalculada em cascata apenas depois do botão Aplicar.
+        def filtrar_df_pd(df, ign_per=False, ign_ug=False, ign_fonte=False,
+                         ign_gd=False, ign_despesa=False, ign_objeto=False,
+                         ign_credor=False, ign_status=False):
+            d = df.copy()
+            if d.empty:
+                return d
+
+            periodo = st.session_state.get("mem_pd_periodo")
+            if not ign_per and isinstance(periodo, (tuple, list)) and len(periodo) == 2:
+                inicio, fim = periodo
+                datas = pd.to_datetime(d["Data Emissão"], errors="coerce").dt.date
+                d = d[(datas >= inicio) & (datas <= fim)]
+
+            filtros = [
+                ("UG Pagadora", "mem_pd_ug", ign_ug),
+                ("Fonte", "mem_pd_fonte", ign_fonte),
+                ("GD", "mem_pd_gd", ign_gd),
+                ("Despesa", "mem_pd_despesa", ign_despesa),
+                ("Objeto da Despesa", "mem_pd_objeto", ign_objeto),
+                ("Nome do Credor", "mem_pd_credor", ign_credor),
+                ("Status", "mem_pd_status", ign_status),
+            ]
+            for coluna, chave, ignorar in filtros:
+                selecionados = st.session_state.get(chave, [])
+                if not ignorar and selecionados:
+                    d = d[d[coluna].astype(str).isin(selecionados)]
+            return d
+
+        intervalo_padrao_pd = None
+        if pd.notna(data_min_pd) and pd.notna(data_max_pd):
+            minimo_pd = data_min_pd.date()
+            maximo_pd = data_max_pd.date()
+            periodo_mem = st.session_state.get("mem_pd_periodo")
+            if isinstance(periodo_mem, (tuple, list)) and len(periodo_mem) == 2:
+                p_ini = min(max(periodo_mem[0], minimo_pd), maximo_pd)
+                p_fim = min(max(periodo_mem[1], minimo_pd), maximo_pd)
+                intervalo_padrao_pd = (p_ini, p_fim) if p_ini <= p_fim else (minimo_pd, maximo_pd)
+            else:
+                intervalo_padrao_pd = (minimo_pd, maximo_pd)
+
+        opcoes_ug_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_ug=True), "UG Pagadora")
+        opcoes_fonte_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_fonte=True), "Fonte")
+        opcoes_gd_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_gd=True), "GD")
+        opcoes_despesa_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_despesa=True), "Despesa")
+        opcoes_objeto_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_objeto=True), "Objeto da Despesa")
+        opcoes_credor_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_credor=True), "Nome do Credor")
+        opcoes_status_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_status=True), "Status")
+
+        def validos_pd(chave, opcoes):
+            return [v for v in st.session_state.get(chave, []) if v in opcoes]
+
+        def limpar_filtros_pd():
+            st.session_state["mem_pd_periodo"] = None
+            st.session_state["mem_pd_ug"] = []
+            st.session_state["mem_pd_fonte"] = []
+            st.session_state["mem_pd_gd"] = []
+            st.session_state["mem_pd_despesa"] = []
+            st.session_state["mem_pd_objeto"] = []
+            st.session_state["mem_pd_credor"] = []
+            st.session_state["mem_pd_status"] = []
+            if intervalo_padrao_pd is not None:
+                st.session_state["filtro_pd_dt_ini"] = intervalo_padrao_pd[0]
+                st.session_state["filtro_pd_dt_fim"] = intervalo_padrao_pd[1]
+            st.session_state["filtro_pd_ug"] = []
+            st.session_state["filtro_pd_fonte"] = []
+            st.session_state["filtro_pd_gd"] = []
+            st.session_state["filtro_pd_despesa"] = []
+            st.session_state["filtro_pd_objeto"] = []
+            st.session_state["filtro_pd_credor"] = []
+            st.session_state["filtro_pd_status"] = []
+
+        with st.sidebar.form("form_filtros_pd", border=False):
+            if intervalo_padrao_pd is not None:
+                col_ini_pd, col_fim_pd = st.columns(2)
+                with col_ini_pd:
+                    data_inicio_pd = st.date_input(
+                        "Data Inicial:",
+                        value=intervalo_padrao_pd[0],
+                        min_value=minimo_pd,
+                        max_value=maximo_pd,
+                        format="DD/MM/YYYY",
+                        key="filtro_pd_dt_ini",
+                    )
+                with col_fim_pd:
+                    data_fim_pd = st.date_input(
+                        "Data Final:",
+                        value=intervalo_padrao_pd[1],
+                        min_value=minimo_pd,
+                        max_value=maximo_pd,
+                        format="DD/MM/YYYY",
+                        key="filtro_pd_dt_fim",
+                    )
+            else:
+                data_inicio_pd, data_fim_pd = None, None
+
+            filtro_ug_pd = st.multiselect(
+                "UG pagadora", opcoes_ug_pd,
+                default=validos_pd("mem_pd_ug", opcoes_ug_pd), key="filtro_pd_ug",
+            )
+            filtro_fonte_pd = st.multiselect(
+                "Fonte de recurso", opcoes_fonte_pd,
+                default=validos_pd("mem_pd_fonte", opcoes_fonte_pd), key="filtro_pd_fonte",
+            )
+            filtro_gd_pd = st.multiselect(
+                "GD", opcoes_gd_pd,
+                default=validos_pd("mem_pd_gd", opcoes_gd_pd), key="filtro_pd_gd",
+            )
+            filtro_despesa_pd = st.multiselect(
+                "Natureza da despesa", opcoes_despesa_pd,
+                default=validos_pd("mem_pd_despesa", opcoes_despesa_pd), key="filtro_pd_despesa",
+            )
+            filtro_objeto_pd = st.multiselect(
+                "Objeto da despesa", opcoes_objeto_pd,
+                default=validos_pd("mem_pd_objeto", opcoes_objeto_pd), key="filtro_pd_objeto",
+            )
+            filtro_credor_pd = st.multiselect(
+                "Credor", opcoes_credor_pd,
+                default=validos_pd("mem_pd_credor", opcoes_credor_pd), key="filtro_pd_credor",
+            )
+            filtro_status_pd = st.multiselect(
+                "Status", opcoes_status_pd,
+                default=validos_pd("mem_pd_status", opcoes_status_pd), key="filtro_pd_status",
+            )
+
+            col_aplicar_pd, col_limpar_pd = st.columns(2, gap="small")
+            with col_aplicar_pd:
+                aplicar_pd = st.form_submit_button(
+                    "✅ Aplicar filtros", use_container_width=True, type="primary"
+                )
+            with col_limpar_pd:
+                limpar_pd = st.form_submit_button(
+                    "🧹 Limpar filtros", use_container_width=True,
+                    on_click=limpar_filtros_pd,
+                )
+
+        if aplicar_pd:
+            if data_inicio_pd is not None and data_fim_pd is not None:
+                if data_inicio_pd > data_fim_pd:
+                    st.sidebar.error("A data inicial deve ser anterior ou igual à data final.")
+                    st.stop()
+                st.session_state["mem_pd_periodo"] = (data_inicio_pd, data_fim_pd)
+            else:
+                st.session_state["mem_pd_periodo"] = None
+            st.session_state["mem_pd_ug"] = list(filtro_ug_pd)
+            st.session_state["mem_pd_fonte"] = list(filtro_fonte_pd)
+            st.session_state["mem_pd_gd"] = list(filtro_gd_pd)
+            st.session_state["mem_pd_despesa"] = list(filtro_despesa_pd)
+            st.session_state["mem_pd_objeto"] = list(filtro_objeto_pd)
+            st.session_state["mem_pd_credor"] = list(filtro_credor_pd)
+            st.session_state["mem_pd_status"] = list(filtro_status_pd)
+            st.rerun()
+
+        filtrado_pd = filtrar_df_pd(dados_pd)
+
         if st.sidebar.button("🔄 Atualizar dados de PD", key="atualizar_pd"):
             carregar_dados_pd.clear()
             st.rerun()
-
-        filtrado_pd = dados_pd.copy()
-        if isinstance(intervalo_pd, (tuple, list)) and len(intervalo_pd) == 2:
-            inicio_pd, fim_pd = intervalo_pd
-            datas_pd = filtrado_pd["Data Emissão"].dt.date
-            filtrado_pd = filtrado_pd[(datas_pd >= inicio_pd) & (datas_pd <= fim_pd)]
-        for coluna, selecionados in {
-            "UG Pagadora": filtro_ug_pd,
-            "Fonte": filtro_fonte_pd,
-            "GD": filtro_gd_pd,
-            "Despesa": filtro_despesa_pd,
-            "Objeto da Despesa": filtro_objeto_pd,
-            "Nome do Credor": filtro_credor_pd,
-            "Status": filtro_status_pd,
-        }.items():
-            if selecionados:
-                filtrado_pd = filtrado_pd[filtrado_pd[coluna].isin(selecionados)]
 
         @st.dialog("Gerar Relatório de Programa de Desembolso")
         def janela_relatorio_pd():
@@ -5121,47 +5298,62 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
 
                 st.sidebar.markdown("#### 🔎 Filtros — Relatório 009717")
 
-                status_sel_009717 = st.sidebar.multiselect(
-                    "Status do pagamento",
-                    options=status_disponiveis_009717,
-                    default=[],
-                    placeholder="Todos",
-                    key="filtro_status_009717",
-                )
+                with st.sidebar.form("form_filtros_009717", border=False):
+                    status_sel_009717 = st.multiselect(
+                        "Status do pagamento",
+                        options=status_disponiveis_009717,
+                        default=[],
+                        placeholder="Todos",
+                        key="filtro_status_009717",
+                    )
 
-                st.sidebar.divider()
+                    st.divider()
+                    fonte_sel_009717 = st.multiselect(
+                        "Fonte",
+                        options=fontes_disponiveis_009717,
+                        default=[],
+                        placeholder="Todas",
+                        key="filtro_fonte_009717",
+                    )
 
-                fonte_sel_009717 = st.sidebar.multiselect(
-                    "Fonte",
-                    options=fontes_disponiveis_009717,
-                    default=[],
-                    placeholder="Todas",
-                    key="filtro_fonte_009717",
-                )
+                    st.divider()
+                    credor_sel_009717 = st.multiselect(
+                        "Credor",
+                        options=credores_disponiveis_009717,
+                        default=[],
+                        placeholder="Todos",
+                        key="filtro_credor_009717",
+                    )
 
-                st.sidebar.divider()
+                    st.divider()
+                    natureza_sel_009717 = st.multiselect(
+                        "Natureza",
+                        options=naturezas_disponiveis_009717,
+                        default=[],
+                        placeholder="Todas",
+                        key="filtro_natureza_009717",
+                    )
 
-                credor_sel_009717 = st.sidebar.multiselect(
-                    "Credor",
-                    options=credores_disponiveis_009717,
-                    default=[],
-                    placeholder="Todos",
-                    key="filtro_credor_009717",
-                )
+                    col_aplicar_009717, col_limpar_009717 = st.columns(2, gap="small")
+                    with col_aplicar_009717:
+                        aplicar_009717 = st.form_submit_button(
+                            "✅ Aplicar filtros", use_container_width=True, type="primary"
+                        )
+                    with col_limpar_009717:
+                        limpar_009717 = st.form_submit_button(
+                            "🧹 Limpar filtros", use_container_width=True
+                        )
 
-                st.sidebar.divider()
+                if limpar_009717:
+                    for _chave in [
+                        "filtro_status_009717", "filtro_fonte_009717",
+                        "filtro_credor_009717", "filtro_natureza_009717",
+                    ]:
+                        st.session_state.pop(_chave, None)
+                    st.rerun()
 
-                natureza_sel_009717 = st.sidebar.multiselect(
-                    "Natureza",
-                    options=naturezas_disponiveis_009717,
-                    default=[],
-                    placeholder="Todas",
-                    key="filtro_natureza_009717",
-                )
-
-                st.sidebar.divider()
                 st.sidebar.caption(
-                    "Os cards e a tabela respondem aos filtros selecionados."
+                    "Os cards e a tabela respondem aos filtros aplicados."
                 )
 
                 df_filtrado_009717 = df_exec_009717.copy()
@@ -5788,29 +5980,51 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
             mes_memoria if mes_memoria in meses_programacao else meses_programacao[0]
         )
     st.sidebar.markdown("#### 🎯 Planejamento semanal — Fonte 500")
-    grupos_consulta = st.sidebar.multiselect(
-        "Grupos",
-        grupos_500,
-        key="grupos_planejamento_nl",
-        placeholder="Todos os grupos",
-        on_change=sincronizar_filtro,
-        args=("mem_plan_grupos", "grupos_planejamento_nl"),
-    )
-    tipos_nl_consulta = st.sidebar.multiselect(
-        "Tipos de NL",
-        tipos_nl_500,
-        key="tipos_nl_planejamento_nl",
-        placeholder="Todos os tipos de NL",
-        on_change=sincronizar_filtro,
-        args=("mem_plan_tipos_nl", "tipos_nl_planejamento_nl"),
-    )
-    mes_planejado = st.sidebar.selectbox(
-        "Mês para programar as semanas",
-        meses_programacao,
-        key="mes_planejamento_semana_nl",
-        on_change=sincronizar_filtro,
-        args=("mem_plan_mes_programacao", "mes_planejamento_semana_nl"),
-    )
+    with st.sidebar.form("form_planejamento_semanal_500", border=False):
+        grupos_consulta = st.multiselect(
+            "Grupos",
+            grupos_500,
+            key="grupos_planejamento_nl",
+            placeholder="Todos os grupos",
+        )
+        tipos_nl_consulta = st.multiselect(
+            "Tipos de NL",
+            tipos_nl_500,
+            key="tipos_nl_planejamento_nl",
+            placeholder="Todos os tipos de NL",
+        )
+        mes_planejado = st.selectbox(
+            "Mês para programar as semanas",
+            meses_programacao,
+            key="mes_planejamento_semana_nl",
+        )
+        col_aplicar_plan_500, col_limpar_plan_500 = st.columns(2, gap="small")
+        with col_aplicar_plan_500:
+            aplicar_plan_500 = st.form_submit_button(
+                "✅ Aplicar filtros", use_container_width=True, type="primary"
+            )
+        with col_limpar_plan_500:
+            limpar_plan_500 = st.form_submit_button(
+                "🧹 Limpar filtros", use_container_width=True
+            )
+
+    if limpar_plan_500:
+        st.session_state["mem_plan_grupos"] = []
+        st.session_state["mem_plan_tipos_nl"] = []
+        st.session_state["mem_plan_mes_programacao"] = datetime.date.today().strftime("%m/%Y")
+        for _chave in [
+            "grupos_planejamento_nl", "tipos_nl_planejamento_nl",
+            "mes_planejamento_semana_nl",
+        ]:
+            st.session_state.pop(_chave, None)
+        st.rerun()
+
+    if aplicar_plan_500:
+        st.session_state["mem_plan_grupos"] = list(grupos_consulta)
+        st.session_state["mem_plan_tipos_nl"] = list(tipos_nl_consulta)
+        st.session_state["mem_plan_mes_programacao"] = mes_planejado
+        st.rerun()
+
     grupos_aplicados = grupos_consulta if grupos_consulta else grupos_500
     tipos_nl_aplicados = tipos_nl_consulta if tipos_nl_consulta else tipos_nl_500
     grupo_planejado = " + ".join(grupos_aplicados)
@@ -7187,10 +7401,25 @@ elif st.session_state["tela_atual"] == "Planejar Priorização":
     objetos_planejamento = sorted(dados_planejamento["Objeto"].dropna().astype(str).unique())
 
     st.sidebar.markdown("#### 🎯 Filtros — Planejamento NL")
-    filtro_mes_plan = st.sidebar.multiselect("Mês de referência", meses_planejamento, key="plan_meses")
-    filtro_fonte_plan = st.sidebar.multiselect("Fonte de recurso", fontes_planejamento, key="plan_fontes")
-    filtro_grupo_plan = st.sidebar.multiselect("Grupo", grupos_planejamento, key="plan_grupos")
-    filtro_objeto_plan = st.sidebar.multiselect("Objeto da despesa", objetos_planejamento, key="plan_objetos")
+    with st.sidebar.form("form_filtros_planejamento_nl", border=False):
+        filtro_mes_plan = st.multiselect("Mês de referência", meses_planejamento, key="plan_meses")
+        filtro_fonte_plan = st.multiselect("Fonte de recurso", fontes_planejamento, key="plan_fontes")
+        filtro_grupo_plan = st.multiselect("Grupo", grupos_planejamento, key="plan_grupos")
+        filtro_objeto_plan = st.multiselect("Objeto da despesa", objetos_planejamento, key="plan_objetos")
+        col_aplicar_plan, col_limpar_plan = st.columns(2, gap="small")
+        with col_aplicar_plan:
+            aplicar_plan = st.form_submit_button(
+                "✅ Aplicar filtros", use_container_width=True, type="primary"
+            )
+        with col_limpar_plan:
+            limpar_plan = st.form_submit_button(
+                "🧹 Limpar filtros", use_container_width=True
+            )
+
+    if limpar_plan:
+        for _chave in ["plan_meses", "plan_fontes", "plan_grupos", "plan_objetos"]:
+            st.session_state.pop(_chave, None)
+        st.rerun()
 
     realizado = dados_planejamento.copy()
     if filtro_mes_plan:
