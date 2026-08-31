@@ -892,95 +892,226 @@ def renderizar_tabela_resumo_pd(df, coluna_descricao, titulo_descricao):
 
 
 def gerar_relatorio_pd_excel(df_filtrado):
-    """Gera o relatório de PD já filtrado, com base e consolidados auditáveis."""
+    """Preenche o modelo oficial de PD sem remover as tabelas dinâmicas nativas."""
     if df_filtrado.empty:
         raise ValueError("Não há PDs para exportar com os filtros selecionados.")
 
-    colunas_base = [
-        "Número PD", "Data Emissão", "UG Pagadora", "Nome do Credor", "GD",
-        "Fonte", "Despesa", "Objeto da Despesa", "Tipo de OB", "Status", "Valor",
-    ]
-    base = df_filtrado.reindex(columns=colunas_base).copy()
-    base["Data Emissão"] = pd.to_datetime(base["Data Emissão"], errors="coerce")
-    base["Valor"] = pd.to_numeric(base["Valor"], errors="coerce").fillna(0.0)
-    base = base.sort_values(["Nome do Credor", "Data Emissão", "Número PD"], na_position="last")
+    try:
+        from openpyxl import load_workbook
+    except ModuleNotFoundError as erro:
+        raise ModuleNotFoundError(
+            "O pacote openpyxl não está instalado. Execute: pip install -r requirements.txt"
+        ) from erro
 
-    def consolidar(coluna, titulo):
-        resumo = (
-            base.groupby(coluna, dropna=False, as_index=False)["Valor"].sum()
-            .sort_values("Valor", ascending=False)
+    # O arquivo modelo possui uma aba-base com sete colunas. Essa base alimenta
+    # as tabelas dinâmicas da aba Tabela_Dinâmica, portanto o modelo precisa ser
+    # aberto e preenchido em vez de criarmos um novo Excel do zero.
+    def normalizar_nome_coluna(valor):
+        texto = unicodedata.normalize("NFKD", str(valor or ""))
+        texto = "".join(
+            caractere for caractere in texto
+            if not unicodedata.combining(caractere)
         )
-        resumo.columns = [titulo, "Valor total"]
-        total = pd.DataFrame([{titulo: "TOTAL GERAL", "Valor total": resumo["Valor total"].sum()}])
-        return pd.concat([resumo, total], ignore_index=True)
+        return re.sub(r"[^a-z0-9]+", "", texto.lower())
 
-    resumo_credor = consolidar("Nome do Credor", "Credor")
-    resumo_ug = consolidar("UG Pagadora", "UG pagadora")
-    resumo_fonte = consolidar("Fonte", "Fonte")
-    resumo_gd = consolidar("GD", "GD")
+    def localizar_coluna(*opcoes):
+        colunas_normalizadas = {
+            normalizar_nome_coluna(coluna): coluna
+            for coluna in df_filtrado.columns
+        }
+        for opcao in opcoes:
+            coluna = colunas_normalizadas.get(normalizar_nome_coluna(opcao))
+            if coluna is not None:
+                return coluna
+        return None
+
+    def serie_texto(coluna, padrao=""):
+        if coluna is None:
+            return pd.Series(padrao, index=df_filtrado.index, dtype="object")
+        return df_filtrado[coluna].fillna(padrao).astype(str).str.strip()
+
+    def serie_numero(coluna):
+        if coluna is None:
+            return pd.Series(0.0, index=df_filtrado.index, dtype="float64")
+        valores = df_filtrado[coluna]
+        if pd.api.types.is_numeric_dtype(valores):
+            return pd.to_numeric(valores, errors="coerce").fillna(0.0)
+        return converter_valor_monetario(valores).fillna(0.0)
+
+    coluna_credor = localizar_coluna(
+        "Nome do Credor", "Credor_Tratado", "Credor",
+        "Entidade / Credor", "Entidade"
+    )
+    coluna_objeto = localizar_coluna(
+        "Objeto da Despesa", "Objeto Despesa", "Objeto de Despesa", "Objeto"
+    )
+    coluna_grupo = localizar_coluna(
+        "GD", "Grupo", "GND", "Grupo de Despesa"
+    )
+    coluna_numero = localizar_coluna(
+        "Número PD", "Numero PD", "Número", "Numero", "PD"
+    )
+    coluna_tipo_pd = localizar_coluna(
+        "Tipo de PD", "Tipo PD", "Tipo_PD",
+        "Tipo de OB", "Tipo OB", "OB"
+    )
+    coluna_status = localizar_coluna("Status")
+    coluna_valor = localizar_coluna(
+        "Valor", "Valor Total", "Valor PD", "Valor Programado"
+    )
+
+    campos_obrigatorios = {
+        "nome do credor": coluna_credor,
+        "objeto da despesa": coluna_objeto,
+        "grupo": coluna_grupo,
+        "número da PD": coluna_numero,
+        "valor": coluna_valor,
+    }
+    campos_ausentes = [
+        nome for nome, coluna in campos_obrigatorios.items()
+        if coluna is None
+    ]
+    if campos_ausentes:
+        raise ValueError(
+            "Não foi possível montar o relatório de PD. Colunas ausentes: "
+            + ", ".join(campos_ausentes)
+        )
+
+    grupo_relatorio = serie_texto(coluna_grupo, padrao="NÃO INFORMADO").str.upper()
+    grupo_relatorio = grupo_relatorio.replace(
+        {
+            "GD1": "1",
+            "GD3": "3",
+            "GD4": "4",
+            "": "NÃO INFORMADO",
+            "NAN": "NÃO INFORMADO",
+        }
+    )
+
+    base_relatorio_modelo = pd.DataFrame(
+        {
+            "Nome do Credor": serie_texto(coluna_credor),
+            "Objeto Despesa": serie_texto(coluna_objeto),
+            "GD": grupo_relatorio,
+            "Número": serie_texto(coluna_numero),
+            "Tipo de PD": serie_texto(coluna_tipo_pd, padrao="NÃO INFORMADO"),
+            "Status": serie_texto(coluna_status, padrao="NÃO INFORMADO"),
+            "Valor": serie_numero(coluna_valor),
+        }
+    ).sort_values(
+        ["Objeto Despesa", "Nome do Credor", "Número"], kind="stable"
+    )
+
+    caminho_modelo = (
+        Path(__file__).resolve().parent
+        / "modelos"
+        / "modelo_relatorio_programa_desembolso.xlsx"
+    )
+    if not caminho_modelo.exists():
+        raise FileNotFoundError(
+            "Modelo não encontrado. Inclua "
+            "modelos/modelo_relatorio_programa_desembolso.xlsx no repositório."
+        )
+
+    workbook = load_workbook(caminho_modelo, data_only=False)
+    cabecalhos_esperados = [
+        "Nome do Credor",
+        "Objeto Despesa",
+        "GD",
+        "Número",
+        "Tipo de PD",
+        "Status",
+        "Valor",
+    ]
+
+    def normalizar_cabecalho_excel(valor):
+        texto = unicodedata.normalize("NFKD", str(valor or ""))
+        texto = "".join(
+            caractere for caractere in texto
+            if not unicodedata.combining(caractere)
+        )
+        return re.sub(r"[^A-Z0-9]+", "", texto.upper())
+
+    conjunto_esperado = {
+        normalizar_cabecalho_excel(cabecalho)
+        for cabecalho in cabecalhos_esperados
+    }
+    aba_base = None
+    linha_cabecalho = None
+    for aba in workbook.worksheets:
+        for linha in range(1, min(aba.max_row, 10) + 1):
+            cabecalhos_encontrados = {
+                normalizar_cabecalho_excel(aba.cell(linha, coluna).value)
+                for coluna in range(1, len(cabecalhos_esperados) + 1)
+            }
+            if conjunto_esperado.issubset(cabecalhos_encontrados):
+                aba_base = aba
+                linha_cabecalho = linha
+                break
+        if aba_base is not None:
+            break
+
+    if aba_base is None:
+        raise ValueError(
+            "A aba-base do modelo de PD não foi localizada. O modelo precisa "
+            "conter as colunas: " + ", ".join(cabecalhos_esperados)
+        )
+
+    # Mantém os cabeçalhos exatamente como o modelo das tabelas dinâmicas espera.
+    for coluna, cabecalho in enumerate(cabecalhos_esperados, start=1):
+        aba_base.cell(linha_cabecalho, coluna).value = cabecalho
+
+    primeira_linha_dados = linha_cabecalho + 1
+
+    # Limpa somente os dados antigos da base. A aba Tabela_Dinâmica e seus
+    # objetos permanecem intactos.
+    for linha in aba_base.iter_rows(
+        min_row=primeira_linha_dados,
+        max_row=max(aba_base.max_row, primeira_linha_dados),
+        min_col=1,
+        max_col=len(cabecalhos_esperados),
+    ):
+        for celula in linha:
+            celula.value = None
+
+    for numero_linha, registro in enumerate(
+        base_relatorio_modelo.itertuples(index=False, name=None),
+        start=primeira_linha_dados,
+    ):
+        for numero_coluna, valor in enumerate(registro, start=1):
+            if numero_coluna == 3:
+                grupo = str(valor).replace("GD", "").strip()
+                valor = int(grupo) if grupo.isdigit() else grupo
+            elif numero_coluna == 7:
+                valor = float(valor) if pd.notna(valor) else 0.0
+            else:
+                valor = "" if pd.isna(valor) else str(valor)
+
+            celula = aba_base.cell(numero_linha, numero_coluna, value=valor)
+            if numero_coluna == 7:
+                celula.number_format = 'R$ #,##0.00'
+
+    # O modelo usa uma fonte dinâmica para as tabelas dinâmicas. Forçamos a
+    # atualização ao abrir o arquivo para que os consolidados reflitam os dados
+    # recém-gravados, exatamente como já ocorre no relatório de NL.
+    for aba in workbook.worksheets:
+        for tabela_dinamica in getattr(aba, "_pivots", []):
+            cache = getattr(tabela_dinamica, "cache", None)
+            if cache is not None:
+                cache.refreshOnLoad = True
+                cache.enableRefresh = True
+
+    try:
+        workbook.calculation.fullCalcOnLoad = True
+        workbook.calculation.forceFullCalc = True
+        workbook.calculation.calcMode = "auto"
+    except AttributeError:
+        pass
 
     arquivo = io.BytesIO()
-    with pd.ExcelWriter(arquivo, engine="xlsxwriter", datetime_format="dd/mm/yyyy") as writer:
-        base.to_excel(writer, sheet_name="Relatório Geral PD", startrow=2, index=False)
-        resumo_credor.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=0, index=False)
-        resumo_ug.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=3, index=False)
-        resumo_fonte.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=6, index=False)
-        resumo_gd.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=9, index=False)
-
-        workbook = writer.book
-        formato_titulo = workbook.add_format({
-            "bold": True, "font_color": "#FFFFFF", "bg_color": "#002B49",
-            "font_size": 14, "align": "center", "valign": "vcenter",
-        })
-        formato_subtitulo = workbook.add_format({"italic": True, "font_color": "#475569", "font_size": 10})
-        formato_cabecalho = workbook.add_format({
-            "bold": True, "font_color": "#FFFFFF", "bg_color": "#315B85",
-            "align": "center", "valign": "vcenter",
-        })
-        formato_moeda = workbook.add_format({"num_format": 'R$ #,##0.00', "align": "right"})
-        formato_data = workbook.add_format({"num_format": "dd/mm/yyyy", "align": "center"})
-        formato_total = workbook.add_format({
-            "bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#005691",
-            "num_format": 'R$ #,##0.00', "align": "right",
-        })
-        formato_total_texto = workbook.add_format({
-            "bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#005691",
-        })
-
-        aba_base = writer.sheets["Relatório Geral PD"]
-        ultima_coluna = len(base.columns) - 1
-        aba_base.merge_range(0, 0, 0, ultima_coluna, "Relatório Geral de Programa de Desembolso", formato_titulo)
-        aba_base.merge_range(1, 0, 1, ultima_coluna, "Conforme os filtros selecionados no painel.", formato_subtitulo)
-        aba_base.set_row(0, 24)
-        aba_base.set_row(2, 22)
-        aba_base.freeze_panes(3, 0)
-        aba_base.autofilter(2, 0, len(base) + 2, ultima_coluna)
-        aba_base.hide_gridlines(2)
-        larguras = [18, 14, 14, 38, 9, 12, 14, 38, 16, 16, 18]
-        for indice, (cabecalho, largura) in enumerate(zip(base.columns, larguras)):
-            aba_base.set_column(indice, indice, largura)
-            aba_base.write(2, indice, cabecalho, formato_cabecalho)
-        aba_base.set_column(1, 1, 14, formato_data)
-        aba_base.set_column(10, 10, 18, formato_moeda)
-
-        aba_resumos = writer.sheets["Consolidados"]
-        aba_resumos.hide_gridlines(2)
-        aba_resumos.merge_range(0, 0, 0, 10, "Consolidados — Programa de Desembolso", formato_titulo)
-        aba_resumos.merge_range(1, 0, 1, 10, "Valores conforme os filtros selecionados no painel.", formato_subtitulo)
-        aba_resumos.set_row(0, 24)
-        for inicio, resumo in [(0, resumo_credor), (3, resumo_ug), (6, resumo_fonte), (9, resumo_gd)]:
-            aba_resumos.set_column(inicio, inicio, 32)
-            aba_resumos.set_column(inicio + 1, inicio + 1, 18, formato_moeda)
-            aba_resumos.write(2, inicio, resumo.columns[0], formato_cabecalho)
-            aba_resumos.write(2, inicio + 1, resumo.columns[1], formato_cabecalho)
-            linha_total = len(resumo) + 2
-            aba_resumos.write(linha_total, inicio, "TOTAL GERAL", formato_total_texto)
-            aba_resumos.write(linha_total, inicio + 1, resumo.iloc[-1, 1], formato_total)
-        aba_resumos.freeze_panes(3, 0)
-
+    workbook.save(arquivo)
     arquivo.seek(0)
     return arquivo.getvalue()
-
 
 def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
     """Gera um resumo mensal único, incluindo valores por tipo de despesa."""
@@ -1735,7 +1866,9 @@ def carregar_dados_pd():
             "Despesa": natureza.replace("", "NÃO INFORMADA"),
             "Objeto da Despesa": serie_texto("Objeto da Despesa", "Objeto", "Objeto Despesa"),
             "Nome do Credor": serie_texto("Nome do Credor", "Credor", "Entidade / Credor", "Entidade"),
-            "Tipo de OB": serie_texto("Tipo de OB", "OB", "Tipo OB"),
+            "Tipo de PD": serie_texto("Tipo de PD", "Tipo PD", "Tipo_PD", "Tipo de OB", "OB", "Tipo OB"),
+            # Compatibilidade com qualquer trecho antigo que ainda procure este nome.
+            "Tipo de OB": serie_texto("Tipo de PD", "Tipo PD", "Tipo_PD", "Tipo de OB", "OB", "Tipo OB"),
             "Status": serie_texto("Status"),
             "Valor": converter_valor_monetario(bruto[coluna_valor]),
         }
