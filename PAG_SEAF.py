@@ -1055,115 +1055,106 @@ def gerar_relatorio_pd_excel(df_filtrado):
         )
 
     # ------------------------------------------------------------------
-    # 3) Altera SOMENTE sheetData da aba-base.
-    #    Os XMLs das tabelas dinâmicas, estilos, caches e extensões ficam
-    #    exatamente como estão no arquivo original.
+    # 3) Altera SOMENTE o conteúdo de <sheetData> como TEXTO CRU.
+    #    Não serializamos a worksheet com ElementTree. Isso é importante:
+    #    o Excel valida rigidamente prefixes/MC Ignorable/extLst; reserializar
+    #    a planilha pode trocar prefixes de namespace e provocar "Reparar arquivo".
     # ------------------------------------------------------------------
-    aba_root = ET.fromstring(arquivos_modelo[caminho_aba_base])
-    sheet_data = aba_root.find(f"{{{NS_MAIN}}}sheetData")
-    if sheet_data is None:
-        raise ValueError("A aba-base do modelo não possui sheetData.")
+    from xml.sax.saxutils import escape as _xml_escape
 
-    linhas_existentes = list(sheet_data.findall(f"{{{NS_MAIN}}}row"))
-    if not linhas_existentes:
+    xml_aba = arquivos_modelo[caminho_aba_base].decode("utf-8")
+    match_sheetdata = re.search(
+        r"<sheetData(?P<attrs>[^>]*)>(?P<body>.*?)</sheetData>",
+        xml_aba,
+        flags=re.DOTALL,
+    )
+    if not match_sheetdata:
+        raise ValueError("A aba-base do modelo não possui sheetData válido.")
+
+    corpo_original = match_sheetdata.group("body")
+    linhas_xml = re.findall(r"<row\b[^>]*(?:/>|>.*?</row>)", corpo_original, flags=re.DOTALL)
+    if not linhas_xml:
         raise ValueError("A aba-base do modelo está vazia.")
 
-    # O modelo oficial tem o cabeçalho na linha 1. Mantemos essa linha original
-    # intacta para preservar fonte, preenchimento, bordas e demais atributos.
-    linha_cabecalho = next(
-        (linha for linha in linhas_existentes if linha.attrib.get("r") == "1"),
-        linhas_existentes[0],
-    )
+    def _numero_linha_xml(linha_xml):
+        achado = re.search(r'\br="(\d+)"', linha_xml)
+        return int(achado.group(1)) if achado else 0
 
-    # Captura os estilos das duas primeiras linhas de dados do próprio modelo.
-    # Ele usa faixas alternadas; ao reconstruir os registros reaplicamos os
-    # mesmos style IDs sem criar nenhum estilo novo.
-    def estilos_da_linha(linha_xml):
+    def _estilos_linha_xml(linha_xml):
         estilos = {}
-        if linha_xml is None:
-            return estilos
-        for celula in linha_xml.findall(f"{{{NS_MAIN}}}c"):
-            referencia = celula.attrib.get("r", "")
-            coluna = re.sub(r"\d+", "", referencia)
-            if coluna:
-                estilos[coluna] = celula.attrib.get("s")
+        for tag_c in re.findall(r"<c\b[^>]*>", linha_xml):
+            ref = re.search(r'\br="([A-Z]+)\d+"', tag_c)
+            sty = re.search(r'\bs="(\d+)"', tag_c)
+            if ref:
+                estilos[ref.group(1)] = sty.group(1) if sty else None
         return estilos
 
-    linha_modelo_par = next(
-        (linha for linha in linhas_existentes if linha.attrib.get("r") == "2"),
-        None,
+    # Cabeçalho oficial: preservado byte a byte.
+    linha_cabecalho_xml = next(
+        (linha for linha in linhas_xml if _numero_linha_xml(linha) == 1),
+        linhas_xml[0],
     )
-    linha_modelo_impar = next(
-        (linha for linha in linhas_existentes if linha.attrib.get("r") == "3"),
-        linha_modelo_par,
-    )
-    estilos_par = estilos_da_linha(linha_modelo_par)
-    estilos_impar = estilos_da_linha(linha_modelo_impar)
-
-    # Remove somente as linhas de dados antigas. O cabeçalho permanece sendo o
-    # mesmo elemento XML que veio do modelo.
-    for linha in linhas_existentes:
-        if linha is not linha_cabecalho:
-            sheet_data.remove(linha)
+    linha_modelo_par = next((l for l in linhas_xml if _numero_linha_xml(l) == 2), None)
+    linha_modelo_impar = next((l for l in linhas_xml if _numero_linha_xml(l) == 3), linha_modelo_par)
+    estilos_par = _estilos_linha_xml(linha_modelo_par or "")
+    estilos_impar = _estilos_linha_xml(linha_modelo_impar or "")
 
     colunas_excel = ["A", "B", "C", "D", "E", "F", "G"]
 
-    def adicionar_texto(celula, texto):
-        celula.set("t", "inlineStr")
-        is_node = ET.SubElement(celula, f"{{{NS_MAIN}}}is")
-        t_node = ET.SubElement(is_node, f"{{{NS_MAIN}}}t")
-        texto = "" if texto is None else str(texto)
-        if texto.startswith(" ") or texto.endswith(" "):
-            t_node.set(f"{{{NS_XML}}}space", "preserve")
-        t_node.text = texto
+    def _atributos_celula(ref, estilo=None, tipo=None):
+        attrs = [f'r="{ref}"']
+        if estilo is not None:
+            attrs.append(f's="{estilo}"')
+        if tipo is not None:
+            attrs.append(f't="{tipo}"')
+        return " ".join(attrs)
 
+    def _celula_texto(ref, valor, estilo=None):
+        texto = "" if valor is None else str(valor)
+        texto_esc = _xml_escape(texto, {'"': '&quot;'})
+        espaco = ' xml:space="preserve"' if texto.startswith(" ") or texto.endswith(" ") else ""
+        return (
+            f'<c {_atributos_celula(ref, estilo, "inlineStr")}>'
+            f'<is><t{espaco}>{texto_esc}</t></is></c>'
+        )
+
+    def _celula_numero(ref, valor, estilo=None):
+        return f'<c {_atributos_celula(ref, estilo)}><v>{valor}</v></c>'
+
+    novas_linhas = [linha_cabecalho_xml]
     for indice, registro in enumerate(
-        base_relatorio_modelo.itertuples(index=False, name=None),
-        start=2,
+        base_relatorio_modelo.itertuples(index=False, name=None), start=2
     ):
-        linha_xml = ET.Element(f"{{{NS_MAIN}}}row", {"r": str(indice), "spans": "1:7"})
         estilos = estilos_par if indice % 2 == 0 else estilos_impar
-
-        for numero_coluna, (letra_coluna, valor) in enumerate(
-            zip(colunas_excel, registro), start=1
-        ):
-            atributos = {"r": f"{letra_coluna}{indice}"}
-            estilo = estilos.get(letra_coluna)
-            if estilo is not None:
-                atributos["s"] = estilo
-
-            celula = ET.SubElement(linha_xml, f"{{{NS_MAIN}}}c", atributos)
-
+        celulas = []
+        for numero_coluna, (letra, valor) in enumerate(zip(colunas_excel, registro), start=1):
+            estilo = estilos.get(letra)
+            ref = f"{letra}{indice}"
             if numero_coluna == 3:
-                # GD fica numérico (1/3/4) como no modelo original.
                 grupo = str(valor).replace("GD", "").strip()
                 if grupo.isdigit():
-                    v_node = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
-                    v_node.text = str(int(grupo))
+                    celulas.append(_celula_numero(ref, str(int(grupo)), estilo))
                 else:
-                    adicionar_texto(celula, grupo)
+                    celulas.append(_celula_texto(ref, grupo, estilo))
             elif numero_coluna == 7:
-                # Valor permanece numérico; a máscara monetária vem do style ID
-                # original da coluna G do modelo.
                 numero = float(valor) if pd.notna(valor) else 0.0
-                v_node = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
-                v_node.text = format(numero, ".15g")
+                celulas.append(_celula_numero(ref, format(numero, ".15g"), estilo))
             else:
-                adicionar_texto(celula, "" if pd.isna(valor) else valor)
+                celulas.append(_celula_texto(ref, "" if pd.isna(valor) else valor, estilo))
+        novas_linhas.append(f'<row r="{indice}" spans="1:7">{"".join(celulas)}</row>')
 
-        sheet_data.append(linha_xml)
+    novo_sheetdata = f'<sheetData{match_sheetdata.group("attrs")}>{"".join(novas_linhas)}</sheetData>'
+    xml_aba = xml_aba[:match_sheetdata.start()] + novo_sheetdata + xml_aba[match_sheetdata.end():]
 
     ultima_linha = max(1, len(base_relatorio_modelo) + 1)
-    dimensao = aba_root.find(f"{{{NS_MAIN}}}dimension")
-    if dimensao is not None:
-        dimensao.set("ref", f"A1:G{ultima_linha}")
-
-    # Serializa apenas a aba-base. Nenhum pivotTable*.xml é tocado.
-    arquivos_modelo[caminho_aba_base] = ET.tostring(
-        aba_root,
-        encoding="utf-8",
-        xml_declaration=True,
+    xml_aba = re.sub(
+        r'(<dimension\b[^>]*\bref=")[^"]+("[^>]*/?>)',
+        rf'\1A1:G{ultima_linha}\2',
+        xml_aba,
+        count=1,
     )
+
+    arquivos_modelo[caminho_aba_base] = xml_aba.encode("utf-8")
 
     # ------------------------------------------------------------------
     # 4) Reempacota o XLSX preservando todos os demais arquivos do modelo.
@@ -3760,108 +3751,109 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 "Ela precisa conter as sete colunas esperadas do relatório."
             )
 
-        aba_root = ET.fromstring(arquivos_modelo[caminho_aba_base])
-        sheet_data = aba_root.find(f"{{{NS_MAIN}}}sheetData")
-        linhas_existentes = list(sheet_data.findall(f"{{{NS_MAIN}}}row"))
+        # --------------------------------------------------------------
+        # Grava a base sem reserializar a worksheet inteira.
+        # Mantemos os namespaces/prefixes/extensões exatamente como vieram do
+        # Excel. Isso evita o aviso "Encontramos um problema em um conteúdo".
+        # --------------------------------------------------------------
+        from xml.sax.saxutils import escape as _xml_escape
 
-        linha_cabecalho = next(
-            (linha for linha in linhas_existentes
-             if int(linha.attrib.get("r", "0")) == linha_cabecalho_numero),
+        xml_aba = arquivos_modelo[caminho_aba_base].decode("utf-8")
+        match_sheetdata = re.search(
+            r"<sheetData(?P<attrs>[^>]*)>(?P<body>.*?)</sheetData>",
+            xml_aba,
+            flags=re.DOTALL,
+        )
+        if not match_sheetdata:
+            raise ValueError("A aba-base do modelo de NL não possui sheetData válido.")
+
+        corpo_original = match_sheetdata.group("body")
+        linhas_xml = re.findall(r"<row\b[^>]*(?:/>|>.*?</row>)", corpo_original, flags=re.DOTALL)
+
+        def _numero_linha_xml(linha_xml):
+            achado = re.search(r'\br="(\d+)"', linha_xml)
+            return int(achado.group(1)) if achado else 0
+
+        def _estilos_linha_xml(linha_xml):
+            estilos = {}
+            for tag_c in re.findall(r"<c\b[^>]*>", linha_xml):
+                ref = re.search(r'\br="([A-Z]+)\d+"', tag_c)
+                sty = re.search(r'\bs="(\d+)"', tag_c)
+                if ref:
+                    estilos[ref.group(1)] = sty.group(1) if sty else None
+            return estilos
+
+        linha_cabecalho_xml = next(
+            (l for l in linhas_xml if _numero_linha_xml(l) == linha_cabecalho_numero),
             None,
         )
-        if linha_cabecalho is None:
+        if linha_cabecalho_xml is None:
             raise ValueError("O cabeçalho da aba-base do modelo de NL não foi localizado.")
 
         primeira_linha_dados = linha_cabecalho_numero + 1
+        linha_modelo_1 = next((l for l in linhas_xml if _numero_linha_xml(l) == primeira_linha_dados), None)
+        linha_modelo_2 = next((l for l in linhas_xml if _numero_linha_xml(l) == primeira_linha_dados + 1), linha_modelo_1)
+        estilos_1 = _estilos_linha_xml(linha_modelo_1 or "")
+        estilos_2 = _estilos_linha_xml(linha_modelo_2 or "")
 
-        def estilos_da_linha(linha_xml):
-            estilos = {}
-            if linha_xml is None:
-                return estilos
-            for celula in linha_xml.findall(f"{{{NS_MAIN}}}c"):
-                referencia = celula.attrib.get("r", "")
-                coluna = re.sub(r"\d+", "", referencia)
-                if coluna:
-                    estilos[coluna] = celula.attrib.get("s")
-            return estilos
-
-        linha_modelo_1 = next(
-            (linha for linha in linhas_existentes
-             if int(linha.attrib.get("r", "0")) == primeira_linha_dados),
-            None,
-        )
-        linha_modelo_2 = next(
-            (linha for linha in linhas_existentes
-             if int(linha.attrib.get("r", "0")) == primeira_linha_dados + 1),
-            linha_modelo_1,
-        )
-        estilos_1 = estilos_da_linha(linha_modelo_1)
-        estilos_2 = estilos_da_linha(linha_modelo_2)
-
-        # Preserva qualquer conteúdo anterior ao cabeçalho e remove somente as
-        # linhas de dados da base. Nenhuma outra aba ou XML é regravado.
-        for linha in list(linhas_existentes):
-            numero = int(linha.attrib.get("r", "0"))
-            if numero > linha_cabecalho_numero:
-                sheet_data.remove(linha)
-
+        # Preserva byte a byte todas as linhas anteriores e o próprio cabeçalho.
+        linhas_preservadas = [
+            l for l in linhas_xml if _numero_linha_xml(l) <= linha_cabecalho_numero
+        ]
         colunas_excel = ["A", "B", "C", "D", "E", "F", "G"]
 
-        def adicionar_texto(celula, texto):
-            celula.set("t", "inlineStr")
-            no_is = ET.SubElement(celula, f"{{{NS_MAIN}}}is")
-            no_t = ET.SubElement(no_is, f"{{{NS_MAIN}}}t")
-            texto = "" if texto is None else str(texto)
-            if texto.startswith(" ") or texto.endswith(" "):
-                no_t.set(f"{{{NS_XML}}}space", "preserve")
-            no_t.text = texto
+        def _attrs(ref, estilo=None, tipo=None):
+            itens = [f'r="{ref}"']
+            if estilo is not None:
+                itens.append(f's="{estilo}"')
+            if tipo is not None:
+                itens.append(f't="{tipo}"')
+            return " ".join(itens)
 
-        for offset, registro in enumerate(
-            base_relatorio_modelo.itertuples(index=False, name=None)
-        ):
+        def _texto(ref, valor, estilo=None):
+            texto = "" if valor is None else str(valor)
+            texto_esc = _xml_escape(texto, {'"': '&quot;'})
+            espaco = ' xml:space="preserve"' if texto.startswith(" ") or texto.endswith(" ") else ""
+            return f'<c {_attrs(ref, estilo, "inlineStr")}><is><t{espaco}>{texto_esc}</t></is></c>'
+
+        def _numero(ref, valor, estilo=None):
+            return f'<c {_attrs(ref, estilo)}><v>{valor}</v></c>'
+
+        novas_linhas = list(linhas_preservadas)
+        for offset, registro in enumerate(base_relatorio_modelo.itertuples(index=False, name=None)):
             numero_linha = primeira_linha_dados + offset
-            linha_xml = ET.Element(
-                f"{{{NS_MAIN}}}row",
-                {"r": str(numero_linha), "spans": "1:7"},
-            )
             estilos = estilos_1 if offset % 2 == 0 else estilos_2
-
-            for numero_coluna, (letra, valor) in enumerate(
-                zip(colunas_excel, registro), start=1
-            ):
-                atributos = {"r": f"{letra}{numero_linha}"}
+            celulas = []
+            for numero_coluna, (letra, valor) in enumerate(zip(colunas_excel, registro), start=1):
                 estilo = estilos.get(letra)
-                if estilo is not None:
-                    atributos["s"] = estilo
-                celula = ET.SubElement(linha_xml, f"{{{NS_MAIN}}}c", atributos)
-
+                ref = f"{letra}{numero_linha}"
                 if numero_coluna == 3:
                     grupo = str(valor).replace("GD", "").strip()
                     if grupo.isdigit():
-                        no_v = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
-                        no_v.text = str(int(grupo))
+                        celulas.append(_numero(ref, str(int(grupo)), estilo))
                     else:
-                        adicionar_texto(celula, grupo)
+                        celulas.append(_texto(ref, grupo, estilo))
                 elif numero_coluna == 7:
                     numero = float(valor) if pd.notna(valor) else 0.0
-                    no_v = ET.SubElement(celula, f"{{{NS_MAIN}}}v")
-                    no_v.text = format(numero, ".15g")
+                    celulas.append(_numero(ref, format(numero, ".15g"), estilo))
                 else:
-                    adicionar_texto(celula, "" if pd.isna(valor) else valor)
+                    celulas.append(_texto(ref, "" if pd.isna(valor) else valor, estilo))
+            novas_linhas.append(f'<row r="{numero_linha}" spans="1:7">{"".join(celulas)}</row>')
 
-            sheet_data.append(linha_xml)
+        novo_sheetdata = f'<sheetData{match_sheetdata.group("attrs")}>{"".join(novas_linhas)}</sheetData>'
+        xml_aba = xml_aba[:match_sheetdata.start()] + novo_sheetdata + xml_aba[match_sheetdata.end():]
 
         ultima_linha = max(
             linha_cabecalho_numero,
             primeira_linha_dados + len(base_relatorio_modelo) - 1,
         )
-        dimensao = aba_root.find(f"{{{NS_MAIN}}}dimension")
-        if dimensao is not None:
-            dimensao.set("ref", f"A1:G{ultima_linha}")
-
-        arquivos_modelo[caminho_aba_base] = ET.tostring(
-            aba_root, encoding="utf-8", xml_declaration=True
+        xml_aba = re.sub(
+            r'(<dimension\b[^>]*\bref=")[^"]+("[^>]*/?>)',
+            rf'\1A1:G{ultima_linha}\2',
+            xml_aba,
+            count=1,
         )
+        arquivos_modelo[caminho_aba_base] = xml_aba.encode("utf-8")
 
         arquivo_saida = io.BytesIO()
         with zipfile.ZipFile(
@@ -4380,41 +4372,57 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         @st.dialog("Gerar Relatório de Liquidações")
         def janela_relatorio_nl():
             st.caption(
-                "Escolha o Grupo e a Fonte para o arquivo. Os demais filtros "
-                "selecionados no painel também serão mantidos."
+                "O relatório parte exatamente dos mesmos registros exibidos no painel. "
+                "Grupo e Fonte abaixo servem apenas para reduzir ainda mais esse recorte."
             )
 
-            if "relatorio_nl_grupos" not in st.session_state:
-                st.session_state["relatorio_nl_grupos"] = list(
-                    st.session_state["mem_nl_grupo"]
-                )
-            if "relatorio_nl_fontes" not in st.session_state:
-                st.session_state["relatorio_nl_fontes"] = list(
-                    st.session_state["mem_nl_fonte"]
-                )
+            # REGRA PRINCIPAL: o relatório precisa nascer do MESMO dataframe que
+            # alimenta os cards da tela. Assim quantidade, valor total, GD3 e GD4
+            # do Excel nunca partem de uma base diferente da exibida no painel.
+            df_base_relatorio = df_filtrado.copy()
+
+            grupos_disponiveis_relatorio = sorted(
+                df_base_relatorio["Grupo_Classificado"]
+                .dropna().astype(str).unique().tolist()
+            )
+
+            # Remove seleções antigas do diálogo que já não pertencem ao recorte
+            # atual. O Streamlit mantém session_state entre aberturas do diálogo;
+            # sem esta limpeza, um filtro antigo podia gerar um relatório muito
+            # menor que os cards mesmo sem o usuário perceber.
+            grupos_estado = st.session_state.get("relatorio_nl_grupos", [])
+            st.session_state["relatorio_nl_grupos"] = [
+                grupo for grupo in grupos_estado
+                if grupo in grupos_disponiveis_relatorio
+            ]
 
             grupos_relatorio = st.multiselect(
-                "Grupo (vazio = todos)",
-                ["GD1", "GD3", "GD4"],
+                "Grupo (vazio = todos os exibidos no painel)",
+                grupos_disponiveis_relatorio,
                 key="relatorio_nl_grupos",
             )
-            df_opcoes_relatorio = filtrar_df_nl(
-                df_base, ign_grp=True, ign_fnt=True
-            )
+
+            df_exportacao = df_base_relatorio.copy()
             if grupos_relatorio:
-                df_opcoes_relatorio = df_opcoes_relatorio[
-                    df_opcoes_relatorio["Grupo_Classificado"].isin(grupos_relatorio)
+                df_exportacao = df_exportacao[
+                    df_exportacao["Grupo_Classificado"].isin(grupos_relatorio)
                 ]
-            fontes_relatorio = sorted(
-                df_opcoes_relatorio["Fonte_Relacao"].dropna().astype(str).unique()
+
+            fontes_disponiveis_relatorio = sorted(
+                df_exportacao["Fonte_Relacao"]
+                .dropna().astype(str).unique().tolist()
             )
+            fontes_estado = st.session_state.get("relatorio_nl_fontes", [])
+            st.session_state["relatorio_nl_fontes"] = [
+                fonte for fonte in fontes_estado
+                if fonte in fontes_disponiveis_relatorio
+            ]
+
             fontes_selecionadas = st.multiselect(
-                "Fonte de recurso (vazio = todas)",
-                fontes_relatorio,
+                "Fonte de recurso (vazio = todas as exibidas no painel)",
+                fontes_disponiveis_relatorio,
                 key="relatorio_nl_fontes",
             )
-
-            df_exportacao = df_opcoes_relatorio.copy()
             if fontes_selecionadas:
                 df_exportacao = df_exportacao[
                     df_exportacao["Fonte_Relacao"].isin(fontes_selecionadas)
@@ -4423,6 +4431,29 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             if df_exportacao.empty:
                 st.warning("Não há liquidações para os filtros escolhidos.")
                 return
+
+            # Conferência antes do download: estes números devem ser os mesmos
+            # dos cards quando nenhum filtro adicional do diálogo for escolhido.
+            total_exportacao = float(df_exportacao["Valor_Total_Limpo"].sum())
+            total_gd3_exportacao = float(
+                df_exportacao.loc[
+                    df_exportacao["Grupo_Classificado"] == "GD3",
+                    "Valor_Total_Limpo",
+                ].sum()
+            )
+            total_gd4_exportacao = float(
+                df_exportacao.loc[
+                    df_exportacao["Grupo_Classificado"] == "GD4",
+                    "Valor_Total_Limpo",
+                ].sum()
+            )
+            qtd_exportacao_formatada = f"{len(df_exportacao):,}".replace(",", ".")
+            st.info(
+                f"Registros no arquivo: {qtd_exportacao_formatada} | "
+                f"Total: {formatar_brl(total_exportacao)} | "
+                f"GD3: {formatar_brl(total_gd3_exportacao)} | "
+                f"GD4: {formatar_brl(total_gd4_exportacao)}"
+            )
 
             try:
                 relatorio_excel = gerar_relatorio_nl_excel(df_exportacao)
