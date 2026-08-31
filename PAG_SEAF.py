@@ -3855,6 +3855,76 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         )
         arquivos_modelo[caminho_aba_base] = xml_aba.encode("utf-8")
 
+        # A aba-base foi atualizada sem regravar os XMLs das tabelas dinâmicas.
+        # Para o Excel não continuar exibindo os valores antigos armazenados no
+        # cache do modelo, marcamos os caches para atualização na abertura.
+        # A alteração abaixo é textual e limitada à tag raiz do cache: não toca
+        # nos estilos/pivotTableDefinition, preservando as cores do modelo.
+        for nome_xml in list(arquivos_modelo):
+            if not (
+                nome_xml.startswith("xl/pivotCache/pivotCacheDefinition")
+                and nome_xml.endswith(".xml")
+            ):
+                continue
+
+            texto_cache = arquivos_modelo[nome_xml].decode("utf-8")
+            raiz_cache = re.search(r"<pivotCacheDefinition\b[^>]*>", texto_cache)
+            if raiz_cache is None:
+                continue
+
+            tag_cache = raiz_cache.group(0)
+
+            def _definir_atributo_xml(tag, atributo, valor):
+                padrao = rf'(?<![A-Za-z0-9_:.-]){re.escape(atributo)}="[^"]*"'
+                if re.search(padrao, tag):
+                    return re.sub(
+                        padrao,
+                        f'{atributo}="{valor}"',
+                        tag,
+                        count=1,
+                    )
+                return tag[:-1] + f' {atributo}="{valor}">'
+
+            tag_cache_nova = _definir_atributo_xml(
+                tag_cache, "refreshOnLoad", "1"
+            )
+            tag_cache_nova = _definir_atributo_xml(
+                tag_cache_nova, "enableRefresh", "1"
+            )
+
+            if tag_cache_nova != tag_cache:
+                texto_cache = (
+                    texto_cache[:raiz_cache.start()]
+                    + tag_cache_nova
+                    + texto_cache[raiz_cache.end():]
+                )
+                arquivos_modelo[nome_xml] = texto_cache.encode("utf-8")
+
+        # Mantém o recálculo normal do Excel sem reserializar workbook.xml.
+        if "xl/workbook.xml" in arquivos_modelo:
+            texto_workbook = arquivos_modelo["xl/workbook.xml"].decode("utf-8")
+            match_calc = re.search(r"<calcPr\b[^>]*/?>", texto_workbook)
+            if match_calc:
+                tag_calc = match_calc.group(0)
+
+                def _definir_calc(tag, atributo, valor):
+                    padrao = rf'(?<![A-Za-z0-9_:.-]){re.escape(atributo)}="[^"]*"'
+                    if re.search(padrao, tag):
+                        return re.sub(padrao, f'{atributo}="{valor}"', tag, count=1)
+                    fechamento = "/>" if tag.endswith("/>") else ">"
+                    corpo = tag[:-len(fechamento)]
+                    return corpo + f' {atributo}="{valor}"' + fechamento
+
+                tag_calc_nova = _definir_calc(tag_calc, "calcMode", "auto")
+                tag_calc_nova = _definir_calc(tag_calc_nova, "fullCalcOnLoad", "1")
+                tag_calc_nova = _definir_calc(tag_calc_nova, "forceFullCalc", "1")
+                texto_workbook = (
+                    texto_workbook[:match_calc.start()]
+                    + tag_calc_nova
+                    + texto_workbook[match_calc.end():]
+                )
+                arquivos_modelo["xl/workbook.xml"] = texto_workbook.encode("utf-8")
+
         arquivo_saida = io.BytesIO()
         with zipfile.ZipFile(
             arquivo_saida, "w", compression=zipfile.ZIP_DEFLATED
@@ -4431,29 +4501,6 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             if df_exportacao.empty:
                 st.warning("Não há liquidações para os filtros escolhidos.")
                 return
-
-            # Conferência antes do download: estes números devem ser os mesmos
-            # dos cards quando nenhum filtro adicional do diálogo for escolhido.
-            total_exportacao = float(df_exportacao["Valor_Total_Limpo"].sum())
-            total_gd3_exportacao = float(
-                df_exportacao.loc[
-                    df_exportacao["Grupo_Classificado"] == "GD3",
-                    "Valor_Total_Limpo",
-                ].sum()
-            )
-            total_gd4_exportacao = float(
-                df_exportacao.loc[
-                    df_exportacao["Grupo_Classificado"] == "GD4",
-                    "Valor_Total_Limpo",
-                ].sum()
-            )
-            qtd_exportacao_formatada = f"{len(df_exportacao):,}".replace(",", ".")
-            st.info(
-                f"Registros no arquivo: {qtd_exportacao_formatada} | "
-                f"Total: {formatar_brl(total_exportacao)} | "
-                f"GD3: {formatar_brl(total_gd3_exportacao)} | "
-                f"GD4: {formatar_brl(total_gd4_exportacao)}"
-            )
 
             try:
                 relatorio_excel = gerar_relatorio_nl_excel(df_exportacao)
