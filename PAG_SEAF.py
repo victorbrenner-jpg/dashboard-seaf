@@ -1093,9 +1093,21 @@ def gerar_relatorio_pd_excel(df_filtrado):
 
     # O modelo usa uma fonte dinâmica para as tabelas dinâmicas. Forçamos a
     # atualização ao abrir o arquivo para que os consolidados reflitam os dados
-    # recém-gravados, exatamente como já ocorre no relatório de NL.
+    # recém-gravados. Ao mesmo tempo, impedimos que Excel/WPS reaplique o estilo
+    # automático da Tabela Dinâmica durante a atualização, pois isso substituía
+    # as cores institucionais já gravadas no modelo (principalmente os cabeçalhos).
     for aba in workbook.worksheets:
         for tabela_dinamica in getattr(aba, "_pivots", []):
+            # Mantém exatamente a formatação existente no arquivo-modelo.
+            tabela_dinamica.preserveFormatting = True
+            tabela_dinamica.useAutoFormatting = False
+            tabela_dinamica.applyNumberFormats = False
+            tabela_dinamica.applyBorderFormats = False
+            tabela_dinamica.applyFontFormats = False
+            tabela_dinamica.applyPatternFormats = False
+            tabela_dinamica.applyAlignmentFormats = False
+            tabela_dinamica.applyWidthHeightFormats = False
+
             cache = getattr(tabela_dinamica, "cache", None)
             if cache is not None:
                 cache.refreshOnLoad = True
