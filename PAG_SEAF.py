@@ -35,7 +35,7 @@ def sincronizar_filtro(chave_memoria, chave_widget):
 
 # Estado da Tela Ativa
 if "tela_atual" not in st.session_state:
-    st.session_state["tela_atual"] = "Pagamentos (OB)"
+    st.session_state["tela_atual"] = "Liquidação (NL)"
 
 # --- MEMÓRIA DA TELA 1 (Pagamentos - OB) ---
 if "mem_ob_tipo_data" not in st.session_state:
@@ -352,6 +352,7 @@ st.markdown(
     }
     div.stDownloadButton > button,
     div.st-key-btn_gerar_relatorio_nl button,
+    div.st-key-btn_gerar_relatorio_pd button,
     [class*="st-key-adicionar_objeto_"] button {
         border-color: #007b84;
         background: linear-gradient(135deg, #005691 0%, #028090 100%);
@@ -360,6 +361,7 @@ st.markdown(
     }
     div.stDownloadButton > button:hover,
     div.st-key-btn_gerar_relatorio_nl button:hover,
+    div.st-key-btn_gerar_relatorio_pd button:hover,
     [class*="st-key-adicionar_objeto_"] button:hover {
         border-color: #006f78;
         background: linear-gradient(135deg, #004a7c 0%, #01757d 100%);
@@ -367,6 +369,7 @@ st.markdown(
     }
     div.stDownloadButton > button:disabled,
     div.st-key-btn_gerar_relatorio_nl button:disabled,
+    div.st-key-btn_gerar_relatorio_pd button:disabled,
     [class*="st-key-adicionar_objeto_"] button:disabled {
         opacity: 1 !important;
         border-color: #cbd5e1 !important;
@@ -378,6 +381,7 @@ st.markdown(
     }
     div.stDownloadButton > button:disabled:hover,
     div.st-key-btn_gerar_relatorio_nl button:disabled:hover,
+    div.st-key-btn_gerar_relatorio_pd button:disabled:hover,
     [class*="st-key-adicionar_objeto_"] button:disabled:hover {
         border-color: #cbd5e1 !important;
         background: #e8eef3 !important;
@@ -749,7 +753,8 @@ def formatar_brl(valor):
 
 
 def renderizar_tabela_priorizacao(
-    df, colunas_centralizadas=None, altura_maxima=None, template_colunas=None
+    df, colunas_centralizadas=None, altura_maxima=None, template_colunas=None,
+    largura_minima=780,
 ):
     """Renderiza tabelas somente-leitura com contraste executivo estável.
 
@@ -789,13 +794,192 @@ def renderizar_tabela_priorizacao(
         f"""
         <div class="tabela-priorizacao-executiva" style="{estilo_altura}">
           <div class="tabela-priorizacao-executiva-grade"
-               style="grid-template-columns: {template_grade};">
+               style="grid-template-columns: {template_grade}; min-width: {int(largura_minima)}px;">
             {"".join(itens_grade)}
           </div>
         </div>
         """,
         unsafe_allow_html=True,
     )
+
+
+def renderizar_tabela_credor_pd(df_filtrado):
+    """Tabela expansível de credores, seguindo o padrão da tela de Liquidação."""
+    if df_filtrado.empty:
+        st.info("Não há PDs para os filtros selecionados.")
+        return
+
+    totais = (
+        df_filtrado.groupby("Nome do Credor", dropna=False)
+        .agg(**{"Qtd. PDs": ("Número PD", "nunique"), "Valor total": ("Valor", "sum")})
+        .sort_values("Valor total", ascending=False)
+    )
+    grupos_html = []
+    for credor, total in totais.iterrows():
+        credor_texto = str(credor or "NÃO INFORMADO")
+        dados_credor = (
+            df_filtrado[df_filtrado["Nome do Credor"] == credor]
+            .sort_values(["Data Emissão", "Número PD"], na_position="last")
+        )
+        linhas = []
+        for _, registro in dados_credor.iterrows():
+            data = registro["Data Emissão"]
+            data_texto = data.strftime("%d/%m/%Y") if pd.notna(data) else "—"
+            linhas.append(
+                "<tr>"
+                f"<td title='{html.escape(str(registro['Número PD']))}' style='width:22%; font-family:monospace; font-weight:600; color:#005691;'>{html.escape(str(registro['Número PD']))}</td>"
+                f"<td style='width:18%;'>{data_texto}</td>"
+                f"<td style='width:14%;'>{html.escape(str(registro['Fonte']))}</td>"
+                f"<td style='width:22%;'>{html.escape(str(registro['Despesa']))}</td>"
+                f"<td style='width:24%; font-weight:700; color:#002b49;'>{formatar_brl(registro['Valor'])}</td>"
+                "</tr>"
+            )
+        grupos_html.append(
+            "<details class='credor-group'>"
+            "<summary class='credor-summary'>"
+            f"<span>{html.escape(credor_texto)}</span>"
+            f"<span style='text-align:right; color:#475569;'>{int(total['Qtd. PDs'])} PD(s)</span>"
+            f"<span style='text-align:right; color:#002b49;'>{formatar_brl(total['Valor total'])}</span>"
+            "</summary>"
+            "<div class='subtabela-container'><table class='subtabela-detalhe'><thead><tr>"
+            "<th>PD</th><th>EMISSÃO</th><th>FONTE</th><th>DESPESA</th><th>VALOR</th>"
+            "</tr></thead><tbody>"
+            + "".join(linhas)
+            + "</tbody></table></div></details>"
+        )
+
+    total_qtd = int(totais["Qtd. PDs"].sum())
+    total_valor = float(totais["Valor total"].sum())
+    html_final = (
+        "<div class='tabela-dinamica-container'>"
+        "<div class='tabela-dinamica-header'><div>CREDOR</div>"
+        "<div style='text-align:right;'>QTD. PDs</div><div style='text-align:right;'>VALOR TOTAL</div></div>"
+        + "".join(grupos_html)
+        + "<div class='tabela-dinamica-header' style='background:#f1f5f9; border-top:2px solid #005691; border-bottom:none;'>"
+        "<div style='color:#002b49; font-weight:800;'>TOTAL GERAL</div>"
+        f"<div style='text-align:right; color:#475569; font-weight:800;'>{total_qtd} PD(s)</div>"
+        f"<div style='text-align:right; color:#028090; font-weight:800;'>{formatar_brl(total_valor)}</div>"
+        "</div></div>"
+    )
+    if hasattr(st, "html"):
+        st.html(html_final)
+    else:
+        st.markdown(html_final, unsafe_allow_html=True)
+
+
+def renderizar_tabela_resumo_pd(df, coluna_descricao, titulo_descricao):
+    """Resumo compacto com o mesmo cabeçalho usado nas tabelas da Liquidação."""
+    linhas = []
+    for _, registro in df.iterrows():
+        descricao = html.escape(str(registro[coluna_descricao]))
+        valor = formatar_brl(registro["Valor total"])
+        linhas.append(
+            f"<tr><td>{descricao}</td><td style='text-align:right; font-weight:600; color:#002b49; white-space:nowrap;'>{valor}</td></tr>"
+        )
+    total = float(df["Valor total"].sum()) if not df.empty else 0.0
+    tabela_html = (
+        "<div class='tabela-simples-container'><table class='tabela-simples tabela-fontes'>"
+        "<thead><tr>"
+        f"<th style='text-align:left;'>{html.escape(titulo_descricao)}</th>"
+        "<th style='text-align:right;'>VALOR TOTAL</th>"
+        "</tr></thead><tbody>"
+        + "".join(linhas)
+        + "<tr class='total-row'><td>TOTAL GERAL</td>"
+        f"<td style='text-align:right; color:#028090; white-space:nowrap;'>{formatar_brl(total)}</td>"
+        "</tr></tbody></table></div>"
+    )
+    st.markdown(tabela_html, unsafe_allow_html=True)
+
+
+def gerar_relatorio_pd_excel(df_filtrado):
+    """Gera o relatório de PD já filtrado, com base e consolidados auditáveis."""
+    if df_filtrado.empty:
+        raise ValueError("Não há PDs para exportar com os filtros selecionados.")
+
+    colunas_base = [
+        "Número PD", "Data Emissão", "UG Pagadora", "Nome do Credor", "GD",
+        "Fonte", "Despesa", "Objeto da Despesa", "Tipo de OB", "Status", "Valor",
+    ]
+    base = df_filtrado.reindex(columns=colunas_base).copy()
+    base["Data Emissão"] = pd.to_datetime(base["Data Emissão"], errors="coerce")
+    base["Valor"] = pd.to_numeric(base["Valor"], errors="coerce").fillna(0.0)
+    base = base.sort_values(["Nome do Credor", "Data Emissão", "Número PD"], na_position="last")
+
+    def consolidar(coluna, titulo):
+        resumo = (
+            base.groupby(coluna, dropna=False, as_index=False)["Valor"].sum()
+            .sort_values("Valor", ascending=False)
+        )
+        resumo.columns = [titulo, "Valor total"]
+        total = pd.DataFrame([{titulo: "TOTAL GERAL", "Valor total": resumo["Valor total"].sum()}])
+        return pd.concat([resumo, total], ignore_index=True)
+
+    resumo_credor = consolidar("Nome do Credor", "Credor")
+    resumo_ug = consolidar("UG Pagadora", "UG pagadora")
+    resumo_fonte = consolidar("Fonte", "Fonte")
+    resumo_gd = consolidar("GD", "GD")
+
+    arquivo = io.BytesIO()
+    with pd.ExcelWriter(arquivo, engine="xlsxwriter", datetime_format="dd/mm/yyyy") as writer:
+        base.to_excel(writer, sheet_name="Relatório Geral PD", startrow=2, index=False)
+        resumo_credor.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=0, index=False)
+        resumo_ug.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=3, index=False)
+        resumo_fonte.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=6, index=False)
+        resumo_gd.to_excel(writer, sheet_name="Consolidados", startrow=2, startcol=9, index=False)
+
+        workbook = writer.book
+        formato_titulo = workbook.add_format({
+            "bold": True, "font_color": "#FFFFFF", "bg_color": "#002B49",
+            "font_size": 14, "align": "center", "valign": "vcenter",
+        })
+        formato_subtitulo = workbook.add_format({"italic": True, "font_color": "#475569", "font_size": 10})
+        formato_cabecalho = workbook.add_format({
+            "bold": True, "font_color": "#FFFFFF", "bg_color": "#315B85",
+            "align": "center", "valign": "vcenter",
+        })
+        formato_moeda = workbook.add_format({"num_format": 'R$ #,##0.00', "align": "right"})
+        formato_data = workbook.add_format({"num_format": "dd/mm/yyyy", "align": "center"})
+        formato_total = workbook.add_format({
+            "bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#005691",
+            "num_format": 'R$ #,##0.00', "align": "right",
+        })
+        formato_total_texto = workbook.add_format({
+            "bold": True, "bg_color": "#E8F0F7", "top": 2, "top_color": "#005691",
+        })
+
+        aba_base = writer.sheets["Relatório Geral PD"]
+        ultima_coluna = len(base.columns) - 1
+        aba_base.merge_range(0, 0, 0, ultima_coluna, "Relatório Geral de Programa de Desembolso", formato_titulo)
+        aba_base.merge_range(1, 0, 1, ultima_coluna, "Conforme os filtros selecionados no painel.", formato_subtitulo)
+        aba_base.set_row(0, 24)
+        aba_base.set_row(2, 22)
+        aba_base.freeze_panes(3, 0)
+        aba_base.autofilter(2, 0, len(base) + 2, ultima_coluna)
+        aba_base.hide_gridlines(2)
+        larguras = [18, 14, 14, 38, 9, 12, 14, 38, 16, 16, 18]
+        for indice, (cabecalho, largura) in enumerate(zip(base.columns, larguras)):
+            aba_base.set_column(indice, indice, largura)
+            aba_base.write(2, indice, cabecalho, formato_cabecalho)
+        aba_base.set_column(1, 1, 14, formato_data)
+        aba_base.set_column(10, 10, 18, formato_moeda)
+
+        aba_resumos = writer.sheets["Consolidados"]
+        aba_resumos.hide_gridlines(2)
+        aba_resumos.merge_range(0, 0, 0, 10, "Consolidados — Programa de Desembolso", formato_titulo)
+        aba_resumos.merge_range(1, 0, 1, 10, "Valores conforme os filtros selecionados no painel.", formato_subtitulo)
+        aba_resumos.set_row(0, 24)
+        for inicio, resumo in [(0, resumo_credor), (3, resumo_ug), (6, resumo_fonte), (9, resumo_gd)]:
+            aba_resumos.set_column(inicio, inicio, 32)
+            aba_resumos.set_column(inicio + 1, inicio + 1, 18, formato_moeda)
+            aba_resumos.write(2, inicio, resumo.columns[0], formato_cabecalho)
+            aba_resumos.write(2, inicio + 1, resumo.columns[1], formato_cabecalho)
+            linha_total = len(resumo) + 2
+            aba_resumos.write(linha_total, inicio, "TOTAL GERAL", formato_total_texto)
+            aba_resumos.write(linha_total, inicio + 1, resumo.iloc[-1, 1], formato_total)
+        aba_resumos.freeze_panes(3, 0)
+
+    arquivo.seek(0)
+    return arquivo.getvalue()
 
 
 def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
@@ -1470,6 +1654,98 @@ def carregar_historico_ob_fonte_500():
 # -------------------------------------------------------------------------
 URL_API_RELATORIO_009717_PADRAO = "https://script.google.com/macros/s/AKfycbywfyRrszPy3wqbSsrLsFBgd5rTw3d4tNKl3zBmJBknhjAv2bI0qAvzZv3Tk35KkTwI/exec"
 
+# Base exclusiva do Programa de Desembolso. A origem deve ser a aba
+# PD_ABA_TRATADA, publicada como CSV para que o Streamlit Cloud possa lê-la.
+LINK_PD_ABA_TRATADA = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vRsMrqzxYHgTRv_tBJnDU_Rg1OpFmh_FCCo55w671Kna-IE8FIPD4rhL7O-bDwCsNMQW4Qj7UZGaBFP/"
+    "pub?gid=27472472&single=true&output=csv"
+)
+
+
+def _normalizar_nome_pd(nome):
+    """Normaliza cabeçalhos da base de PD sem depender de acentos ou espaços."""
+    texto = unicodedata.normalize("NFKD", str(nome or ""))
+    texto = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
+    return re.sub(r"[^a-z0-9]+", "", texto.lower())
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def carregar_dados_pd():
+    """Lê a aba PD_ABA_TRATADA e entrega um esquema estável para a tela de PD."""
+    try:
+        bruto = ler_csv_url(LINK_PD_ABA_TRATADA)
+    except Exception as erro:
+        return pd.DataFrame(), str(erro)
+
+    if bruto.empty:
+        return pd.DataFrame(), "A aba PD_ABA_TRATADA não possui registros para exibir."
+
+    bruto = bruto.loc[:, ~bruto.columns.duplicated()].copy()
+    bruto.columns = [str(coluna).strip() for coluna in bruto.columns]
+    colunas_normalizadas = {
+        _normalizar_nome_pd(coluna): coluna for coluna in bruto.columns
+    }
+
+    def localizar_coluna(*aliases):
+        for alias in aliases:
+            chave = _normalizar_nome_pd(alias)
+            if chave in colunas_normalizadas:
+                return colunas_normalizadas[chave]
+        for alias in aliases:
+            chave = _normalizar_nome_pd(alias)
+            for normalizada, original in colunas_normalizadas.items():
+                if chave in normalizada or normalizada in chave:
+                    return original
+        return None
+
+    def serie_texto(*aliases, padrao="NÃO INFORMADO"):
+        coluna = localizar_coluna(*aliases)
+        if coluna is None:
+            return pd.Series(padrao, index=bruto.index, dtype="object")
+        return bruto[coluna].fillna("").astype(str).str.strip().replace("", padrao)
+
+    coluna_numero = localizar_coluna("Número", "Numero", "Número PD", "Numero PD", "PD")
+    coluna_valor = localizar_coluna("Valor", "Valor Total", "Valor PD", "Valor Programado")
+    if coluna_numero is None or coluna_valor is None:
+        return pd.DataFrame(), (
+            "A aba PD_ABA_TRATADA precisa conter, no mínimo, as colunas "
+            "Número e Valor. Cabeçalhos encontrados: " + ", ".join(bruto.columns)
+        )
+
+    natureza = serie_texto("Natureza", "Natureza da Despesa", padrao="")
+    grupo_informado = serie_texto("GD", "Grupo", "GND", padrao="")
+    grupo_derivado = natureza.astype(str).str.extract(r"^\s*([134])", expand=False)
+    grupo = grupo_informado.where(grupo_informado.astype(str).str.strip() != "", "")
+    grupo = grupo.replace({"NÃO INFORMADO": ""})
+    grupo = grupo.where(grupo != "", "GD" + grupo_derivado.fillna("NÃO INFORMADO"))
+    grupo = grupo.astype(str).str.upper().replace({"3": "GD3", "4": "GD4", "1": "GD1"})
+
+    dados = pd.DataFrame(
+        {
+            "Número PD": bruto[coluna_numero].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+            "Data Emissão": pd.to_datetime(
+                serie_texto("Data Emissão", "Data Emissao", "Data", padrao=""),
+                errors="coerce",
+                dayfirst=True,
+            ),
+            "UG Pagadora": serie_texto("UG Pagadora", "UG_Pagadora", "UG"),
+            "Fonte": serie_texto("Fonte", "Fonte de Recurso"),
+            "GD": grupo,
+            "Despesa": natureza.replace("", "NÃO INFORMADA"),
+            "Objeto da Despesa": serie_texto("Objeto da Despesa", "Objeto", "Objeto Despesa"),
+            "Nome do Credor": serie_texto("Nome do Credor", "Credor", "Entidade / Credor", "Entidade"),
+            "Tipo de OB": serie_texto("Tipo de OB", "OB", "Tipo OB"),
+            "Status": serie_texto("Status"),
+            "Valor": converter_valor_monetario(bruto[coluna_valor]),
+        }
+    )
+    dados = dados[dados["Número PD"].ne("")].copy()
+    dados["UG Pagadora"] = dados["UG Pagadora"].str.replace(r"\.0$", "", regex=True)
+    dados["Fonte"] = dados["Fonte"].str.replace(r"\.0$", "", regex=True)
+    dados["Valor"] = dados["Valor"].fillna(0.0)
+    return dados, ""
+
 
 def chamar_api_relatorio_009717(url_api, acao="status", timeout=120):
     """Conversa via POST com o Web App usado exclusivamente pelo Relatório 009717.
@@ -1538,7 +1814,13 @@ def chamar_api_relatorio_009717(url_api, acao="status", timeout=120):
 if st.session_state.get("tela_atual") == "Planejamento NL":
     st.session_state["tela_atual"] = "Planejar Priorização"
 
-opcoes_tela = ["Pagamentos (OB)", "Liquidação (NL)", "Planejar Priorização", "Relatório 009717"]
+opcoes_tela = [
+    "Liquidação (NL)",
+    "Programa de Desembolso (PD)",
+    "Pagamentos (OB)",
+    "Planejar Priorização",
+    "Relatório 009717",
+]
 if (
     "seletor_tela_global" not in st.session_state
     or st.session_state["seletor_tela_global"] not in opcoes_tela
@@ -1561,6 +1843,7 @@ with st.container(key="topo_navegacao"):
         format_func=lambda opcao: {
             "Pagamentos (OB)": "💳 Pagamentos (OB)",
             "Liquidação (NL)": "📑 Liquidação (NL)",
+            "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
             "Planejar Priorização": "🎯 Planejar Priorização",
             "Relatório 009717": "📊 Relatório 009717",
         }[opcao],
@@ -3827,6 +4110,211 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
     else:
         st.warning("Aguardando carregamento e relacionamento das planilhas...")
+
+elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
+    # ---------------------------------------------------------------------
+    # TELA PD — Programa de Desembolso
+    # ---------------------------------------------------------------------
+    st.markdown(
+        "<h2 class='titulo-pagina'>📅 Programa de Desembolso — Exercício 2026</h2>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='subtitulo-pagina'>Secretaria Executiva de Administração e Finanças (SEAF)</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='subtitulo-pagina'>Gerência Financeira (GFIN)</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+    _, coluna_relatorio_pd = st.columns([5, 1])
+    with coluna_relatorio_pd:
+        botao_relatorio_pd = st.empty()
+
+    dados_pd, erro_pd = carregar_dados_pd()
+    if erro_pd:
+        st.error(
+            "Não foi possível carregar a base de PD. "
+            "Confirme que a aba PD_ABA_TRATADA está publicada na web como CSV "
+            "ou liberada para leitura pública. Detalhe técnico: " + erro_pd
+        )
+    elif dados_pd.empty:
+        st.info("Ainda não há PDs tratados para os filtros selecionados.")
+    else:
+        st.sidebar.markdown("#### 📅 Filtros — Programa de Desembolso (PD)")
+        data_min_pd = dados_pd["Data Emissão"].dropna().min()
+        data_max_pd = dados_pd["Data Emissão"].dropna().max()
+
+        if pd.notna(data_min_pd) and pd.notna(data_max_pd):
+            intervalo_padrao_pd = (data_min_pd.date(), data_max_pd.date())
+            intervalo_pd = st.sidebar.date_input(
+                "Período de emissão",
+                value=intervalo_padrao_pd,
+                format="DD/MM/YYYY",
+                key="filtro_pd_periodo",
+            )
+        else:
+            intervalo_pd = None
+
+        def opcoes_pd(df, coluna):
+            return sorted(
+                valor for valor in df[coluna].dropna().astype(str).unique()
+                if valor and valor.upper() != "NÃO INFORMADO"
+            )
+
+        filtro_ug_pd = st.sidebar.multiselect(
+            "UG pagadora", opcoes_pd(dados_pd, "UG Pagadora"),
+            key="filtro_pd_ug",
+        )
+        filtro_fonte_pd = st.sidebar.multiselect(
+            "Fonte de recurso", opcoes_pd(dados_pd, "Fonte"),
+            key="filtro_pd_fonte",
+        )
+        filtro_gd_pd = st.sidebar.multiselect(
+            "GD", opcoes_pd(dados_pd, "GD"), key="filtro_pd_gd",
+        )
+        filtro_despesa_pd = st.sidebar.multiselect(
+            "Natureza da despesa", opcoes_pd(dados_pd, "Despesa"),
+            key="filtro_pd_despesa",
+        )
+        filtro_objeto_pd = st.sidebar.multiselect(
+            "Objeto da despesa", opcoes_pd(dados_pd, "Objeto da Despesa"),
+            key="filtro_pd_objeto",
+        )
+        filtro_credor_pd = st.sidebar.multiselect(
+            "Credor", opcoes_pd(dados_pd, "Nome do Credor"),
+            key="filtro_pd_credor",
+        )
+        filtro_status_pd = st.sidebar.multiselect(
+            "Status", opcoes_pd(dados_pd, "Status"), key="filtro_pd_status",
+        )
+        if st.sidebar.button("🔄 Atualizar dados de PD", key="atualizar_pd"):
+            carregar_dados_pd.clear()
+            st.rerun()
+
+        filtrado_pd = dados_pd.copy()
+        if isinstance(intervalo_pd, (tuple, list)) and len(intervalo_pd) == 2:
+            inicio_pd, fim_pd = intervalo_pd
+            datas_pd = filtrado_pd["Data Emissão"].dt.date
+            filtrado_pd = filtrado_pd[(datas_pd >= inicio_pd) & (datas_pd <= fim_pd)]
+        for coluna, selecionados in {
+            "UG Pagadora": filtro_ug_pd,
+            "Fonte": filtro_fonte_pd,
+            "GD": filtro_gd_pd,
+            "Despesa": filtro_despesa_pd,
+            "Objeto da Despesa": filtro_objeto_pd,
+            "Nome do Credor": filtro_credor_pd,
+            "Status": filtro_status_pd,
+        }.items():
+            if selecionados:
+                filtrado_pd = filtrado_pd[filtrado_pd[coluna].isin(selecionados)]
+
+        @st.dialog("Gerar Relatório de Programa de Desembolso")
+        def janela_relatorio_pd():
+            st.caption(
+                "Escolha o GD e a fonte para o arquivo. Os demais filtros "
+                "selecionados nesta tela serão mantidos."
+            )
+            opcoes_gd_relatorio = opcoes_pd(filtrado_pd, "GD")
+            grupos_relatorio_pd = st.multiselect(
+                "GD (vazio = todos)",
+                opcoes_gd_relatorio,
+                key="relatorio_pd_grupos",
+            )
+            base_fontes_relatorio_pd = filtrado_pd.copy()
+            if grupos_relatorio_pd:
+                base_fontes_relatorio_pd = base_fontes_relatorio_pd[
+                    base_fontes_relatorio_pd["GD"].isin(grupos_relatorio_pd)
+                ]
+            fontes_relatorio_pd = st.multiselect(
+                "Fonte de recurso (vazio = todas)",
+                opcoes_pd(base_fontes_relatorio_pd, "Fonte"),
+                key="relatorio_pd_fontes",
+            )
+            exportacao_pd = base_fontes_relatorio_pd.copy()
+            if fontes_relatorio_pd:
+                exportacao_pd = exportacao_pd[
+                    exportacao_pd["Fonte"].isin(fontes_relatorio_pd)
+                ]
+            if exportacao_pd.empty:
+                st.warning("Não há PDs para os filtros escolhidos.")
+                return
+            try:
+                relatorio_pd_excel = gerar_relatorio_pd_excel(exportacao_pd)
+                st.download_button(
+                    "Baixar relatório",
+                    data=relatorio_pd_excel,
+                    file_name=(
+                        "Relatório Programa de Desembolso "
+                        f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_baixar_relatorio_pd",
+                )
+            except (ModuleNotFoundError, RuntimeError, ValueError) as erro:
+                st.error(f"Não foi possível gerar o relatório de PD: {erro}")
+
+        if botao_relatorio_pd.button(
+            "📊 Gerar Relatório",
+            use_container_width=True,
+            key="btn_gerar_relatorio_pd",
+            type="primary",
+        ):
+            janela_relatorio_pd()
+
+        qtd_pds = len(filtrado_pd)
+        valor_pd = float(filtrado_pd["Valor"].sum())
+        valor_gd3_pd = float(filtrado_pd.loc[filtrado_pd["GD"] == "GD3", "Valor"].sum())
+        valor_gd4_pd = float(filtrado_pd.loc[filtrado_pd["GD"] == "GD4", "Valor"].sum())
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        with kpi1:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>QTD. DE PDs</p><h3 style='color:#002b49; margin:5px 0;'>{qtd_pds:,}</h3><p style='color:#28a745; font-size:11px; margin:0;'>📋 Documentos PD</p></div>".replace(",", "."),
+                unsafe_allow_html=True,
+            )
+        with kpi2:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL</p><h3 style='color:#028090; margin:5px 0;'>{formatar_brl(valor_pd)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Total programado</p></div>",
+                unsafe_allow_html=True,
+            )
+        with kpi3:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD3</p><h3 style='color:#f77f00; margin:5px 0;'>{formatar_brl(valor_gd3_pd)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD3</p></div>",
+                unsafe_allow_html=True,
+            )
+        with kpi4:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD4</p><h3 style='color:#2563eb; margin:5px 0;'>{formatar_brl(valor_gd4_pd)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD4</p></div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        def resumo_pd(coluna, titulo, limite=10):
+            resumo = (
+                filtrado_pd.groupby(coluna, dropna=False, as_index=False)["Valor"].sum()
+                .sort_values("Valor", ascending=False)
+                .head(limite)
+            )
+            resumo.columns = [titulo, "Valor total"]
+            return resumo
+
+        coluna_credor_pd, coluna_resumos_pd = st.columns([1.25, 0.75])
+        with coluna_credor_pd:
+            renderizar_tabela_credor_pd(filtrado_pd)
+        with coluna_resumos_pd:
+            renderizar_tabela_resumo_pd(
+                resumo_pd("UG Pagadora", "UG pagadora"),
+                "UG pagadora",
+                "UG pagadora",
+            )
+            st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+            renderizar_tabela_resumo_pd(
+                resumo_pd("Fonte", "Fonte"),
+                "Fonte",
+                "Fonte",
+            )
 
 elif st.session_state["tela_atual"] == "Relatório 009717":
     # ---------------------------------------------------------------------
