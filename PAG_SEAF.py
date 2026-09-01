@@ -38,15 +38,6 @@ def sincronizar_filtro(chave_memoria, chave_widget):
         st.session_state[chave_memoria] = st.session_state[chave_widget]
 
 
-def intervalo_mes_atual():
-    """Retorna o primeiro e o último dia do mês corrente."""
-    hoje = datetime.date.today()
-    inicio = hoje.replace(day=1)
-    proximo_mes = (inicio.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
-    fim = proximo_mes - datetime.timedelta(days=1)
-    return inicio, fim
-
-
 # Estado da Tela Ativa
 if "tela_atual" not in st.session_state:
     st.session_state["tela_atual"] = "Liquidação (NL)"
@@ -1880,7 +1871,7 @@ def carregar_base_nl_espelho_planejamento():
     col_numero = next((c for c in df1.columns if c.strip().upper() in ["NÚMERO", "NUMERO"]), None)
     df1["NE_Chave"] = chave_ne(df1[col_ne1])
     # Mantém a mesma interpretação de data utilizada no painel de NL.
-    df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce", dayfirst=True) if col_data else pd.NaT
+    df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce") if col_data else pd.NaT
     df1["Competencia"] = df1["Data_DT"].dt.strftime("%m/%Y").fillna("Não informada")
     df1["Grupo_Filtro"] = df1["Grupo"].fillna("Todos").astype(str).str.strip() if "Grupo" in df1.columns else "Todos"
     df1["Status_Filtro"] = df1["Status"].fillna("Não informado").astype(str).str.strip() if "Status" in df1.columns else "Não informado"
@@ -2073,13 +2064,26 @@ def carregar_base_ob_para_conferencia():
 
 
 def extrair_linhas_pdf_conferencia(conteudo_pdf):
-    """Extrai a tabela Credor + GD + Valor do PDF padrão do Relatório 009717."""
+    """Extrai Credor + GD + Valor do PDF do Relatório 009717 com validação em camadas.
+
+    Estratégia:
+    1) tenta ler a tabela principal pelas coordenadas reais das palavras no PDF;
+    2) se necessário, recorta somente a área da tabela principal e usa regex;
+    3) como último recurso, usa regex no texto da página, com travas contra os
+       quadros laterais de UG/GD/Fonte;
+    4) só aceita o resultado quando a soma das linhas confere com o TOTAL GERAL.
+
+    Isso evita que valores repetidos nos resumos laterais sejam interpretados
+    como novos credores e torna o leitor mais tolerante a pequenas mudanças de
+    layout do PDF.
+    """
     if pdfplumber is None:
         raise RuntimeError(
             "A biblioteca de leitura de PDF não está instalada. "
             "Execute a atualização das dependências da aplicação."
         )
 
+    padrao_valor = re.compile(r"^[0-9.]+,[0-9]{2}$")
     padrao_linha = re.compile(
         r"^(?P<credor>.+?)\s+(?P<gd>[34])\s+R\$\s*"
         r"(?P<valor>[0-9.]+,[0-9]{2})(?:\s+.*)?$"
@@ -2092,111 +2096,420 @@ def extrair_linhas_pdf_conferencia(conteudo_pdf):
         r"(?P<valor>[0-9.]+,[0-9]{2})(?:\s+.*)?$"
     )
     padrao_total_geral = re.compile(r"TOTAL GERAL\s+R\$\s*([0-9.]+,[0-9]{2})")
-    linhas = []
-    fontes_pdf = []
-    totais_declarados_pdf = []
 
-    def adicionar_linha(credor, gd, valor):
-        credor = credor.strip()
-        if not credor or credor.upper().startswith(("TOTAL", "GD TOTAL", "UG TOTAL")):
-            return
-        linhas.append(
-            {
-                "Credor": credor,
-                "Credor_Chave": normalizar_texto_conferencia(credor),
-                "GD": gd,
-                "Valor_PDF": converter_valor_monetario(pd.Series([valor])).iloc[0],
-            }
+    def _valor_float(valor):
+        convertido = converter_valor_monetario(pd.Series([valor])).iloc[0]
+        return float(convertido) if pd.notna(convertido) else 0.0
+
+    def _linha_valida(credor, gd, valor):
+        credor = str(credor or "").strip()
+        gd = str(gd or "").strip()
+        if not credor or gd not in {"3", "4"}:
+            return None
+        credor_norm = normalizar_texto_conferencia(credor)
+        if not credor_norm or credor_norm.startswith(("TOTAL", "GD TOTAL", "UG TOTAL", "FONTE ")):
+            return None
+        # Uma linha financeira precisa ter algum caractere textual no credor.
+        # Isso bloqueia UGs numéricas (ex.: 140100) e outros resumos laterais.
+        if not re.search(r"[A-Za-zÀ-ÿ]", credor):
+            return None
+        return {
+            "Credor": credor,
+            "Credor_Chave": credor_norm,
+            "GD": gd,
+            "Valor_PDF": _valor_float(valor),
+        }
+
+    def _agrupar_linhas(linhas):
+        if not linhas:
+            return pd.DataFrame(columns=["Credor_Chave", "GD", "Credor", "Valor_PDF"])
+        return (
+            pd.DataFrame(linhas)
+            .groupby(["Credor_Chave", "GD"], as_index=False)
+            .agg({"Credor": "first", "Valor_PDF": "sum"})
         )
 
-    with pdfplumber.open(io.BytesIO(conteudo_pdf)) as pdf:
+    def _agrupar_palavras_por_linha(palavras, tolerancia=3.5):
+        grupos = []
+        for palavra in sorted(palavras, key=lambda w: (float(w.get("top", 0)), float(w.get("x0", 0)))):
+            topo = float(palavra.get("top", 0))
+            destino = None
+            for grupo in reversed(grupos[-4:]):
+                if abs(topo - grupo["top"]) <= tolerancia:
+                    destino = grupo
+                    break
+            if destino is None:
+                destino = {"top": topo, "words": []}
+                grupos.append(destino)
+            destino["words"].append(palavra)
+            # Média móvel deixa o agrupamento menos sensível a pequenas diferenças.
+            destino["top"] = sum(float(w.get("top", 0)) for w in destino["words"]) / len(destino["words"])
+        return grupos
+
+    def _localizar_cabecalho_principal(palavras):
+        grupos = _agrupar_palavras_por_linha(palavras, tolerancia=3.5)
+        for grupo in grupos:
+            textos = [str(w.get("text", "")) for w in grupo["words"]]
+            linha_norm = normalizar_texto_conferencia(" ".join(textos))
+            if "NOME DO CREDOR" not in linha_norm or "GD" not in linha_norm or "VALOR" not in linha_norm:
+                continue
+
+            credor_words = [w for w in grupo["words"] if str(w.get("text", "")).upper() in {"NOME", "CREDOR"}]
+            gd_words = [w for w in grupo["words"] if str(w.get("text", "")).upper() == "GD"]
+            valor_words = [w for w in grupo["words"] if str(w.get("text", "")).upper() in {"VALOR", "TOTAL"}]
+            if not gd_words or not valor_words:
+                continue
+
+            gd = gd_words[0]
+            gd_centro = (float(gd["x0"]) + float(gd["x1"])) / 2
+            # "Valor Total" pode ter duas palavras; usamos toda a extensão do bloco.
+            valor_x0 = min(float(w["x0"]) for w in valor_words)
+            valor_x1 = max(float(w["x1"]) for w in valor_words)
+            credor_x0 = min([float(w["x0"]) for w in credor_words] or [0.0])
+            return {
+                "top": grupo["top"],
+                "bottom": max(float(w.get("bottom", grupo["top"])) for w in grupo["words"]),
+                "credor_x0": credor_x0,
+                "gd_centro": gd_centro,
+                "valor_x0": valor_x0,
+                "valor_x1": valor_x1,
+            }
+        return None
+
+    def _total_principal_por_coordenadas(palavras, cabecalho, largura_pagina):
+        if not cabecalho:
+            return None, None
+        grupos = _agrupar_palavras_por_linha(palavras, tolerancia=3.5)
+        # Limite horizontal da tabela principal: logo após a coluna Valor Total,
+        # mas nunca invade a metade direita onde ficam os quadros de resumo.
+        limite_x = min(largura_pagina * 0.74, cabecalho["valor_x1"] + max(25.0, largura_pagina * 0.035))
+        for grupo in grupos:
+            if grupo["top"] <= cabecalho["bottom"]:
+                continue
+            words_esq = [w for w in grupo["words"] if float(w.get("x0", 0)) < limite_x]
+            if not words_esq:
+                continue
+            texto = " ".join(str(w.get("text", "")) for w in sorted(words_esq, key=lambda w: float(w.get("x0", 0))))
+            norm = normalizar_texto_conferencia(texto)
+            if not norm.startswith("TOTAL GERAL"):
+                continue
+            match_valor = re.search(r"R\$\s*([0-9.]+,[0-9]{2})", texto)
+            if match_valor:
+                return _valor_float(match_valor.group(1)), grupo["top"]
+        return None, None
+
+    def _extrair_por_coordenadas(pdf):
+        linhas = []
+        fontes = []
+        totais = []
+        paginas_com_cabecalho = 0
+
+        for pagina in pdf.pages:
+            palavras = pagina.extract_words(
+                x_tolerance=1.5,
+                y_tolerance=3,
+                keep_blank_chars=False,
+                use_text_flow=False,
+            ) or []
+            if not palavras:
+                continue
+
+            cabecalho = _localizar_cabecalho_principal(palavras)
+            if not cabecalho:
+                continue
+            paginas_com_cabecalho += 1
+
+            total_pagina, top_total = _total_principal_por_coordenadas(palavras, cabecalho, float(pagina.width))
+            if total_pagina is not None:
+                totais.append(total_pagina)
+
+            limite_x_tabela = min(
+                float(pagina.width) * 0.74,
+                cabecalho["valor_x1"] + max(25.0, float(pagina.width) * 0.035),
+            )
+            limite_credor_gd = cabecalho["gd_centro"] - max(12.0, float(pagina.width) * 0.018)
+            limite_gd_valor = (cabecalho["gd_centro"] + cabecalho["valor_x0"]) / 2
+
+            grupos = _agrupar_palavras_por_linha(palavras, tolerancia=3.5)
+            for grupo in grupos:
+                if grupo["top"] <= cabecalho["bottom"] + 1:
+                    continue
+                if top_total is not None and grupo["top"] >= top_total - 1:
+                    continue
+
+                words = [
+                    w for w in grupo["words"]
+                    if cabecalho["credor_x0"] - 5 <= float(w.get("x0", 0)) < limite_x_tabela
+                ]
+                if not words:
+                    continue
+                words = sorted(words, key=lambda w: float(w.get("x0", 0)))
+
+                credor_words = [w for w in words if float(w.get("x0", 0)) < limite_credor_gd]
+                gd_words = [
+                    w for w in words
+                    if limite_credor_gd <= ((float(w.get("x0", 0)) + float(w.get("x1", 0))) / 2) < limite_gd_valor
+                    and str(w.get("text", "")).strip() in {"3", "4"}
+                ]
+                valor_words = [w for w in words if float(w.get("x0", 0)) >= limite_gd_valor]
+
+                if not credor_words or not gd_words or not valor_words:
+                    continue
+
+                credor = " ".join(str(w.get("text", "")) for w in credor_words).strip()
+                gd = str(gd_words[0].get("text", "")).strip()
+
+                # Procura o último token monetário da coluna Valor; o "R$" pode
+                # ser um token separado ou vir junto do valor, dependendo do PDF.
+                valor = None
+                for w in reversed(valor_words):
+                    token = str(w.get("text", "")).strip()
+                    token_limpo = token.replace("R$", "").strip()
+                    if padrao_valor.match(token_limpo):
+                        valor = token_limpo
+                        break
+                if valor is None:
+                    texto_valor = " ".join(str(w.get("text", "")) for w in valor_words)
+                    achado = re.search(r"R\$\s*([0-9.]+,[0-9]{2})", texto_valor)
+                    valor = achado.group(1) if achado else None
+
+                if valor:
+                    registro = _linha_valida(credor, gd, valor)
+                    if registro:
+                        linhas.append(registro)
+
+            # Fonte é um dado auxiliar e pode estar no quadro lateral. Ler pelas
+            # palavras é seguro porque não entra na tabela financeira principal.
+            grupos_todos = _agrupar_palavras_por_linha(palavras, tolerancia=3.5)
+            lendo_fonte = False
+            for grupo in grupos_todos:
+                texto = " ".join(str(w.get("text", "")) for w in sorted(grupo["words"], key=lambda w: float(w.get("x0", 0))))
+                norm = normalizar_texto_conferencia(texto)
+                if "FONTE DESPESA TOTAL POR FONTE" in norm:
+                    lendo_fonte = True
+                    continue
+                if lendo_fonte and norm.startswith("TOTAL GERAL"):
+                    lendo_fonte = False
+                    continue
+                if lendo_fonte:
+                    achado = re.search(r"(?<!\d)(\d{3})(?!\d)", texto)
+                    if achado:
+                        fontes.append(achado.group(1))
+
+        total_declarado = max(totais) if totais else None
+        return _agrupar_linhas(linhas), sorted(set(fontes)), total_declarado, paginas_com_cabecalho
+
+    def _extrair_por_area_texto(pdf):
+        """Fallback: recorta só a tabela de credores antes de aplicar regex."""
+        linhas = []
+        fontes = []
+        totais = []
+
+        for pagina in pdf.pages:
+            palavras = pagina.extract_words(x_tolerance=1.5, y_tolerance=3, use_text_flow=False) or []
+            cabecalho = _localizar_cabecalho_principal(palavras)
+            if not cabecalho:
+                continue
+
+            total_pagina, top_total = _total_principal_por_coordenadas(palavras, cabecalho, float(pagina.width))
+            if total_pagina is not None:
+                totais.append(total_pagina)
+
+            x1 = min(
+                float(pagina.width) * 0.74,
+                cabecalho["valor_x1"] + max(25.0, float(pagina.width) * 0.035),
+            )
+            y0 = max(0.0, cabecalho["bottom"] - 2)
+            y1 = top_total + 2 if top_total is not None else float(pagina.height)
+            if y1 <= y0:
+                continue
+
+            texto_area = pagina.crop((0, y0, x1, y1)).extract_text(
+                x_tolerance=2,
+                y_tolerance=3,
+                layout=False,
+            ) or ""
+            credor_pendente = ""
+            for linha in texto_area.splitlines():
+                linha = linha.strip()
+                if not linha:
+                    continue
+                norm = normalizar_texto_conferencia(linha)
+                if norm.startswith("TOTAL GERAL"):
+                    break
+
+                resultado = padrao_linha.match(linha)
+                if resultado:
+                    registro = _linha_valida(
+                        resultado.group("credor"), resultado.group("gd"), resultado.group("valor")
+                    )
+                    if registro:
+                        linhas.append(registro)
+                    credor_pendente = ""
+                    continue
+
+                resultado_sobreposto = padrao_gd_sobreposto.match(linha)
+                if resultado_sobreposto:
+                    credor = (resultado_sobreposto.group("inicio") + resultado_sobreposto.group("fim")).strip()
+                    registro = _linha_valida(credor, resultado_sobreposto.group("gd"), resultado_sobreposto.group("valor"))
+                    if registro:
+                        linhas.append(registro)
+                        credor_pendente = ""
+                        continue
+
+                resultado_quebrado = padrao_linha_quebrada.match(linha)
+                if resultado_quebrado and credor_pendente:
+                    registro = _linha_valida(credor_pendente, resultado_quebrado.group("gd"), resultado_quebrado.group("valor"))
+                    if registro:
+                        linhas.append(registro)
+                    credor_pendente = ""
+                    continue
+
+                if "R$" not in linha and not norm.startswith(("NOME DO CREDOR", "TOTAL")):
+                    credor_pendente = linha
+
+            # Fonte continua sendo lida do texto completo, mas apenas dentro do
+            # bloco explicitamente identificado como resumo de Fonte.
+            texto_completo = pagina.extract_text() or ""
+            lendo_fonte = False
+            for linha in texto_completo.splitlines():
+                norm = normalizar_texto_conferencia(linha)
+                if "FONTE DESPESA TOTAL POR FONTE" in norm:
+                    lendo_fonte = True
+                    continue
+                if lendo_fonte and norm.startswith("TOTAL GERAL"):
+                    lendo_fonte = False
+                    continue
+                if lendo_fonte:
+                    achado = re.search(r"(?<!\d)(\d{3})\s+R\$", linha)
+                    if achado:
+                        fontes.append(achado.group(1))
+
+        total_declarado = max(totais) if totais else None
+        return _agrupar_linhas(linhas), sorted(set(fontes)), total_declarado
+
+    def _extrair_por_regex_segura(pdf):
+        """Último fallback para PDFs antigos sem coordenadas de tabela confiáveis."""
+        linhas = []
+        fontes = []
+        totais = []
         for pagina in pdf.pages:
             texto = pagina.extract_text() or ""
-            linhas_pagina = texto.splitlines()
-            lendo_resumo_fonte = False
             credor_pendente = ""
-            for linha in linhas_pagina:
-                linha_normalizada = normalizar_texto_conferencia(linha)
-                totais_declarados_pdf.extend(
-                    padrao_total_geral.findall(linha.upper())
-                )
-                if "FONTE DESPESA TOTAL POR FONTE" in linha_normalizada:
-                    lendo_resumo_fonte = True
-                if lendo_resumo_fonte:
-                    if linha_normalizada.startswith("TOTAL GERAL"):
-                        lendo_resumo_fonte = False
-                    else:
-                        # No PDF em formato paisagem, o resumo da fonte pode
-                        # aparecer na mesma linha da tabela de credores.
-                        fonte_encontrada = re.search(r"(?<!\d)(\d{3})\s+R\$", linha)
-                        if fonte_encontrada:
-                            fontes_pdf.append(fonte_encontrada.group(1))
-                resultado = padrao_linha.match(linha.strip())
+            lendo_tabela = False
+            lendo_fonte = False
+            tabela_encerrada = False
+
+            for linha in texto.splitlines():
+                linha_limpa = linha.strip()
+                norm = normalizar_texto_conferencia(linha_limpa)
+
+                achados_total = padrao_total_geral.findall(linha_limpa.upper())
+                totais.extend(_valor_float(v) for v in achados_total)
+
+                if "NOME DO CREDOR" in norm and "GD" in norm and "VALOR" in norm:
+                    lendo_tabela = True
+                    tabela_encerrada = False
+                    credor_pendente = ""
+                    continue
+
+                if "FONTE DESPESA TOTAL POR FONTE" in norm:
+                    lendo_fonte = True
+                elif lendo_fonte and norm.startswith("TOTAL GERAL"):
+                    lendo_fonte = False
+                elif lendo_fonte:
+                    achado_fonte = re.search(r"(?<!\d)(\d{3})\s+R\$", linha_limpa)
+                    if achado_fonte:
+                        fontes.append(achado_fonte.group(1))
+
+                if lendo_tabela and norm.startswith("TOTAL GERAL"):
+                    lendo_tabela = False
+                    tabela_encerrada = True
+                    credor_pendente = ""
+                    continue
+                if not lendo_tabela or tabela_encerrada:
+                    continue
+
+                resultado = padrao_linha.match(linha_limpa)
                 if resultado:
-                    adicionar_linha(
-                        resultado.group("credor"),
-                        resultado.group("gd"),
-                        resultado.group("valor"),
-                    )
+                    registro = _linha_valida(resultado.group("credor"), resultado.group("gd"), resultado.group("valor"))
+                    if registro:
+                        linhas.append(registro)
                     credor_pendente = ""
                     continue
 
-                # Em alguns PDFs, o GD é posicionado por cima do fim da
-                # palavra. Ex.: "PAU3LO" representa o credor "PAULO" e GD 3.
-                resultado_sobreposto = padrao_gd_sobreposto.match(linha.strip())
+                resultado_sobreposto = padrao_gd_sobreposto.match(linha_limpa)
                 if resultado_sobreposto:
-                    adicionar_linha(
-                        resultado_sobreposto.group("inicio")
-                        + resultado_sobreposto.group("fim"),
-                        resultado_sobreposto.group("gd"),
-                        resultado_sobreposto.group("valor"),
-                    )
-                    credor_pendente = ""
-                    continue
+                    credor = (resultado_sobreposto.group("inicio") + resultado_sobreposto.group("fim")).strip()
+                    registro = _linha_valida(credor, resultado_sobreposto.group("gd"), resultado_sobreposto.group("valor"))
+                    if registro:
+                        linhas.append(registro)
+                        credor_pendente = ""
+                        continue
 
-                resultado_quebrado = padrao_linha_quebrada.match(linha.strip())
+                resultado_quebrado = padrao_linha_quebrada.match(linha_limpa)
                 if resultado_quebrado and credor_pendente:
-                    adicionar_linha(
-                        credor_pendente,
-                        resultado_quebrado.group("gd"),
-                        resultado_quebrado.group("valor"),
-                    )
+                    registro = _linha_valida(credor_pendente, resultado_quebrado.group("gd"), resultado_quebrado.group("valor"))
+                    if registro:
+                        linhas.append(registro)
                     credor_pendente = ""
                     continue
 
-                if (
-                    linha.strip()
-                    and "R$" not in linha
-                    and not linha_normalizada.startswith(
-                        ("NOME DO CREDOR", "TOTAL", "UG ", "GD ", "FONTE ")
-                    )
-                ):
-                    credor_pendente = linha.strip()
+                if linha_limpa and "R$" not in linha_limpa and not norm.startswith(("TOTAL", "UG ", "GD ", "FONTE ")):
+                    credor_pendente = linha_limpa
 
-    if not linhas:
+        total_declarado = max(totais) if totais else None
+        return _agrupar_linhas(linhas), sorted(set(fontes)), total_declarado
+
+    def _resultado_confere(tabela, total_declarado):
+        if tabela.empty:
+            return False
+        if total_declarado is None:
+            # PDFs muito antigos podem não expor o total de forma legível;
+            # nesse caso aceitamos somente a extração estrutural por coordenadas.
+            return True
+        return abs(float(tabela["Valor_PDF"].sum()) - float(total_declarado)) <= 0.005
+
+    diagnosticos = []
+    with pdfplumber.open(io.BytesIO(conteudo_pdf)) as pdf:
+        tabela, fontes, total_declarado, paginas_cabecalho = _extrair_por_coordenadas(pdf)
+        total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
+        diagnosticos.append(("coordenadas", total_extraido, total_declarado, len(tabela)))
+        if paginas_cabecalho and _resultado_confere(tabela, total_declarado):
+            return tabela, fontes
+
+        tabela, fontes, total_declarado_area = _extrair_por_area_texto(pdf)
+        if total_declarado_area is None:
+            total_declarado_area = total_declarado
+        total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
+        diagnosticos.append(("área da tabela", total_extraido, total_declarado_area, len(tabela)))
+        if _resultado_confere(tabela, total_declarado_area):
+            return tabela, fontes
+
+        tabela, fontes, total_declarado_regex = _extrair_por_regex_segura(pdf)
+        if total_declarado_regex is None:
+            total_declarado_regex = total_declarado_area
+        total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
+        diagnosticos.append(("regex segura", total_extraido, total_declarado_regex, len(tabela)))
+        if _resultado_confere(tabela, total_declarado_regex):
+            return tabela, fontes
+
+    if all(qtd == 0 for _, _, _, qtd in diagnosticos):
         raise ValueError(
-            "Não foi possível localizar as linhas de Credor, GD e Valor no PDF. "
-            "Envie o PDF gerado pelo Relatório 009717."
+            "Não foi possível localizar a tabela principal de Credor, GD e Valor no PDF. "
+            "Envie o PDF gerado pelo Relatório 009717 sem conversão para imagem."
         )
 
-    tabela_pdf = (
-        pd.DataFrame(linhas)
-        .groupby(["Credor_Chave", "GD"], as_index=False)
-        .agg({"Credor": "first", "Valor_PDF": "sum"})
+    detalhes = "; ".join(
+        f"{metodo}: {qtd} linha(s), soma {formatar_brl(total)}, "
+        + (f"total declarado {formatar_brl(declarado)}" if declarado is not None else "total declarado não identificado")
+        for metodo, total, declarado, qtd in diagnosticos
     )
-    if totais_declarados_pdf:
-        total_declarado = max(
-            converter_valor_monetario(pd.Series(totais_declarados_pdf))
-        )
-        total_extraido = tabela_pdf["Valor_PDF"].sum()
-        if abs(total_extraido - total_declarado) > 0.005:
-            raise ValueError(
-                "A leitura do PDF ficou incompleta: o total das linhas extraídas "
-                f"({formatar_brl(total_extraido)}) não confere com o total declarado "
-                f"no PDF ({formatar_brl(total_declarado)})."
-            )
-    return tabela_pdf, sorted(set(fontes_pdf))
-
+    raise ValueError(
+        "A leitura do PDF não atingiu consistência suficiente para comparar com a Base OB. "
+        "Nenhuma das estratégias de extração fechou com o TOTAL GERAL. "
+        f"Diagnóstico: {detalhes}."
+    )
 
 def comparar_pdf_com_base_ob(conteudo_pdf, data_pagamento, classificacao):
     """Compara o PDF SIAFIM com a base OB no recorte definido pelo usuário."""
@@ -3391,22 +3704,12 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     # O seletor de período fica fora do formulário: ele precisa redesenhar os
     # campos de mês ou datas imediatamente, sem aplicar os demais filtros.
-    # Ao entrar em "Por Intervalo de Datas", prepara o MÊS ATUAL apenas nos
-    # widgets (rascunho). O painel continua usando a memória aplicada até o
-    # usuário clicar em "Aplicar filtros".
-    def preparar_intervalo_ob():
-        if st.session_state.get("w_ob_tipo_data") == "Por Intervalo de Datas":
-            inicio_mes, fim_mes = intervalo_mes_atual()
-            st.session_state["w_ob_dt_ini"] = inicio_mes
-            st.session_state["w_ob_dt_fim"] = fim_mes
-
     if "w_ob_tipo_data" not in st.session_state:
         st.session_state["w_ob_tipo_data"] = st.session_state["mem_ob_tipo_data"]
     tipo_filtro_data = st.sidebar.radio(
         "Como deseja filtrar o período?",
         options=["Por Mês de Competência", "Por Intervalo de Datas"],
         key="w_ob_tipo_data",
-        on_change=preparar_intervalo_ob,
     )
 
     # O formulário impede o rerun a cada clique dos demais multiselects. O
@@ -3437,19 +3740,14 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
             val_ini = st.session_state["mem_ob_dt_ini"] or data_min
             val_fim = st.session_state["mem_ob_dt_fim"] or data_max
-            if "w_ob_dt_ini" not in st.session_state:
-                st.session_state["w_ob_dt_ini"] = val_ini
-            if "w_ob_dt_fim" not in st.session_state:
-                st.session_state["w_ob_dt_fim"] = val_fim
-
             col_dt1, col_dt2 = st.columns(2)
             with col_dt1:
                 data_inicio = st.date_input(
-                    "Data Inicial:", format="DD/MM/YYYY", key="w_ob_dt_ini"
+                    "Data Inicial:", value=val_ini, format="DD/MM/YYYY", key="w_ob_dt_ini"
                 )
             with col_dt2:
                 data_fim = st.date_input(
-                    "Data Final:", format="DD/MM/YYYY", key="w_ob_dt_fim"
+                    "Data Final:", value=val_fim, format="DD/MM/YYYY", key="w_ob_dt_fim"
                 )
 
         st.divider()
@@ -4129,7 +4427,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         col_data = next((c for c in df1.columns if "data" in c.lower()), None)
         if col_data:
-            df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce", dayfirst=True)
+            df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce")
             df1["Competencia"] = df1["Data_DT"].dt.strftime("%m/%Y")
         else:
             df1["Data_DT"] = pd.NaT
@@ -5048,28 +5346,17 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         data_min_nl = datas_nl_validas.min().date() if not datas_nl_validas.empty else datetime.date(2026, 1, 1)
         data_max_nl = datas_nl_validas.max().date() if not datas_nl_validas.empty else datetime.date(2026, 12, 31)
 
-        # O calendário precisa permitir selecionar o mês corrente mesmo quando
-        # ainda não houver lançamentos desse mês na base. Por isso os limites são
-        # do exercício, e não a menor/maior data já carregada.
-        limite_ini_nl = datetime.date(2026, 1, 1)
-        limite_fim_nl = datetime.date(2026, 12, 31)
-
         def ajustar_data_nl(valor, padrao):
             data = pd.to_datetime(valor, errors="coerce")
             if pd.isna(data):
                 return padrao
             data = data.date()
-            return min(max(data, limite_ini_nl), limite_fim_nl)
+            return min(max(data, data_min_nl), data_max_nl)
 
-        inicio_mes_nl, fim_mes_nl = intervalo_mes_atual()
-        data_ini_padrao = ajustar_data_nl(
-            st.session_state.get("mem_nl_dt_ini"), inicio_mes_nl
-        )
-        data_fim_padrao = ajustar_data_nl(
-            st.session_state.get("mem_nl_dt_fim"), fim_mes_nl
-        )
+        data_ini_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_ini"), data_min_nl)
+        data_fim_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_fim"), data_max_nl)
         if data_ini_padrao > data_fim_padrao:
-            data_ini_padrao, data_fim_padrao = inicio_mes_nl, fim_mes_nl
+            data_ini_padrao, data_fim_padrao = data_min_nl, data_max_nl
 
         def limpar_filtros_nl():
             st.session_state["mem_nl_tipo_periodo"] = "Por Mês de Competência"
@@ -5084,9 +5371,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["mem_nl_objetos"] = []
             st.session_state["w_nl_tipo_periodo"] = "Por Mês de Competência"
             st.session_state["w_nl_comps"] = []
-            inicio_mes, fim_mes = intervalo_mes_atual()
-            st.session_state["w_nl_dt_ini"] = inicio_mes
-            st.session_state["w_nl_dt_fim"] = fim_mes
+            st.session_state["w_nl_dt_ini"] = data_min_nl
+            st.session_state["w_nl_dt_fim"] = data_max_nl
             st.session_state["w_nl_grupo"] = []
             st.session_state["w_nl_status"] = "Todos"
             st.session_state["w_nl_credores"] = []
@@ -5095,21 +5381,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         # O seletor de período fica fora do formulário para redesenhar os
         # campos de competência ou datas assim que o usuário alterná-lo.
-        # A troca para intervalo prepara o mês atual somente nos widgets; os
-        # filtros aplicados continuam intactos até o clique em "Aplicar filtros".
-        def preparar_intervalo_nl():
-            if st.session_state.get("w_nl_tipo_periodo") == "Por Intervalo de Datas":
-                inicio_mes, fim_mes = intervalo_mes_atual()
-                st.session_state["w_nl_dt_ini"] = inicio_mes
-                st.session_state["w_nl_dt_fim"] = fim_mes
-
         if "w_nl_tipo_periodo" not in st.session_state:
             st.session_state["w_nl_tipo_periodo"] = st.session_state["mem_nl_tipo_periodo"]
         tipo_periodo = st.sidebar.radio(
             "Como deseja filtrar o período?",
             options=["Por Mês de Competência", "Por Intervalo de Datas"],
             key="w_nl_tipo_periodo",
-            on_change=preparar_intervalo_nl,
         )
 
         # O formulário elimina o rerun a cada seleção dos demais filtros.
@@ -5129,22 +5406,17 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     key="w_nl_comps",
                 )
             else:
-                if "w_nl_dt_ini" not in st.session_state:
-                    st.session_state["w_nl_dt_ini"] = data_ini_padrao
-                if "w_nl_dt_fim" not in st.session_state:
-                    st.session_state["w_nl_dt_fim"] = data_fim_padrao
-
                 col_ini_nl, col_fim_nl = st.columns(2)
                 with col_ini_nl:
                     data_ini_nl = st.date_input(
-                        "Data Inicial:",
-                        min_value=limite_ini_nl, max_value=limite_fim_nl,
+                        "Data Inicial:", value=data_ini_padrao,
+                        min_value=data_min_nl, max_value=data_max_nl,
                         format="DD/MM/YYYY", key="w_nl_dt_ini",
                     )
                 with col_fim_nl:
                     data_fim_nl = st.date_input(
-                        "Data Final:",
-                        min_value=limite_ini_nl, max_value=limite_fim_nl,
+                        "Data Final:", value=data_fim_padrao,
+                        min_value=data_min_nl, max_value=data_max_nl,
                         format="DD/MM/YYYY", key="w_nl_dt_fim",
                     )
 
