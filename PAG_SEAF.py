@@ -60,6 +60,8 @@ if "mem_ob_fontes" not in st.session_state:
     st.session_state["mem_ob_fontes"] = []
 if "mem_ob_objetos" not in st.session_state:
     st.session_state["mem_ob_objetos"] = []
+if "mem_ob_tipo_item" not in st.session_state:
+    st.session_state["mem_ob_tipo_item"] = []
 
 # --- MEMÓRIA DA TELA 2 (Liquidação - NL) ---
 if "mem_nl_tipo_periodo" not in st.session_state:
@@ -2441,6 +2443,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
             "Despesa",
             "OBJETO",
             "DocumentoGD",
+            "Tipo Item",
         ]
         for col in colunas_obrigatorias:
             if col not in df.columns:
@@ -2464,6 +2467,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
                 "Fonte",
                 "Nome do Credor",
                 "Tipo de OB",
+                "Tipo Item",
             ]
             if coluna in df.columns
         ]
@@ -2591,6 +2595,22 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
             df["DocumentoGD"].fillna("NÃO CONSTA").astype(str).str.strip()
         )
 
+        # Classificação original do Qlik: Item x Retenção.
+        # Normalizamos apenas para garantir que diferenças de acento/caixa/espaços
+        # não fragmentem o filtro em opções equivalentes.
+        def normalizar_tipo_item_ob(valor):
+            texto_original = "" if pd.isna(valor) else str(valor).strip()
+            texto = unicodedata.normalize("NFKD", texto_original)
+            texto = "".join(c for c in texto if not unicodedata.combining(c))
+            texto = texto.upper().strip()
+            if "RETEN" in texto:
+                return "RETENÇÃO"
+            if "ITEM" in texto or not texto:
+                return "ITEM"
+            return texto_original.upper()
+
+        df["Tipo_Item_Tratado"] = df["Tipo Item"].apply(normalizar_tipo_item_ob)
+
         return df
 
     try:
@@ -2622,7 +2642,15 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
     # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA OB ---
     # IMPORTANTE: esta função consulta somente a memória APLICADA. As escolhas
     # feitas no formulário não alteram o painel até o usuário confirmar.
-    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_cred=False, ign_fnt=False, ign_obj=False):
+    def filtrar_df_ob(
+        df,
+        ign_mes=False,
+        ign_dsp=False,
+        ign_tipo_item=False,
+        ign_cred=False,
+        ign_fnt=False,
+        ign_obj=False,
+    ):
         d = df.copy()
         if d.empty:
             return d
@@ -2654,6 +2682,10 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
             if tipos_selecionados:
                 d = d[d["Despesa_Tratada"].isin(tipos_selecionados)]
 
+        # Filtro Classificação do lançamento (ITEM x RETENÇÃO)
+        if not ign_tipo_item and st.session_state["mem_ob_tipo_item"]:
+            d = d[d["Tipo_Item_Tratado"].isin(st.session_state["mem_ob_tipo_item"])]
+
         # Filtro Credores
         if not ign_cred and st.session_state["mem_ob_credores"]:
             d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
@@ -2682,6 +2714,25 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         "RP (Restos a Pagar)",
         "DEA (Exercícios Anteriores)",
     ]
+
+    df_para_tipo_item = filtrar_df_ob(df_base, ign_tipo_item=True)
+    ordem_tipo_item_ob = ["ITEM", "RETENÇÃO"]
+    tipos_item_disponiveis = (
+        [
+            tipo
+            for tipo in ordem_tipo_item_ob
+            if tipo in df_para_tipo_item["Tipo_Item_Tratado"].dropna().unique()
+        ]
+        if not df_para_tipo_item.empty
+        else []
+    )
+    # Preserva eventuais classificações futuras sem misturá-las às duas oficiais.
+    if not df_para_tipo_item.empty:
+        tipos_item_disponiveis += sorted(
+            str(tipo).strip()
+            for tipo in df_para_tipo_item["Tipo_Item_Tratado"].dropna().unique()
+            if str(tipo).strip() and str(tipo).strip() not in tipos_item_disponiveis
+        )
 
     df_para_credores = filtrar_df_ob(df_base, ign_cred=True)
     nomes_disponiveis = (
@@ -2715,6 +2766,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
     despesas_validas_ob = [d for d in st.session_state["mem_ob_despesa"] if d in opcoes_despesa_ob]
+    validos_ti_ob = [t for t in st.session_state["mem_ob_tipo_item"] if t in tipos_item_disponiveis]
     validos_c_ob = [c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis]
     validos_f_ob = [f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes]
     validos_o_ob = [o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos]
@@ -2727,6 +2779,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_dt_ini"] = datetime.date(2026, 1, 1)
         st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
         st.session_state["mem_ob_despesa"] = []
+        st.session_state["mem_ob_tipo_item"] = []
         st.session_state["mem_ob_credores"] = []
         st.session_state["mem_ob_fontes"] = []
         st.session_state["mem_ob_objetos"] = []
@@ -2737,6 +2790,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["w_ob_dt_ini"] = datetime.date(2026, 1, 1)
         st.session_state["w_ob_dt_fim"] = datetime.date(2026, 12, 31)
         st.session_state["w_ob_despesa"] = []
+        st.session_state["w_ob_tipo_item"] = []
         st.session_state["w_ob_credores"] = []
         st.session_state["w_ob_fontes"] = []
         st.session_state["w_ob_objetos"] = []
@@ -2795,6 +2849,15 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         )
 
         st.divider()
+        tipos_item_selecionados = st.multiselect(
+            "Filtrar por Classificação (Tipo Item):",
+            options=tipos_item_disponiveis,
+            default=validos_ti_ob,
+            placeholder="ITEM e RETENÇÃO",
+            key="w_ob_tipo_item",
+        )
+
+        st.divider()
         nomes_selecionados = st.multiselect(
             "Filtrar por Entidade / Credor:",
             options=nomes_disponiveis,
@@ -2837,6 +2900,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_dt_ini"] = data_inicio
         st.session_state["mem_ob_dt_fim"] = data_fim
         st.session_state["mem_ob_despesa"] = list(despesas_selecionadas)
+        st.session_state["mem_ob_tipo_item"] = list(tipos_item_selecionados)
         st.session_state["mem_ob_credores"] = list(nomes_selecionados)
         st.session_state["mem_ob_fontes"] = list(fontes_selecionadas)
         st.session_state["mem_ob_objetos"] = list(objeto_selecionado)
