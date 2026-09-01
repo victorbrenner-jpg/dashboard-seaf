@@ -17,6 +17,11 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
+try:
+    import pdfplumber
+except ModuleNotFoundError:
+    pdfplumber = None
+
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
     page_title="Painel de Controle Financeiro SEAF - 2026",
@@ -31,6 +36,15 @@ st.set_page_config(
 def sincronizar_filtro(chave_memoria, chave_widget):
     if chave_widget in st.session_state:
         st.session_state[chave_memoria] = st.session_state[chave_widget]
+
+
+def intervalo_mes_atual():
+    """Retorna o primeiro e o último dia do mês corrente."""
+    hoje = datetime.date.today()
+    inicio = hoje.replace(day=1)
+    proximo_mes = (inicio.replace(day=28) + datetime.timedelta(days=4)).replace(day=1)
+    fim = proximo_mes - datetime.timedelta(days=1)
+    return inicio, fim
 
 
 # Estado da Tela Ativa
@@ -54,6 +68,8 @@ elif isinstance(st.session_state["mem_ob_despesa"], str):
         if st.session_state["mem_ob_despesa"] == "Todas as Despesas"
         else [st.session_state["mem_ob_despesa"]]
     )
+if "mem_ob_grupos" not in st.session_state:
+    st.session_state["mem_ob_grupos"] = []
 if "mem_ob_credores" not in st.session_state:
     st.session_state["mem_ob_credores"] = []
 if "mem_ob_fontes" not in st.session_state:
@@ -1959,6 +1975,548 @@ def carregar_historico_ob_fonte_500():
 
 
 # -------------------------------------------------------------------------
+# CONFERÊNCIA SIAFIM × BASE DE PAGAMENTOS (OB)
+# -------------------------------------------------------------------------
+LINK_BASE_OB_CONFERENCIA = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
+    "pub?gid=1786485134&single=true&output=csv"
+)
+
+
+def normalizar_texto_conferencia(valor):
+    """Cria uma chave estável para comparar credores de fontes distintas."""
+    texto = unicodedata.normalize("NFKD", str(valor or ""))
+    texto = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
+    return re.sub(r"[^A-Z0-9]+", " ", texto.upper()).strip()
+
+
+def classificar_gd_conferencia(valor):
+    texto = normalizar_texto_conferencia(valor)
+    if (
+        "INVEST" in texto
+        or "GD4" in texto
+        or "GND4" in texto
+        or re.search(r"(^| )4($| )", texto)
+    ):
+        return "4"
+    return "3"
+
+
+def classificar_tipo_item_conferencia(valor):
+    texto = normalizar_texto_conferencia(valor)
+    return "RETENÇÃO" if "RETEN" in texto else "ITEM"
+
+
+def extrair_codigo_fonte_conferencia(valor):
+    """Obtém o código da fonte para comparar textos de origens diferentes."""
+    resultado = re.search(r"(?<!\d)(\d{3})(?!\d)", str(valor or ""))
+    return resultado.group(1) if resultado else ""
+
+
+@st.cache_data(ttl=60, show_spinner=False)
+def carregar_base_ob_para_conferencia():
+    """Carrega a mesma BASE consolidada usada na tela Pagamentos (OB)."""
+    try:
+        df = ler_csv_url(LINK_BASE_OB_CONFERENCIA)
+    except Exception:
+        return pd.DataFrame()
+
+    if df.empty:
+        return pd.DataFrame()
+
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    df.columns = [str(coluna).strip() for coluna in df.columns]
+    colunas = [
+        "Número", "NE", "Data Emissão", "Valor", "Fonte", "Nome do Credor",
+        "Credor", "Tipo de OB", "Tipo Item", "GRUPO", "DocumentoGD",
+    ]
+    for coluna in colunas:
+        if coluna not in df.columns:
+            df[coluna] = None
+
+    df = df.dropna(subset=["Valor"]).copy()
+    chaves = []
+    for coluna in [
+        "Número", "NE", "Data Emissão", "Valor", "Fonte", "Nome do Credor",
+        "Tipo de OB", "Tipo Item",
+    ]:
+        chave = f"__conferencia_{coluna}"
+        if coluna == "Valor":
+            df[chave] = converter_valor_monetario(df[coluna]).round(2)
+        elif coluna == "Data Emissão":
+            datas = pd.to_datetime(df[coluna], errors="coerce", dayfirst=True)
+            df[chave] = datas.dt.strftime("%Y-%m-%d").fillna(
+                df[coluna].fillna("").astype(str).str.strip().str.upper()
+            )
+        else:
+            df[chave] = (
+                df[coluna].fillna("").astype(str).str.strip().str.upper()
+                .str.replace(r"\s+", " ", regex=True)
+            )
+        chaves.append(chave)
+    df = df.drop_duplicates(subset=chaves, keep="first").copy()
+
+    df["Data_Conferencia"] = pd.to_datetime(
+        df["Data Emissão"], errors="coerce", dayfirst=True
+    ).dt.date
+    df["Valor_Conferencia"] = converter_valor_monetario(df["Valor"])
+    df["Credor_Exibicao"] = (
+        df["Nome do Credor"].fillna(df["Credor"]).fillna("NÃO IDENTIFICADO")
+        .astype(str).str.strip().str.upper()
+    )
+    df["Credor_Chave"] = df["Credor_Exibicao"].apply(normalizar_texto_conferencia)
+    df["GD_Conferencia"] = df["GRUPO"].apply(classificar_gd_conferencia)
+    df["Tipo_Item_Conferencia"] = df["Tipo Item"].apply(classificar_tipo_item_conferencia)
+    df["Fonte_Conferencia"] = df["Fonte"].apply(extrair_codigo_fonte_conferencia)
+    return df
+
+
+def extrair_linhas_pdf_conferencia(conteudo_pdf):
+    """Extrai a tabela Credor + GD + Valor do PDF padrão do Relatório 009717."""
+    if pdfplumber is None:
+        raise RuntimeError(
+            "A biblioteca de leitura de PDF não está instalada. "
+            "Execute a atualização das dependências da aplicação."
+        )
+
+    padrao_linha = re.compile(
+        r"^(?P<credor>.+?)\s+(?P<gd>[34])\s+R\$\s*"
+        r"(?P<valor>[0-9.]+,[0-9]{2})(?:\s+.*)?$"
+    )
+    padrao_linha_quebrada = re.compile(
+        r"^(?P<gd>[34])\s+R\$\s*(?P<valor>[0-9.]+,[0-9]{2})(?:\s+.*)?$"
+    )
+    padrao_gd_sobreposto = re.compile(
+        r"^(?P<inicio>.+?)(?P<gd>[34])(?P<fim>\S+)\s+R\$\s*"
+        r"(?P<valor>[0-9.]+,[0-9]{2})(?:\s+.*)?$"
+    )
+    padrao_total_geral = re.compile(r"TOTAL GERAL\s+R\$\s*([0-9.]+,[0-9]{2})")
+    linhas = []
+    fontes_pdf = []
+    totais_declarados_pdf = []
+
+    def adicionar_linha(credor, gd, valor):
+        credor = credor.strip()
+        if not credor or credor.upper().startswith(("TOTAL", "GD TOTAL", "UG TOTAL")):
+            return
+        linhas.append(
+            {
+                "Credor": credor,
+                "Credor_Chave": normalizar_texto_conferencia(credor),
+                "GD": gd,
+                "Valor_PDF": converter_valor_monetario(pd.Series([valor])).iloc[0],
+            }
+        )
+
+    with pdfplumber.open(io.BytesIO(conteudo_pdf)) as pdf:
+        for pagina in pdf.pages:
+            texto = pagina.extract_text() or ""
+            linhas_pagina = texto.splitlines()
+            lendo_resumo_fonte = False
+            credor_pendente = ""
+            for linha in linhas_pagina:
+                linha_normalizada = normalizar_texto_conferencia(linha)
+                totais_declarados_pdf.extend(
+                    padrao_total_geral.findall(linha.upper())
+                )
+                if "FONTE DESPESA TOTAL POR FONTE" in linha_normalizada:
+                    lendo_resumo_fonte = True
+                if lendo_resumo_fonte:
+                    if linha_normalizada.startswith("TOTAL GERAL"):
+                        lendo_resumo_fonte = False
+                    else:
+                        # No PDF em formato paisagem, o resumo da fonte pode
+                        # aparecer na mesma linha da tabela de credores.
+                        fonte_encontrada = re.search(r"(?<!\d)(\d{3})\s+R\$", linha)
+                        if fonte_encontrada:
+                            fontes_pdf.append(fonte_encontrada.group(1))
+                resultado = padrao_linha.match(linha.strip())
+                if resultado:
+                    adicionar_linha(
+                        resultado.group("credor"),
+                        resultado.group("gd"),
+                        resultado.group("valor"),
+                    )
+                    credor_pendente = ""
+                    continue
+
+                # Em alguns PDFs, o GD é posicionado por cima do fim da
+                # palavra. Ex.: "PAU3LO" representa o credor "PAULO" e GD 3.
+                resultado_sobreposto = padrao_gd_sobreposto.match(linha.strip())
+                if resultado_sobreposto:
+                    adicionar_linha(
+                        resultado_sobreposto.group("inicio")
+                        + resultado_sobreposto.group("fim"),
+                        resultado_sobreposto.group("gd"),
+                        resultado_sobreposto.group("valor"),
+                    )
+                    credor_pendente = ""
+                    continue
+
+                resultado_quebrado = padrao_linha_quebrada.match(linha.strip())
+                if resultado_quebrado and credor_pendente:
+                    adicionar_linha(
+                        credor_pendente,
+                        resultado_quebrado.group("gd"),
+                        resultado_quebrado.group("valor"),
+                    )
+                    credor_pendente = ""
+                    continue
+
+                if (
+                    linha.strip()
+                    and "R$" not in linha
+                    and not linha_normalizada.startswith(
+                        ("NOME DO CREDOR", "TOTAL", "UG ", "GD ", "FONTE ")
+                    )
+                ):
+                    credor_pendente = linha.strip()
+
+    if not linhas:
+        raise ValueError(
+            "Não foi possível localizar as linhas de Credor, GD e Valor no PDF. "
+            "Envie o PDF gerado pelo Relatório 009717."
+        )
+
+    tabela_pdf = (
+        pd.DataFrame(linhas)
+        .groupby(["Credor_Chave", "GD"], as_index=False)
+        .agg({"Credor": "first", "Valor_PDF": "sum"})
+    )
+    if totais_declarados_pdf:
+        total_declarado = max(
+            converter_valor_monetario(pd.Series(totais_declarados_pdf))
+        )
+        total_extraido = tabela_pdf["Valor_PDF"].sum()
+        if abs(total_extraido - total_declarado) > 0.005:
+            raise ValueError(
+                "A leitura do PDF ficou incompleta: o total das linhas extraídas "
+                f"({formatar_brl(total_extraido)}) não confere com o total declarado "
+                f"no PDF ({formatar_brl(total_declarado)})."
+            )
+    return tabela_pdf, sorted(set(fontes_pdf))
+
+
+def comparar_pdf_com_base_ob(conteudo_pdf, data_pagamento, classificacao):
+    """Compara o PDF SIAFIM com a base OB no recorte definido pelo usuário."""
+    pdf_agrupado, fontes_pdf = extrair_linhas_pdf_conferencia(conteudo_pdf)
+    # O INSS não integra o painel de Pagamentos (OB), portanto não deve gerar
+    # uma divergência operacional na conciliação.
+    pdf_agrupado = pdf_agrupado[
+        ~pdf_agrupado["Credor_Chave"].str.contains("INSS", na=False)
+    ].copy()
+    base = carregar_base_ob_para_conferencia().copy()
+    if base.empty:
+        raise ValueError("A base consolidada de Pagamentos (OB) está indisponível.")
+
+    base = base[base["Data_Conferencia"] == data_pagamento].copy()
+    if classificacao != "TODAS":
+        base = base[base["Tipo_Item_Conferencia"] == classificacao].copy()
+    if fontes_pdf:
+        base = base[base["Fonte_Conferencia"].isin(fontes_pdf)].copy()
+    base = base[
+        ~base["Credor_Chave"].str.contains("INSS", na=False)
+    ].copy()
+
+    # O SIAFIM consolida retenções no credor padrão abaixo. Na Base OB os
+    # valores podem estar associados a diversos credores; ao existir essa
+    # linha no PDF, agrupamos todas as retenções do dia no mesmo credor.
+    credor_retenção_pdf = "PREFEITURA DA CIDADE DO RECIFE - RETENÇÃO"
+    chave_retenção_pdf = normalizar_texto_conferencia(credor_retenção_pdf)
+    if pdf_agrupado["Credor_Chave"].eq(chave_retenção_pdf).any():
+        mascara_retenção = base["Tipo_Item_Conferencia"].eq("RETENÇÃO")
+        base.loc[mascara_retenção, "Credor_Exibicao"] = credor_retenção_pdf
+        base.loc[mascara_retenção, "Credor_Chave"] = chave_retenção_pdf
+
+    base_agrupada = (
+        base.groupby(["Credor_Chave", "GD_Conferencia"], as_index=False)
+        .agg(
+            Credor_Base=("Credor_Exibicao", "first"),
+            Valor_Base=("Valor_Conferencia", "sum"),
+            Registros_Base=("Valor_Conferencia", "size"),
+        )
+        .rename(columns={"GD_Conferencia": "GD"})
+    )
+    por_tipo = (
+        base.pivot_table(
+            index=["Credor_Chave", "GD_Conferencia"],
+            columns="Tipo_Item_Conferencia",
+            values="Valor_Conferencia",
+            aggfunc="sum",
+            fill_value=0.0,
+        )
+        .reset_index()
+        .rename(columns={"GD_Conferencia": "GD"})
+    )
+    for tipo in ["ITEM", "RETENÇÃO"]:
+        if tipo not in por_tipo.columns:
+            por_tipo[tipo] = 0.0
+
+    comparacao = pdf_agrupado.merge(
+        base_agrupada,
+        on=["Credor_Chave", "GD"],
+        how="outer",
+    ).merge(
+        por_tipo[["Credor_Chave", "GD", "ITEM", "RETENÇÃO"]],
+        on=["Credor_Chave", "GD"],
+        how="left",
+    )
+    comparacao["Credor"] = comparacao["Credor"].fillna(comparacao["Credor_Base"])
+    comparacao["Valor_PDF"] = comparacao["Valor_PDF"].fillna(0.0)
+    comparacao["Valor_Base"] = comparacao["Valor_Base"].fillna(0.0)
+    comparacao["ITEM"] = comparacao["ITEM"].fillna(0.0)
+    comparacao["RETENÇÃO"] = comparacao["RETENÇÃO"].fillna(0.0)
+    comparacao["Registros_Base"] = comparacao["Registros_Base"].fillna(0).astype(int)
+    comparacao["Diferença"] = comparacao["Valor_Base"] - comparacao["Valor_PDF"]
+    tolerancia = 0.005
+    comparacao["Situação"] = np.select(
+        [
+            comparacao["Valor_PDF"].eq(0),
+            comparacao["Valor_Base"].eq(0),
+            comparacao["Diferença"].abs().le(tolerancia),
+        ],
+        ["Somente na Base OB", "Somente no PDF", "Conciliado"],
+        default="Valor divergente",
+    )
+    comparacao["Indício"] = np.where(
+        comparacao["RETENÇÃO"] > tolerancia,
+        "Há retenção na base OB",
+        "Verificar lançamento/credor",
+    )
+    comparacao = comparacao.sort_values(
+        ["Situação", "Diferença", "Credor"],
+        ascending=[True, False, True],
+    ).reset_index(drop=True)
+    return comparacao, base, fontes_pdf
+
+
+def estilizar_tabela_conferencia(df, formatos=None):
+    """Destaca cabeçalhos e transforma a situação em sinal visual imediato."""
+    estilos = df.style
+    if formatos:
+        estilos = estilos.format(formatos)
+    estilos = estilos.set_table_styles(
+        [
+            {
+                "selector": "th",
+                "props": [
+                    ("background-color", "#003b5c"), ("color", "#ffffff"),
+                    ("font-weight", "700"), ("border", "1px solid #0b5275"),
+                ],
+            },
+        ]
+    )
+    if "Situação" in df.columns:
+        def destacar_situacao(linha):
+            situacao = linha.get("Situação", "")
+            cor = {
+                "Conciliado": "background-color: #e8f7ee; color: #166534;",
+                "Valor divergente": "background-color: #fff7df; color: #92400e;",
+                "Somente no PDF": "background-color: #feecec; color: #b42318;",
+                "Somente na Base OB": "background-color: #feecec; color: #b42318;",
+            }.get(situacao, "")
+            return [cor] * len(linha)
+
+        estilos = estilos.apply(destacar_situacao, axis=1)
+    return estilos
+
+
+def renderizar_conferencia_ob_009717():
+    """Exibe a conferência em modo limpo, sem os dados do relatório executivo."""
+    st.markdown(
+        """
+        <style>
+        [data-testid="stDataFrame"] [role="columnheader"] {
+            background: #003b5c !important;
+            color: #ffffff !important;
+            font-weight: 700 !important;
+            border-color: #0b5275 !important;
+        }
+        [data-testid="stDataFrame"] [role="columnheader"] * {
+            color: #ffffff !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    st.markdown("### 🔎 Conferência de pagamentos")
+    st.caption(
+        "Compare o PDF gerado pelo SIAFIM com a Base OB do mesmo dia. "
+        "INSS é desconsiderado e retenções são consolidadas conforme o PDF."
+    )
+
+    with st.container(border=True):
+        col_data, col_classificacao, col_arquivo = st.columns(
+            [0.85, 1.05, 2.10], vertical_alignment="bottom"
+        )
+        with col_data:
+            data_conferencia = st.date_input(
+                "Data do pagamento",
+                value=datetime.date.today(),
+                format="DD/MM/YYYY",
+                key="data_conferencia_ob_009717",
+            )
+        with col_classificacao:
+            classificacao = st.selectbox(
+                "Classificação da base OB",
+                options=["ITEM", "RETENÇÃO", "TODAS"],
+                index=0,
+                key="classificacao_conferencia_ob_009717",
+            )
+        with col_arquivo:
+            arquivo = st.file_uploader(
+                "PDF do Relatório de Pagamento",
+                type=["pdf"],
+                key="arquivo_conferencia_ob_009717",
+            )
+
+        col_comparar, col_fechar, _ = st.columns([1.10, 0.82, 3.03])
+        with col_comparar:
+            comparar = st.button(
+                "🔎 Comparar pagamentos",
+                use_container_width=True,
+                type="primary",
+                key="btn_executar_conferencia_ob_009717",
+            )
+        with col_fechar:
+            fechar = st.button(
+                "← Voltar ao relatório",
+                use_container_width=True,
+                key="btn_fechar_conferencia_ob_009717",
+            )
+
+    if fechar:
+        st.session_state["mostrar_conferencia_ob_009717"] = False
+        st.session_state["resultado_conferencia_ob_009717"] = None
+        st.rerun()
+
+    if comparar:
+        if arquivo is None:
+            st.warning("Selecione o PDF que será comparado.")
+        else:
+            try:
+                with st.spinner(
+                    "Lendo o PDF e conciliando com a base de Pagamentos (OB)..."
+                ):
+                    comparacao, detalhe, fontes_pdf = comparar_pdf_com_base_ob(
+                        arquivo.getvalue(), data_conferencia, classificacao
+                    )
+                st.session_state["resultado_conferencia_ob_009717"] = {
+                    "comparacao": comparacao,
+                    "detalhe": detalhe,
+                    "data": data_conferencia,
+                    "classificacao": classificacao,
+                    "arquivo": arquivo.name,
+                    "fontes_pdf": fontes_pdf,
+                }
+            except Exception as erro:
+                st.session_state["resultado_conferencia_ob_009717"] = None
+                st.error(f"Não foi possível concluir a conferência: {erro}")
+
+    resultado = st.session_state.get("resultado_conferencia_ob_009717")
+    if not resultado:
+        return
+
+    corresponde_aos_campos = (
+        resultado["data"] == data_conferencia
+        and resultado["classificacao"] == classificacao
+        and arquivo is not None
+        and resultado["arquivo"] == arquivo.name
+    )
+    if not corresponde_aos_campos:
+        st.info(
+            "Os dados abaixo pertencem à última conferência executada. "
+            "Depois de alterar data, classificação ou PDF, clique em “Comparar pagamentos”."
+        )
+
+    comparacao = resultado["comparacao"].copy()
+    detalhe = resultado["detalhe"].copy()
+    divergencias = comparacao[comparacao["Situação"] != "Conciliado"].copy()
+    total_pdf = float(comparacao["Valor_PDF"].sum())
+    total_base = float(comparacao["Valor_Base"].sum())
+    diferenca = total_base - total_pdf
+    conciliado = divergencias.empty and abs(diferenca) <= 0.005
+
+    if conciliado:
+        st.success("✅ Pagamentos conciliados: PDF SIAFIM e Base OB batem integralmente.")
+    else:
+        st.warning(
+            f"⚠️ Foram encontradas {len(divergencias)} divergência(s). "
+            "Use a aba de detalhes para identificar os registros."
+        )
+
+    cards = st.columns(4)
+    indicadores = [
+        ("TOTAL PDF SIAFIM", formatar_brl(total_pdf), "Valor extraído do PDF", "#005691"),
+        ("TOTAL BASE OB", formatar_brl(total_base), "Mesmo dia, classificação e fonte", "#028090"),
+        ("DIFERENÇA", formatar_brl(diferenca), "Base OB menos PDF", "#d62828" if abs(diferenca) > 0.005 else "#16a34a"),
+        ("LINHAS DIVERGENTES", str(len(divergencias)), "Credor + GD para verificar", "#d97706" if not conciliado else "#16a34a"),
+    ]
+    for coluna, (titulo, valor, descricao, cor) in zip(cards, indicadores):
+        with coluna:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d;font-size:11px;font-weight:bold;margin:0;'>{titulo}</p>"
+                f"<h3 style='color:{cor};margin:5px 0;'>{valor}</h3>"
+                f"<p style='color:#6c757d;font-size:11px;margin:0;'>{descricao}</p></div>",
+                unsafe_allow_html=True,
+            )
+
+    st.caption(
+        f"Arquivo: {resultado['arquivo']} · Data: {resultado['data'].strftime('%d/%m/%Y')} · "
+        f"Classificação: {resultado['classificacao']} · Fonte(s) do PDF: "
+        f"{', '.join(resultado.get('fontes_pdf', [])) or 'não identificada'}"
+    )
+    aba_resumo, aba_divergencias, aba_detalhe = st.tabs(
+        ["Resumo", "Divergências", "Detalhamento da Base OB"]
+    )
+    colunas = [
+        "Situação", "Credor", "GD", "Valor_PDF", "Valor_Base", "Diferença",
+        "ITEM", "RETENÇÃO", "Registros_Base", "Indício",
+    ]
+    formatos = {
+        "Valor_PDF": formatar_brl, "Valor_Base": formatar_brl,
+        "Diferença": formatar_brl, "ITEM": formatar_brl, "RETENÇÃO": formatar_brl,
+    }
+    with aba_resumo:
+        st.dataframe(
+            estilizar_tabela_conferencia(comparacao[colunas], formatos),
+            use_container_width=True, hide_index=True, height=420,
+        )
+    with aba_divergencias:
+        if divergencias.empty:
+            st.success("Não há credores ou GDs divergentes neste recorte.")
+        else:
+            st.dataframe(
+                estilizar_tabela_conferencia(divergencias[colunas], formatos),
+                use_container_width=True, hide_index=True, height=420,
+            )
+    with aba_detalhe:
+        chaves = set(zip(divergencias["Credor_Chave"], divergencias["GD"]))
+        detalhe_divergente = detalhe[
+            detalhe.apply(
+                lambda linha: (linha["Credor_Chave"], linha["GD_Conferencia"]) in chaves,
+                axis=1,
+            )
+        ].copy()
+        if detalhe_divergente.empty:
+            st.info("Não há detalhes adicionais para exibir.")
+        else:
+            detalhe_divergente["Valor"] = detalhe_divergente["Valor_Conferencia"].apply(formatar_brl)
+            st.dataframe(
+                estilizar_tabela_conferencia(detalhe_divergente[
+                    ["Data Emissão", "Credor_Exibicao", "GRUPO", "Tipo_Item_Conferencia", "Fonte", "Número", "Valor"]
+                ].rename(
+                    columns={
+                        "Data Emissão": "Data", "Credor_Exibicao": "Credor", "GRUPO": "Grupo",
+                        "Tipo_Item_Conferencia": "Classificação", "Número": "OB",
+                    }
+                )),
+                use_container_width=True, hide_index=True, height=420,
+            )
+
+
+# -------------------------------------------------------------------------
 # CONEXÃO EXCLUSIVA DA TELA RELATÓRIO 009717
 # -------------------------------------------------------------------------
 URL_API_RELATORIO_009717_PADRAO = "https://script.google.com/macros/s/AKfycbywfyRrszPy3wqbSsrLsFBgd5rTw3d4tNKl3zBmJBknhjAv2bI0qAvzZv3Tk35KkTwI/exec"
@@ -2269,7 +2827,14 @@ with st.container(key="topo_navegacao"):
         key="seletor_tela_global",
         label_visibility="collapsed",
     )
+tela_anterior = st.session_state["tela_atual"]
 st.session_state["tela_atual"] = tela_selecionada or st.session_state["tela_atual"]
+if (
+    tela_anterior == "Relatório 009717"
+    and st.session_state["tela_atual"] != "Relatório 009717"
+):
+    # A conferência só deve abrir por ação explícita do usuário.
+    st.session_state["mostrar_conferencia_ob_009717"] = False
 
 st.sidebar.markdown("---")
 
@@ -2646,6 +3211,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         df,
         ign_mes=False,
         ign_dsp=False,
+        ign_grp=False,
         ign_tipo_item=False,
         ign_cred=False,
         ign_fnt=False,
@@ -2682,13 +3248,13 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
             if tipos_selecionados:
                 d = d[d["Despesa_Tratada"].isin(tipos_selecionados)]
 
+        # Filtro Grupo do gasto (GND)
+        if not ign_grp and st.session_state["mem_ob_grupos"]:
+            d = d[d["Grupo_Tratado"].isin(st.session_state["mem_ob_grupos"])]
+
         # Filtro Classificação do lançamento (ITEM x RETENÇÃO)
         if not ign_tipo_item and st.session_state["mem_ob_tipo_item"]:
             d = d[d["Tipo_Item_Tratado"].isin(st.session_state["mem_ob_tipo_item"])]
-
-        # Filtro Credores
-        if not ign_cred and st.session_state["mem_ob_credores"]:
-            d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
 
         # Filtro Fontes
         if not ign_fnt and st.session_state["mem_ob_fontes"]:
@@ -2697,6 +3263,10 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         # Filtro Objetos
         if not ign_obj and st.session_state["mem_ob_objetos"] and coluna_objeto in d.columns:
             d = d[d[coluna_objeto].isin(st.session_state["mem_ob_objetos"])]
+
+        # Filtro Credores
+        if not ign_cred and st.session_state["mem_ob_credores"]:
+            d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
 
         return d
 
@@ -2714,6 +3284,27 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         "RP (Restos a Pagar)",
         "DEA (Exercícios Anteriores)",
     ]
+
+    df_para_grupos = filtrar_df_ob(df_base, ign_grp=True)
+    ordem_grupos_ob = [
+        "3 - OUTRAS DESPESAS CORRENTES",
+        "4 - INVESTIMENTOS",
+    ]
+    grupos_disponiveis = (
+        [
+            grupo
+            for grupo in ordem_grupos_ob
+            if grupo in df_para_grupos["Grupo_Tratado"].dropna().unique()
+        ]
+        if not df_para_grupos.empty
+        else []
+    )
+    if not df_para_grupos.empty:
+        grupos_disponiveis += sorted(
+            str(grupo).strip()
+            for grupo in df_para_grupos["Grupo_Tratado"].dropna().unique()
+            if str(grupo).strip() and str(grupo).strip() not in grupos_disponiveis
+        )
 
     df_para_tipo_item = filtrar_df_ob(df_base, ign_tipo_item=True)
     ordem_tipo_item_ob = ["ITEM", "RETENÇÃO"]
@@ -2766,6 +3357,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
     despesas_validas_ob = [d for d in st.session_state["mem_ob_despesa"] if d in opcoes_despesa_ob]
+    validos_g_ob = [g for g in st.session_state["mem_ob_grupos"] if g in grupos_disponiveis]
     validos_ti_ob = [t for t in st.session_state["mem_ob_tipo_item"] if t in tipos_item_disponiveis]
     validos_c_ob = [c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis]
     validos_f_ob = [f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes]
@@ -2779,6 +3371,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_dt_ini"] = datetime.date(2026, 1, 1)
         st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
         st.session_state["mem_ob_despesa"] = []
+        st.session_state["mem_ob_grupos"] = []
         st.session_state["mem_ob_tipo_item"] = []
         st.session_state["mem_ob_credores"] = []
         st.session_state["mem_ob_fontes"] = []
@@ -2790,6 +3383,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["w_ob_dt_ini"] = datetime.date(2026, 1, 1)
         st.session_state["w_ob_dt_fim"] = datetime.date(2026, 12, 31)
         st.session_state["w_ob_despesa"] = []
+        st.session_state["w_ob_grupos"] = []
         st.session_state["w_ob_tipo_item"] = []
         st.session_state["w_ob_credores"] = []
         st.session_state["w_ob_fontes"] = []
@@ -2797,12 +3391,22 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     # O seletor de período fica fora do formulário: ele precisa redesenhar os
     # campos de mês ou datas imediatamente, sem aplicar os demais filtros.
+    # Ao entrar em "Por Intervalo de Datas", prepara o MÊS ATUAL apenas nos
+    # widgets (rascunho). O painel continua usando a memória aplicada até o
+    # usuário clicar em "Aplicar filtros".
+    def preparar_intervalo_ob():
+        if st.session_state.get("w_ob_tipo_data") == "Por Intervalo de Datas":
+            inicio_mes, fim_mes = intervalo_mes_atual()
+            st.session_state["w_ob_dt_ini"] = inicio_mes
+            st.session_state["w_ob_dt_fim"] = fim_mes
+
     if "w_ob_tipo_data" not in st.session_state:
         st.session_state["w_ob_tipo_data"] = st.session_state["mem_ob_tipo_data"]
     tipo_filtro_data = st.sidebar.radio(
         "Como deseja filtrar o período?",
         options=["Por Mês de Competência", "Por Intervalo de Datas"],
         key="w_ob_tipo_data",
+        on_change=preparar_intervalo_ob,
     )
 
     # O formulário impede o rerun a cada clique dos demais multiselects. O
@@ -2833,14 +3437,19 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
 
             val_ini = st.session_state["mem_ob_dt_ini"] or data_min
             val_fim = st.session_state["mem_ob_dt_fim"] or data_max
+            if "w_ob_dt_ini" not in st.session_state:
+                st.session_state["w_ob_dt_ini"] = val_ini
+            if "w_ob_dt_fim" not in st.session_state:
+                st.session_state["w_ob_dt_fim"] = val_fim
+
             col_dt1, col_dt2 = st.columns(2)
             with col_dt1:
                 data_inicio = st.date_input(
-                    "Data Inicial:", value=val_ini, format="DD/MM/YYYY", key="w_ob_dt_ini"
+                    "Data Inicial:", format="DD/MM/YYYY", key="w_ob_dt_ini"
                 )
             with col_dt2:
                 data_fim = st.date_input(
-                    "Data Final:", value=val_fim, format="DD/MM/YYYY", key="w_ob_dt_fim"
+                    "Data Final:", format="DD/MM/YYYY", key="w_ob_dt_fim"
                 )
 
         st.divider()
@@ -2853,20 +3462,21 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         )
 
         st.divider()
+        grupos_selecionados = st.multiselect(
+            "Filtrar por Grupo:",
+            options=grupos_disponiveis,
+            default=validos_g_ob,
+            placeholder="Todos os grupos",
+            key="w_ob_grupos",
+        )
+
+        st.divider()
         tipos_item_selecionados = st.multiselect(
             "Filtrar por Classificação (Tipo Item):",
             options=tipos_item_disponiveis,
             default=validos_ti_ob,
             placeholder="ITEM e RETENÇÃO",
             key="w_ob_tipo_item",
-        )
-
-        st.divider()
-        nomes_selecionados = st.multiselect(
-            "Filtrar por Entidade / Credor:",
-            options=nomes_disponiveis,
-            default=validos_c_ob,
-            key="w_ob_credores",
         )
 
         st.divider()
@@ -2887,6 +3497,14 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
             key="w_ob_objetos",
         )
 
+        st.divider()
+        nomes_selecionados = st.multiselect(
+            "Filtrar por Credor:",
+            options=nomes_disponiveis,
+            default=validos_c_ob,
+            key="w_ob_credores",
+        )
+
         col_aplicar_ob, col_limpar_ob = st.columns(2, gap="small")
         with col_aplicar_ob:
             aplicar_ob = st.form_submit_button(
@@ -2904,6 +3522,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_dt_ini"] = data_inicio
         st.session_state["mem_ob_dt_fim"] = data_fim
         st.session_state["mem_ob_despesa"] = list(despesas_selecionadas)
+        st.session_state["mem_ob_grupos"] = list(grupos_selecionados)
         st.session_state["mem_ob_tipo_item"] = list(tipos_item_selecionados)
         st.session_state["mem_ob_credores"] = list(nomes_selecionados)
         st.session_state["mem_ob_fontes"] = list(fontes_selecionadas)
@@ -3391,7 +4010,8 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         html_credores = (
             f"<div class='tabela-container'>"
             f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #3a537d 0%, #002b49 100%);'>🏢 Distribuição Mensal de Recursos por Fornecedor / Prestador de Serviço</div>"
-            f"<table class='html-executiva'>"
+            f"<div style='max-height: 860px; overflow-y: auto; border: 1px solid #d6e2ee; border-top: 0; border-radius: 0 0 8px 8px;'>"
+            f"<table class='html-executiva' style='margin: 0;'>"
             f"<thead><tr>"
             f"<th style='width: 30%;'>RAZÃO SOCIAL / CREDOR</th>"
             f"{cabecalhos_meses_credor}"
@@ -3399,7 +4019,7 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
             f"</tr></thead>"
             f"<tbody>{linhas_credor_html}"
             f"<tr class='linha-total-html'><td>🏢 TOTAL CONSOLIDADO DO FILTRO</td>{valores_totais_credor}</tr>"
-            f"</tbody></table></div>"
+            f"</tbody></table></div></div>"
         )
         st.markdown(html_credores, unsafe_allow_html=True)
 
@@ -4428,17 +5048,28 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         data_min_nl = datas_nl_validas.min().date() if not datas_nl_validas.empty else datetime.date(2026, 1, 1)
         data_max_nl = datas_nl_validas.max().date() if not datas_nl_validas.empty else datetime.date(2026, 12, 31)
 
+        # O calendário precisa permitir selecionar o mês corrente mesmo quando
+        # ainda não houver lançamentos desse mês na base. Por isso os limites são
+        # do exercício, e não a menor/maior data já carregada.
+        limite_ini_nl = datetime.date(2026, 1, 1)
+        limite_fim_nl = datetime.date(2026, 12, 31)
+
         def ajustar_data_nl(valor, padrao):
             data = pd.to_datetime(valor, errors="coerce")
             if pd.isna(data):
                 return padrao
             data = data.date()
-            return min(max(data, data_min_nl), data_max_nl)
+            return min(max(data, limite_ini_nl), limite_fim_nl)
 
-        data_ini_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_ini"), data_min_nl)
-        data_fim_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_fim"), data_max_nl)
+        inicio_mes_nl, fim_mes_nl = intervalo_mes_atual()
+        data_ini_padrao = ajustar_data_nl(
+            st.session_state.get("mem_nl_dt_ini"), inicio_mes_nl
+        )
+        data_fim_padrao = ajustar_data_nl(
+            st.session_state.get("mem_nl_dt_fim"), fim_mes_nl
+        )
         if data_ini_padrao > data_fim_padrao:
-            data_ini_padrao, data_fim_padrao = data_min_nl, data_max_nl
+            data_ini_padrao, data_fim_padrao = inicio_mes_nl, fim_mes_nl
 
         def limpar_filtros_nl():
             st.session_state["mem_nl_tipo_periodo"] = "Por Mês de Competência"
@@ -4453,8 +5084,9 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["mem_nl_objetos"] = []
             st.session_state["w_nl_tipo_periodo"] = "Por Mês de Competência"
             st.session_state["w_nl_comps"] = []
-            st.session_state["w_nl_dt_ini"] = data_min_nl
-            st.session_state["w_nl_dt_fim"] = data_max_nl
+            inicio_mes, fim_mes = intervalo_mes_atual()
+            st.session_state["w_nl_dt_ini"] = inicio_mes
+            st.session_state["w_nl_dt_fim"] = fim_mes
             st.session_state["w_nl_grupo"] = []
             st.session_state["w_nl_status"] = "Todos"
             st.session_state["w_nl_credores"] = []
@@ -4463,12 +5095,21 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         # O seletor de período fica fora do formulário para redesenhar os
         # campos de competência ou datas assim que o usuário alterná-lo.
+        # A troca para intervalo prepara o mês atual somente nos widgets; os
+        # filtros aplicados continuam intactos até o clique em "Aplicar filtros".
+        def preparar_intervalo_nl():
+            if st.session_state.get("w_nl_tipo_periodo") == "Por Intervalo de Datas":
+                inicio_mes, fim_mes = intervalo_mes_atual()
+                st.session_state["w_nl_dt_ini"] = inicio_mes
+                st.session_state["w_nl_dt_fim"] = fim_mes
+
         if "w_nl_tipo_periodo" not in st.session_state:
             st.session_state["w_nl_tipo_periodo"] = st.session_state["mem_nl_tipo_periodo"]
         tipo_periodo = st.sidebar.radio(
             "Como deseja filtrar o período?",
             options=["Por Mês de Competência", "Por Intervalo de Datas"],
             key="w_nl_tipo_periodo",
+            on_change=preparar_intervalo_nl,
         )
 
         # O formulário elimina o rerun a cada seleção dos demais filtros.
@@ -4488,17 +5129,22 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     key="w_nl_comps",
                 )
             else:
+                if "w_nl_dt_ini" not in st.session_state:
+                    st.session_state["w_nl_dt_ini"] = data_ini_padrao
+                if "w_nl_dt_fim" not in st.session_state:
+                    st.session_state["w_nl_dt_fim"] = data_fim_padrao
+
                 col_ini_nl, col_fim_nl = st.columns(2)
                 with col_ini_nl:
                     data_ini_nl = st.date_input(
-                        "Data Inicial:", value=data_ini_padrao,
-                        min_value=data_min_nl, max_value=data_max_nl,
+                        "Data Inicial:",
+                        min_value=limite_ini_nl, max_value=limite_fim_nl,
                         format="DD/MM/YYYY", key="w_nl_dt_ini",
                     )
                 with col_fim_nl:
                     data_fim_nl = st.date_input(
-                        "Data Final:", value=data_fim_padrao,
-                        min_value=data_min_nl, max_value=data_max_nl,
+                        "Data Final:",
+                        min_value=limite_ini_nl, max_value=limite_fim_nl,
                         format="DD/MM/YYYY", key="w_nl_dt_fim",
                     )
 
@@ -4520,7 +5166,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
             st.divider()
             credor_sel = st.multiselect(
-                "Filtrar por Entidade / Credor:",
+                "Filtrar por Credor:",
                 options=credores,
                 default=validos_c_nl,
                 placeholder="Selecione as opções",
@@ -5058,6 +5704,23 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
     # TELA EXCLUSIVA — RELATÓRIO 009717
     # IMPORTANTE: todas as alterações deste módulo ficam isoladas aqui.
     # ---------------------------------------------------------------------
+    # Este módulo não utiliza filtros laterais: a conferência possui seu
+    # próprio recorte de data, classificação e PDF.
+    st.markdown(
+        """
+        <style>
+        [data-testid="stSidebar"], [data-testid="stSidebarCollapsedControl"] {
+            display: none !important;
+        }
+        </style>
+        """,
+        unsafe_allow_html=True,
+    )
+    for chave_filtro_009717 in [
+        "filtro_status_009717", "filtro_fonte_009717",
+        "filtro_credor_009717", "filtro_natureza_009717",
+    ]:
+        st.session_state.pop(chave_filtro_009717, None)
     st.markdown(
         "<h2 class='titulo-pagina'>📊 Relatório 009717</h2>",
         unsafe_allow_html=True,
@@ -5075,6 +5738,10 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
         st.session_state["pdf_relatorio_009717"] = None
     if "pdf_relatorio_009717_nome" not in st.session_state:
         st.session_state["pdf_relatorio_009717_nome"] = "Relatorio_009717.pdf"
+    if "mostrar_conferencia_ob_009717" not in st.session_state:
+        st.session_state["mostrar_conferencia_ob_009717"] = False
+    if "resultado_conferencia_ob_009717" not in st.session_state:
+        st.session_state["resultado_conferencia_ob_009717"] = None
 
     url_api_009717 = st.session_state["url_api_relatorio_009717"].strip()
 
@@ -5093,8 +5760,8 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
             url_api_009717 = url_digitada_009717
 
     # Ações compactas do módulo — três botões lado a lado.
-    col_conexao_009717, col_atualizar_009717, col_pdf_topo_009717, _espaco_acoes_009717 = st.columns(
-        [0.72, 0.86, 1.02, 2.40]
+    col_conexao_009717, col_atualizar_009717, col_pdf_topo_009717, col_conferir_009717, _espaco_acoes_009717 = st.columns(
+        [0.72, 0.86, 1.02, 1.12, 1.60]
     )
 
     with col_conexao_009717:
@@ -5121,6 +5788,22 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
             key="btn_exportar_pdf_009717",
             disabled=not bool(url_api_009717),
         )
+
+    with col_conferir_009717:
+        abrir_conferencia_ob_009717 = st.button(
+            "🔎 Conferir pagamentos",
+            use_container_width=True,
+            key="btn_abrir_conferencia_ob_009717",
+        )
+
+    if abrir_conferencia_ob_009717:
+        st.session_state["mostrar_conferencia_ob_009717"] = True
+
+    # A conferência abre em modo próprio para não misturar os dados do
+    # relatório executivo com a análise do PDF e da Base OB.
+    if st.session_state["mostrar_conferencia_ob_009717"]:
+        renderizar_conferencia_ob_009717()
+        st.stop()
 
     if testar_conexao_009717:
         try:
@@ -5562,6 +6245,248 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
                     )
 
                 st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+                # ---------------------------------------------------------
+                # CONFERÊNCIA SIAFIM × BASE OB
+                # A área permanece recolhida até o usuário solicitar a
+                # conferência, preservando a leitura executiva do relatório.
+                # ---------------------------------------------------------
+                if st.session_state["mostrar_conferencia_ob_009717"]:
+                    with st.expander(
+                        "🔎 Conferir pagamentos: PDF SIAFIM × Base OB",
+                        expanded=True,
+                    ):
+                        st.caption(
+                            "Selecione a data do relatório, envie o PDF gerado pelo "
+                            "SIAFIM e compare-o com a mesma base consolidada usada "
+                            "na tela de Pagamentos (OB)."
+                        )
+                        col_data_conf, col_classificacao_conf, col_pdf_conf = st.columns(
+                            [0.85, 1.05, 2.10], vertical_alignment="bottom"
+                        )
+                        with col_data_conf:
+                            data_conferencia_009717 = st.date_input(
+                                "Data do pagamento",
+                                value=datetime.date.today(),
+                                format="DD/MM/YYYY",
+                                key="data_conferencia_ob_009717",
+                            )
+                        with col_classificacao_conf:
+                            classificacao_conferencia_009717 = st.selectbox(
+                                "Classificação da base OB",
+                                options=["ITEM", "RETENÇÃO", "TODAS"],
+                                index=0,
+                                key="classificacao_conferencia_ob_009717",
+                            )
+                        with col_pdf_conf:
+                            arquivo_conferencia_009717 = st.file_uploader(
+                                "PDF do Relatório de Pagamento",
+                                type=["pdf"],
+                                key="arquivo_conferencia_ob_009717",
+                            )
+
+                        col_executar_conf, col_fechar_conf, _ = st.columns([1.10, 0.82, 3.03])
+                        with col_executar_conf:
+                            executar_conferencia_009717 = st.button(
+                                "🔎 Comparar pagamentos",
+                                use_container_width=True,
+                                type="primary",
+                                key="btn_executar_conferencia_ob_009717",
+                            )
+                        with col_fechar_conf:
+                            fechar_conferencia_009717 = st.button(
+                                "Fechar",
+                                use_container_width=True,
+                                key="btn_fechar_conferencia_ob_009717",
+                            )
+
+                        if fechar_conferencia_009717:
+                            st.session_state["mostrar_conferencia_ob_009717"] = False
+                            st.rerun()
+
+                        if executar_conferencia_009717:
+                            if arquivo_conferencia_009717 is None:
+                                st.warning("Selecione o PDF que será comparado.")
+                            else:
+                                try:
+                                    with st.spinner(
+                                        "Lendo o PDF e conciliando com a base de Pagamentos (OB)..."
+                                    ):
+                                        comparacao_ob_009717, detalhe_ob_009717, fontes_pdf_009717 = (
+                                            comparar_pdf_com_base_ob(
+                                                arquivo_conferencia_009717.getvalue(),
+                                                data_conferencia_009717,
+                                                classificacao_conferencia_009717,
+                                            )
+                                        )
+                                    st.session_state["resultado_conferencia_ob_009717"] = {
+                                        "comparacao": comparacao_ob_009717,
+                                        "detalhe": detalhe_ob_009717,
+                                        "data": data_conferencia_009717,
+                                        "classificacao": classificacao_conferencia_009717,
+                                        "arquivo": arquivo_conferencia_009717.name,
+                                        "fontes_pdf": fontes_pdf_009717,
+                                    }
+                                except Exception as erro:
+                                    st.session_state["resultado_conferencia_ob_009717"] = None
+                                    st.error(f"Não foi possível concluir a conferência: {erro}")
+
+                        resultado_conf_009717 = st.session_state.get(
+                            "resultado_conferencia_ob_009717"
+                        )
+                        if resultado_conf_009717:
+                            resultado_corresponde_aos_campos = (
+                                resultado_conf_009717["data"] == data_conferencia_009717
+                                and resultado_conf_009717["classificacao"]
+                                == classificacao_conferencia_009717
+                                and arquivo_conferencia_009717 is not None
+                                and resultado_conf_009717["arquivo"]
+                                == arquivo_conferencia_009717.name
+                            )
+                            if not resultado_corresponde_aos_campos:
+                                st.info(
+                                    "Os números abaixo são da última conferência executada. "
+                                    "Depois de alterar data, classificação ou PDF, clique em "
+                                    "‘Comparar pagamentos’ novamente."
+                                )
+                            comparacao_conf = resultado_conf_009717["comparacao"].copy()
+                            detalhe_conf = resultado_conf_009717["detalhe"].copy()
+                            divergencias_conf = comparacao_conf[
+                                comparacao_conf["Situação"] != "Conciliado"
+                            ].copy()
+                            total_pdf_conf = float(comparacao_conf["Valor_PDF"].sum())
+                            total_base_conf = float(comparacao_conf["Valor_Base"].sum())
+                            diferenca_conf = total_base_conf - total_pdf_conf
+                            conciliado_conf = divergencias_conf.empty and abs(diferenca_conf) <= 0.005
+
+                            if conciliado_conf:
+                                st.success(
+                                    "✅ Pagamentos conciliados. O PDF e a Base OB batem "
+                                    "integralmente para o recorte informado."
+                                )
+                            else:
+                                st.error(
+                                    f"⚠️ Foram encontradas {len(divergencias_conf)} divergência(s). "
+                                    "Consulte as abas abaixo para identificar os registros."
+                                )
+
+                            card_pdf_conf, card_base_conf, card_dif_conf, card_linhas_conf = st.columns(4)
+                            for coluna, titulo, valor, cor, descricao in [
+                                (card_pdf_conf, "TOTAL PDF SIAFIM", total_pdf_conf, "#005691", "Valor extraído do PDF"),
+                                (card_base_conf, "TOTAL BASE OB", total_base_conf, "#028090", "Mesmo dia, classificação e fonte"),
+                                (card_dif_conf, "DIFERENÇA", diferenca_conf, "#d62828" if abs(diferenca_conf) > 0.005 else "#16a34a", "Base OB menos PDF"),
+                                (card_linhas_conf, "LINHAS DIVERGENTES", len(divergencias_conf), "#d97706" if not conciliado_conf else "#16a34a", "Credor + GD para verificar"),
+                            ]:
+                                with coluna:
+                                    valor_formatado = formatar_brl(valor) if isinstance(valor, float) else str(valor)
+                                    st.markdown(
+                                        f"<div class='metric-card'><p style='color:#6c757d;font-size:11px;font-weight:bold;margin:0;'>{titulo}</p>"
+                                        f"<h3 style='color:{cor};margin:5px 0;'>{valor_formatado}</h3>"
+                                        f"<p style='color:#6c757d;font-size:11px;margin:0;'>{descricao}</p></div>",
+                                        unsafe_allow_html=True,
+                                    )
+
+                            aba_resumo_conf, aba_divergencias_conf, aba_base_conf = st.tabs(
+                                ["Resumo", "Divergências", "Detalhamento da Base OB"]
+                            )
+                            colunas_resumo_conf = [
+                                "Situação", "Credor", "GD", "Valor_PDF", "Valor_Base",
+                                "Diferença", "ITEM", "RETENÇÃO", "Registros_Base", "Indício",
+                            ]
+                            with aba_resumo_conf:
+                                st.caption(
+                                    f"Arquivo: {resultado_conf_009717['arquivo']} · "
+                                    f"Data: {resultado_conf_009717['data'].strftime('%d/%m/%Y')} · "
+                                    f"Classificação: {resultado_conf_009717['classificacao']} · "
+                                    f"Fonte(s) identificada(s) no PDF: "
+                                    f"{', '.join(resultado_conf_009717['fontes_pdf']) or 'não identificada'}"
+                                )
+                                st.dataframe(
+                                    comparacao_conf[colunas_resumo_conf].style.format(
+                                        {
+                                            "Valor_PDF": formatar_brl,
+                                            "Valor_Base": formatar_brl,
+                                            "Diferença": formatar_brl,
+                                            "ITEM": formatar_brl,
+                                            "RETENÇÃO": formatar_brl,
+                                        }
+                                    ),
+                                    use_container_width=True,
+                                    hide_index=True,
+                                    height=420,
+                                )
+                            with aba_divergencias_conf:
+                                if divergencias_conf.empty:
+                                    st.success("Não há credores ou GDs divergentes neste recorte.")
+                                else:
+                                    st.dataframe(
+                                        divergencias_conf[colunas_resumo_conf].style.format(
+                                            {
+                                                "Valor_PDF": formatar_brl,
+                                                "Valor_Base": formatar_brl,
+                                                "Diferença": formatar_brl,
+                                                "ITEM": formatar_brl,
+                                                "RETENÇÃO": formatar_brl,
+                                            }
+                                        ),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        height=420,
+                                    )
+                            with aba_base_conf:
+                                chaves_divergentes = set(
+                                    zip(divergencias_conf["Credor_Chave"], divergencias_conf["GD"])
+                                )
+                                detalhe_divergente = detalhe_conf[
+                                    detalhe_conf.apply(
+                                        lambda linha: (linha["Credor_Chave"], linha["GD_Conferencia"])
+                                        in chaves_divergentes,
+                                        axis=1,
+                                    )
+                                ].copy()
+                                if detalhe_divergente.empty:
+                                    st.info("Não há detalhes adicionais para exibir.")
+                                else:
+                                    detalhe_divergente["Valor"] = detalhe_divergente[
+                                        "Valor_Conferencia"
+                                    ].apply(formatar_brl)
+                                    st.dataframe(
+                                        detalhe_divergente[
+                                            [
+                                                "Data Emissão", "Credor_Exibicao", "GRUPO",
+                                                "Tipo_Item_Conferencia", "Fonte", "Número", "Valor",
+                                            ]
+                                        ].rename(
+                                            columns={
+                                                "Data Emissão": "Data", "Credor_Exibicao": "Credor",
+                                                "GRUPO": "Grupo", "Tipo_Item_Conferencia": "Classificação",
+                                                "Número": "OB",
+                                            }
+                                        ),
+                                        use_container_width=True,
+                                        hide_index=True,
+                                        height=420,
+                                    )
+
+                            if not divergencias_conf.empty:
+                                arquivo_excel_conf = io.BytesIO()
+                                with pd.ExcelWriter(arquivo_excel_conf, engine="xlsxwriter") as escritor:
+                                    divergencias_conf[colunas_resumo_conf].to_excel(
+                                        escritor, index=False, sheet_name="Divergencias"
+                                    )
+                                    detalhe_conf.to_excel(
+                                        escritor, index=False, sheet_name="Base OB - Dia"
+                                    )
+                                st.download_button(
+                                    "⬇️ Baixar divergências em Excel",
+                                    data=arquivo_excel_conf.getvalue(),
+                                    file_name=(
+                                        "Conferencia_SIAFIM_Base_OB_"
+                                        f"{resultado_conf_009717['data'].strftime('%d-%m-%Y')}.xlsx"
+                                    ),
+                                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                                    key="download_conferencia_ob_009717",
+                                )
 
                 # ---------------------------------------------------------
                 # EXPORTAÇÃO DO RELATÓRIO
