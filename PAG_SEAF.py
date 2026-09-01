@@ -1880,7 +1880,7 @@ def carregar_base_nl_espelho_planejamento():
     col_numero = next((c for c in df1.columns if c.strip().upper() in ["NÚMERO", "NUMERO"]), None)
     df1["NE_Chave"] = chave_ne(df1[col_ne1])
     # Mantém a mesma interpretação de data utilizada no painel de NL.
-    df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce") if col_data else pd.NaT
+    df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce", dayfirst=True) if col_data else pd.NaT
     df1["Competencia"] = df1["Data_DT"].dt.strftime("%m/%Y").fillna("Não informada")
     df1["Grupo_Filtro"] = df1["Grupo"].fillna("Todos").astype(str).str.strip() if "Grupo" in df1.columns else "Todos"
     df1["Status_Filtro"] = df1["Status"].fillna("Não informado").astype(str).str.strip() if "Status" in df1.columns else "Não informado"
@@ -4129,7 +4129,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         col_data = next((c for c in df1.columns if "data" in c.lower()), None)
         if col_data:
-            df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce")
+            df1["Data_DT"] = pd.to_datetime(df1[col_data], errors="coerce", dayfirst=True)
             df1["Competencia"] = df1["Data_DT"].dt.strftime("%m/%Y")
         else:
             df1["Data_DT"] = pd.NaT
