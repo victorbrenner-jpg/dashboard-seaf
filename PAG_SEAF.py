@@ -2795,15 +2795,19 @@ if st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["w_ob_fontes"] = []
         st.session_state["w_ob_objetos"] = []
 
-    # Formulário impede o rerun a cada clique do multiselect. O usuário pode
-    # selecionar vários itens normalmente e só então aplicar o conjunto.
+    # O seletor de período fica fora do formulário: ele precisa redesenhar os
+    # campos de mês ou datas imediatamente, sem aplicar os demais filtros.
+    if "w_ob_tipo_data" not in st.session_state:
+        st.session_state["w_ob_tipo_data"] = st.session_state["mem_ob_tipo_data"]
+    tipo_filtro_data = st.sidebar.radio(
+        "Como deseja filtrar o período?",
+        options=["Por Mês de Competência", "Por Intervalo de Datas"],
+        key="w_ob_tipo_data",
+    )
+
+    # O formulário impede o rerun a cada clique dos demais multiselects. O
+    # usuário seleciona os campos e só então aplica o conjunto.
     with st.sidebar.form("form_filtros_ob", border=False):
-        tipo_filtro_data = st.radio(
-            "Como deseja filtrar o período?",
-            options=["Por Mês de Competência", "Por Intervalo de Datas"],
-            index=(0 if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência" else 1),
-            key="w_ob_tipo_data",
-        )
 
         meses_selecionados = []
         data_inicio = st.session_state["mem_ob_dt_ini"]
@@ -4457,14 +4461,18 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["w_nl_fonte"] = []
             st.session_state["w_nl_objetos"] = []
 
-        # O formulário elimina o rerun a cada seleção do multiselect.
+        # O seletor de período fica fora do formulário para redesenhar os
+        # campos de competência ou datas assim que o usuário alterná-lo.
+        if "w_nl_tipo_periodo" not in st.session_state:
+            st.session_state["w_nl_tipo_periodo"] = st.session_state["mem_nl_tipo_periodo"]
+        tipo_periodo = st.sidebar.radio(
+            "Como deseja filtrar o período?",
+            options=["Por Mês de Competência", "Por Intervalo de Datas"],
+            key="w_nl_tipo_periodo",
+        )
+
+        # O formulário elimina o rerun a cada seleção dos demais filtros.
         with st.sidebar.form("form_filtros_nl", border=False):
-            tipo_periodo = st.radio(
-                "Como deseja filtrar o período?",
-                options=["Por Mês de Competência", "Por Intervalo de Datas"],
-                index=(0 if st.session_state["mem_nl_tipo_periodo"] == "Por Mês de Competência" else 1),
-                key="w_nl_tipo_periodo",
-            )
 
             comp_sel = list(validos_comp_nl)
             data_ini_nl = data_ini_padrao
