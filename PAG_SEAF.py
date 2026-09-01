@@ -2198,6 +2198,141 @@ def extrair_linhas_pdf_conferencia(conteudo_pdf):
                 return _valor_float(match_valor.group(1)), grupo["top"]
         return None, None
 
+    def _agrupar_caracteres_por_linha(caracteres, tolerancia=2.2):
+        """Agrupa caracteres preservando a ordem original do conteúdo do PDF.
+
+        Isso é diferente de ordenar apenas por X: em alguns relatórios o nome do
+        credor é desenhado primeiro e invade visualmente GD/Valor; depois o PDF
+        desenha o GD e o valor por cima. Preservar a ordem original permite
+        separar esses três blocos mesmo quando eles ocupam as mesmas coordenadas.
+        """
+        grupos = []
+        for indice, caractere in enumerate(caracteres):
+            topo = float(caractere.get("top", 0))
+            destino = None
+            for grupo in reversed(grupos[-6:]):
+                if abs(topo - grupo["top"]) <= tolerancia:
+                    destino = grupo
+                    break
+            if destino is None:
+                destino = {"top": topo, "chars": []}
+                grupos.append(destino)
+            item = dict(caractere)
+            item["__ordem"] = indice
+            destino["chars"].append(item)
+            destino["top"] = sum(float(c.get("top", 0)) for c in destino["chars"]) / len(destino["chars"])
+        return grupos
+
+    def _extrair_por_fluxo_caracteres(pdf):
+        """Leitor estrutural para nomes longos que invadem GD e Valor.
+
+        Alguns PDFs desenham o nome completo do credor até a direita e só depois
+        sobrepõem o GD e o valor. O extract_words mistura tudo (ex. TRABALH3ADORES
+        / COMUNITARR$I O5S.524,14). Aqui usamos a ordem real dos caracteres:
+        tudo desenhado antes do GD fixo pertence ao credor; o conteúdo posterior
+        ao GD contém o valor financeiro.
+        """
+        linhas = []
+        fontes = []
+        totais = []
+        paginas_com_cabecalho = 0
+
+        for pagina in pdf.pages:
+            palavras = pagina.extract_words(
+                x_tolerance=1.5,
+                y_tolerance=3,
+                keep_blank_chars=False,
+                use_text_flow=False,
+            ) or []
+            if not palavras:
+                continue
+
+            cabecalho = _localizar_cabecalho_principal(palavras)
+            if not cabecalho:
+                continue
+            paginas_com_cabecalho += 1
+
+            total_pagina, top_total = _total_principal_por_coordenadas(
+                palavras, cabecalho, float(pagina.width)
+            )
+            if total_pagina is not None:
+                totais.append(total_pagina)
+
+            limite_x_tabela = min(
+                float(pagina.width) * 0.74,
+                cabecalho["valor_x1"] + max(25.0, float(pagina.width) * 0.035),
+            )
+            tolerancia_gd_x = max(9.0, float(pagina.width) * 0.012)
+            grupos_chars = _agrupar_caracteres_por_linha(pagina.chars or [], tolerancia=2.2)
+
+            for grupo in grupos_chars:
+                if grupo["top"] <= cabecalho["bottom"] + 1:
+                    continue
+                if top_total is not None and grupo["top"] >= top_total - 1:
+                    continue
+
+                chars_linha = [
+                    c for c in grupo["chars"]
+                    if cabecalho["credor_x0"] - 5 <= float(c.get("x0", 0)) < limite_x_tabela
+                ]
+                if not chars_linha:
+                    continue
+
+                candidatos_gd = []
+                for c in chars_linha:
+                    texto_c = str(c.get("text", "")).strip()
+                    centro_c = (float(c.get("x0", 0)) + float(c.get("x1", 0))) / 2
+                    if texto_c in {"3", "4"} and abs(centro_c - cabecalho["gd_centro"]) <= tolerancia_gd_x:
+                        candidatos_gd.append(c)
+                if not candidatos_gd:
+                    continue
+
+                # O GD da tabela principal é desenhado depois do texto do credor.
+                # Se houver mais de um candidato, usamos o último na ordem do stream.
+                gd_char = max(candidatos_gd, key=lambda c: c["__ordem"])
+                ordem_gd = gd_char["__ordem"]
+
+                chars_credor = [c for c in chars_linha if c["__ordem"] < ordem_gd]
+                chars_pos_gd = [c for c in chars_linha if c["__ordem"] > ordem_gd]
+                if not chars_credor or not chars_pos_gd:
+                    continue
+
+                credor = "".join(str(c.get("text", "")) for c in chars_credor)
+                credor = re.sub(r"\s+", " ", credor).strip()
+
+                texto_pos_gd = "".join(str(c.get("text", "")) for c in chars_pos_gd)
+                achado_valor = re.search(r"R\$\s*([0-9.]+,[0-9]{2})", texto_pos_gd)
+                if not achado_valor:
+                    continue
+
+                registro = _linha_valida(credor, str(gd_char.get("text", "")).strip(), achado_valor.group(1))
+                if registro:
+                    linhas.append(registro)
+
+            # Fonte é lida no quadro próprio. Essa leitura não interfere nos
+            # registros financeiros e funciona em uma ou várias páginas.
+            grupos_todos = _agrupar_palavras_por_linha(palavras, tolerancia=3.5)
+            lendo_fonte = False
+            for grupo in grupos_todos:
+                texto_linha = " ".join(
+                    str(w.get("text", ""))
+                    for w in sorted(grupo["words"], key=lambda w: float(w.get("x0", 0)))
+                )
+                norm = normalizar_texto_conferencia(texto_linha)
+                if "FONTE DESPESA TOTAL POR FONTE" in norm:
+                    lendo_fonte = True
+                    continue
+                if lendo_fonte and norm.startswith("TOTAL GERAL"):
+                    lendo_fonte = False
+                    continue
+                if lendo_fonte:
+                    achado = re.search(r"(?<!\d)(\d{3})(?!\d)", texto_linha)
+                    if achado:
+                        fontes.append(achado.group(1))
+
+        total_declarado = max(totais) if totais else None
+        return _agrupar_linhas(linhas), sorted(set(fontes)), total_declarado, paginas_com_cabecalho
+
     def _extrair_por_coordenadas(pdf):
         linhas = []
         fontes = []
@@ -2472,6 +2607,12 @@ def extrair_linhas_pdf_conferencia(conteudo_pdf):
 
     diagnosticos = []
     with pdfplumber.open(io.BytesIO(conteudo_pdf)) as pdf:
+        tabela, fontes, total_declarado, paginas_cabecalho = _extrair_por_fluxo_caracteres(pdf)
+        total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
+        diagnosticos.append(("fluxo estrutural", total_extraido, total_declarado, len(tabela)))
+        if paginas_cabecalho and _resultado_confere(tabela, total_declarado):
+            return tabela, fontes
+
         tabela, fontes, total_declarado, paginas_cabecalho = _extrair_por_coordenadas(pdf)
         total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
         diagnosticos.append(("coordenadas", total_extraido, total_declarado, len(tabela)))
