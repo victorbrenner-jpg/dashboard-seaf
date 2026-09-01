@@ -35,8 +35,14 @@ def sincronizar_filtro(chave_memoria, chave_widget):
         st.session_state[chave_memoria] = st.session_state[chave_widget]
 
 
-# Estado da Tela Ativa
-if "tela_atual" not in st.session_state:
+# Estado da tela ativa. A marca de versão evita que uma sessão anterior (por
+# exemplo, após um deploy interrompido) abra a V2 em um módulo antigo.
+VERSAO_INTERFACE = "v2-homolog-2026-09-01"
+if st.session_state.get("versao_interface") != VERSAO_INTERFACE:
+    st.session_state["versao_interface"] = VERSAO_INTERFACE
+    st.session_state["tela_atual"] = "Início"
+    st.session_state.pop("seletor_tela_global", None)
+elif "tela_atual" not in st.session_state:
     st.session_state["tela_atual"] = "Início"
 
 # --- MEMÓRIA DA TELA 1 (Pagamentos - OB) ---
