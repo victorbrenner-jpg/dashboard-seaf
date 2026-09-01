@@ -2223,6 +2223,81 @@ def extrair_linhas_pdf_conferencia(conteudo_pdf):
             destino["top"] = sum(float(c.get("top", 0)) for c in destino["chars"]) / len(destino["chars"])
         return grupos
 
+    def _extrair_fontes_seguras_pdf(pdf):
+        """Lê a fonte somente no quadro lateral "Fonte Despesa / Total por Fonte".
+
+        Evita capturar matrículas, UGs ou outros números de 3 dígitos presentes
+        nas linhas de credores. A fonte só é aceita quando aparece abaixo do
+        cabeçalho do quadro de Fonte e na mesma linha existe um valor monetário.
+        """
+        fontes_seguras = []
+        for pagina in pdf.pages:
+            palavras = pagina.extract_words(
+                x_tolerance=1.5,
+                y_tolerance=3,
+                keep_blank_chars=False,
+                use_text_flow=False,
+            ) or []
+            if not palavras:
+                continue
+
+            grupos = _agrupar_palavras_por_linha(palavras, tolerancia=3.5)
+            cabecalho_fonte = None
+            for grupo in grupos:
+                ordenadas = sorted(grupo["words"], key=lambda w: float(w.get("x0", 0)))
+                texto = " ".join(str(w.get("text", "")) for w in ordenadas)
+                norm = normalizar_texto_conferencia(texto)
+                if "FONTE DESPESA TOTAL POR FONTE" in norm:
+                    words_norm = [normalizar_texto_conferencia(w.get("text", "")) for w in ordenadas]
+                    try:
+                        idx_fonte = words_norm.index("FONTE")
+                    except ValueError:
+                        idx_fonte = 0
+                    cabecalho_fonte = {
+                        "top": float(grupo["top"]),
+                        "bottom": max(float(w.get("bottom", grupo["top"])) for w in ordenadas),
+                        "x0": float(ordenadas[idx_fonte].get("x0", 0)),
+                    }
+                    break
+
+            if not cabecalho_fonte:
+                continue
+
+            x_min = max(0.0, cabecalho_fonte["x0"] - 8.0)
+            x_max_codigo = cabecalho_fonte["x0"] + max(90.0, float(pagina.width) * 0.10)
+            for grupo in grupos:
+                if float(grupo["top"]) <= cabecalho_fonte["bottom"]:
+                    continue
+                ordenadas = sorted(grupo["words"], key=lambda w: float(w.get("x0", 0)))
+                words_quadro = [w for w in ordenadas if float(w.get("x0", 0)) >= x_min]
+                if not words_quadro:
+                    continue
+                texto_quadro = " ".join(str(w.get("text", "")) for w in words_quadro)
+                norm_quadro = normalizar_texto_conferencia(texto_quadro)
+                if norm_quadro.startswith("TOTAL GERAL"):
+                    break
+
+                tem_valor = bool(re.search(r"R\$\s*[0-9.]+,[0-9]{2}", texto_quadro))
+                if not tem_valor:
+                    # Em alguns PDFs, R$ e o valor são tokens separados, mas o
+                    # texto concatenado ainda precisa conter o símbolo e centavos.
+                    tem_rs = any(str(w.get("text", "")).strip() == "R$" for w in words_quadro)
+                    tem_numero = any(re.fullmatch(r"[0-9.]+,[0-9]{2}", str(w.get("text", "")).strip()) for w in words_quadro)
+                    tem_valor = tem_rs and tem_numero
+                if not tem_valor:
+                    continue
+
+                candidatos = [
+                    str(w.get("text", "")).strip()
+                    for w in words_quadro
+                    if re.fullmatch(r"\d{3}", str(w.get("text", "")).strip())
+                    and x_min <= float(w.get("x0", 0)) <= x_max_codigo
+                ]
+                if candidatos:
+                    fontes_seguras.append(candidatos[0])
+
+        return sorted(set(fontes_seguras))
+
     def _extrair_por_fluxo_caracteres(pdf):
         """Leitor estrutural para nomes longos que invadem GD e Valor.
 
@@ -2611,13 +2686,13 @@ def extrair_linhas_pdf_conferencia(conteudo_pdf):
         total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
         diagnosticos.append(("fluxo estrutural", total_extraido, total_declarado, len(tabela)))
         if paginas_cabecalho and _resultado_confere(tabela, total_declarado):
-            return tabela, fontes
+            return tabela, _extrair_fontes_seguras_pdf(pdf)
 
         tabela, fontes, total_declarado, paginas_cabecalho = _extrair_por_coordenadas(pdf)
         total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
         diagnosticos.append(("coordenadas", total_extraido, total_declarado, len(tabela)))
         if paginas_cabecalho and _resultado_confere(tabela, total_declarado):
-            return tabela, fontes
+            return tabela, _extrair_fontes_seguras_pdf(pdf)
 
         tabela, fontes, total_declarado_area = _extrair_por_area_texto(pdf)
         if total_declarado_area is None:
@@ -2625,7 +2700,7 @@ def extrair_linhas_pdf_conferencia(conteudo_pdf):
         total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
         diagnosticos.append(("área da tabela", total_extraido, total_declarado_area, len(tabela)))
         if _resultado_confere(tabela, total_declarado_area):
-            return tabela, fontes
+            return tabela, _extrair_fontes_seguras_pdf(pdf)
 
         tabela, fontes, total_declarado_regex = _extrair_por_regex_segura(pdf)
         if total_declarado_regex is None:
@@ -2633,7 +2708,7 @@ def extrair_linhas_pdf_conferencia(conteudo_pdf):
         total_extraido = float(tabela["Valor_PDF"].sum()) if not tabela.empty else 0.0
         diagnosticos.append(("regex segura", total_extraido, total_declarado_regex, len(tabela)))
         if _resultado_confere(tabela, total_declarado_regex):
-            return tabela, fontes
+            return tabela, _extrair_fontes_seguras_pdf(pdf)
 
     if all(qtd == 0 for _, _, _, qtd in diagnosticos):
         raise ValueError(
@@ -2668,6 +2743,12 @@ def comparar_pdf_com_base_ob(conteudo_pdf, data_pagamento, classificacao):
     if classificacao != "TODAS":
         base = base[base["Tipo_Item_Conferencia"] == classificacao].copy()
     if fontes_pdf:
+        # A fonte vem exclusivamente do quadro "Fonte Despesa" do PDF.
+        # Se o relatório trouxer códigos fora do padrão esperado, interrompemos
+        # a conferência em vez de zerar a Base OB silenciosamente.
+        fontes_pdf = sorted({str(f).strip() for f in fontes_pdf if re.fullmatch(r"\d{3}", str(f).strip())})
+        if not fontes_pdf:
+            raise ValueError("Não foi possível identificar com segurança a fonte do PDF.")
         base = base[base["Fonte_Conferencia"].isin(fontes_pdf)].copy()
     base = base[
         ~base["Credor_Chave"].str.contains("INSS", na=False)
