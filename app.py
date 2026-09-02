@@ -2586,8 +2586,21 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                 )
             )
 
+        # Classificação original do Qlik: Item x Retenção. A normalização evita
+        # que acento, caixa ou espaços criem opções duplicadas no filtro.
+        def normalizar_tipo_item_ob(valor):
+            texto_original = "" if pd.isna(valor) else str(valor).strip()
+            texto = unicodedata.normalize("NFKD", texto_original)
+            texto = "".join(c for c in texto if not unicodedata.combining(c))
+            texto = texto.upper().strip()
+            if "RETEN" in texto:
+                return "RETENÇÃO"
+            if "ITEM" in texto or not texto:
+                return "ITEM"
+            return texto_original.upper()
+
         df["Tipo_Item_Tratado"] = (
-            df["Tipo Item"].fillna("ITEM").astype(str).str.strip().str.upper()
+            df["Tipo Item"].apply(normalizar_tipo_item_ob)
             if "Tipo Item" in df.columns else "ITEM"
         )
 
@@ -2678,7 +2691,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA OB ---
     # IMPORTANTE: esta função consulta somente a memória APLICADA. As escolhas
     # feitas no formulário não alteram o painel até o usuário confirmar.
-    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_grp=False, ign_item=False, ign_cred=False, ign_fnt=False, ign_obj=False):
+    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_grp=False, ign_tipo_item=False, ign_cred=False, ign_fnt=False, ign_obj=False):
         d = df.copy()
         if d.empty:
             return d
@@ -2713,12 +2726,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         if not ign_grp and st.session_state["mem_ob_grupos"]:
             d = d[d["Grupo_Tratado"].isin(st.session_state["mem_ob_grupos"])]
 
-        if not ign_item and st.session_state["mem_ob_tipo_item"]:
+        if not ign_tipo_item and st.session_state["mem_ob_tipo_item"]:
             d = d[d["Tipo_Item_Tratado"].isin(st.session_state["mem_ob_tipo_item"])]
-
-        # Filtro Credores
-        if not ign_cred and st.session_state["mem_ob_credores"]:
-            d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
 
         # Filtro Fontes
         if not ign_fnt and st.session_state["mem_ob_fontes"]:
@@ -2727,6 +2736,10 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         # Filtro Objetos
         if not ign_obj and st.session_state["mem_ob_objetos"] and coluna_objeto in d.columns:
             d = d[d[coluna_objeto].isin(st.session_state["mem_ob_objetos"])]
+
+        # Filtro Credores
+        if not ign_cred and st.session_state["mem_ob_credores"]:
+            d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
 
         return d
 
@@ -2744,14 +2757,28 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         "RP (Restos a Pagar)",
         "DEA (Exercícios Anteriores)",
     ]
+    df_para_grupos = filtrar_df_ob(df_base, ign_grp=True)
+    ordem_grupos_ob = ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"]
     grupos_disponiveis = [
-        grupo for grupo in ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"]
-        if grupo in filtrar_df_ob(df_base, ign_grp=True)["Grupo_Tratado"].unique()
+        grupo for grupo in ordem_grupos_ob
+        if not df_para_grupos.empty and grupo in df_para_grupos["Grupo_Tratado"].dropna().unique()
     ]
-    tipos_item_disponiveis = sorted([
-        str(item).strip() for item in filtrar_df_ob(df_base, ign_item=True)["Tipo_Item_Tratado"].unique()
-        if str(item).strip() and str(item).lower() != "nan"
-    ])
+    if not df_para_grupos.empty:
+        grupos_disponiveis += sorted(
+            str(grupo).strip() for grupo in df_para_grupos["Grupo_Tratado"].dropna().unique()
+            if str(grupo).strip() and str(grupo).strip() not in grupos_disponiveis
+        )
+    df_para_tipo_item = filtrar_df_ob(df_base, ign_tipo_item=True)
+    ordem_tipo_item_ob = ["ITEM", "RETENÇÃO"]
+    tipos_item_disponiveis = [
+        tipo for tipo in ordem_tipo_item_ob
+        if not df_para_tipo_item.empty and tipo in df_para_tipo_item["Tipo_Item_Tratado"].dropna().unique()
+    ]
+    if not df_para_tipo_item.empty:
+        tipos_item_disponiveis += sorted(
+            str(tipo).strip() for tipo in df_para_tipo_item["Tipo_Item_Tratado"].dropna().unique()
+            if str(tipo).strip() and str(tipo).strip() not in tipos_item_disponiveis
+        )
 
     df_para_credores = filtrar_df_ob(df_base, ign_cred=True)
     nomes_disponiveis = (
@@ -2785,8 +2812,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
     despesas_validas_ob = [d for d in st.session_state["mem_ob_despesa"] if d in opcoes_despesa_ob]
-    grupos_validos_ob = [g for g in st.session_state["mem_ob_grupos"] if g in grupos_disponiveis]
-    tipos_item_validos_ob = [i for i in st.session_state["mem_ob_tipo_item"] if i in tipos_item_disponiveis]
+    validos_g_ob = [g for g in st.session_state["mem_ob_grupos"] if g in grupos_disponiveis]
+    validos_ti_ob = [t for t in st.session_state["mem_ob_tipo_item"] if t in tipos_item_disponiveis]
     validos_c_ob = [c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis]
     validos_f_ob = [f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes]
     validos_o_ob = [o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos]
@@ -2819,10 +2846,11 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     # O período fica fora do formulário para que a troca entre mês e intervalo
     # redesenhe imediatamente os campos de data, sem deixar o intervalo inativo.
+    if "w_ob_tipo_data" not in st.session_state:
+        st.session_state["w_ob_tipo_data"] = st.session_state["mem_ob_tipo_data"]
     tipo_filtro_data = st.sidebar.radio(
         "Como deseja filtrar o período?",
         options=["Por Mês de Competência", "Por Intervalo de Datas"],
-        index=(0 if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência" else 1),
         key="w_ob_tipo_data",
     )
 
@@ -2875,13 +2903,13 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.divider()
         grupos_selecionados = st.multiselect(
             "Filtrar por Grupo:", options=grupos_disponiveis,
-            default=grupos_validos_ob, placeholder="Todos os grupos", key="w_ob_grupos",
+            default=validos_g_ob, placeholder="Todos os grupos", key="w_ob_grupos",
         )
 
         st.divider()
         tipos_item_selecionados = st.multiselect(
             "Filtrar por Classificação (Tipo Item):", options=tipos_item_disponiveis,
-            default=tipos_item_validos_ob, placeholder="Todas as classificações", key="w_ob_tipo_item",
+            default=validos_ti_ob, placeholder="ITEM e RETENÇÃO", key="w_ob_tipo_item",
         )
 
         st.divider()
@@ -4479,14 +4507,18 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["w_nl_fonte"] = []
             st.session_state["w_nl_objetos"] = []
 
-        # O formulário elimina o rerun a cada seleção do multiselect.
+        # O seletor de período fica fora do formulário para redesenhar os
+        # campos de competência ou datas assim que o usuário alterná-lo.
+        if "w_nl_tipo_periodo" not in st.session_state:
+            st.session_state["w_nl_tipo_periodo"] = st.session_state["mem_nl_tipo_periodo"]
+        tipo_periodo = st.sidebar.radio(
+            "Como deseja filtrar o período?",
+            options=["Por Mês de Competência", "Por Intervalo de Datas"],
+            key="w_nl_tipo_periodo",
+        )
+
+        # O formulário elimina o rerun a cada seleção dos demais filtros.
         with st.sidebar.form("form_filtros_nl", border=False):
-            tipo_periodo = st.radio(
-                "Como deseja filtrar o período?",
-                options=["Por Mês de Competência", "Por Intervalo de Datas"],
-                index=(0 if st.session_state["mem_nl_tipo_periodo"] == "Por Mês de Competência" else 1),
-                key="w_nl_tipo_periodo",
-            )
 
             comp_sel = list(validos_comp_nl)
             data_ini_nl = data_ini_padrao
