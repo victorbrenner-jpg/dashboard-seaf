@@ -4828,8 +4828,33 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
         st.info("Ainda não há PDs tratados para os filtros selecionados.")
     else:
         st.sidebar.markdown("#### 📅 Filtros — Programa de Desembolso (PD)")
-        data_min_pd = dados_pd["Data Emissão"].dropna().min()
-        data_max_pd = dados_pd["Data Emissão"].dropna().max()
+
+        # Competência da PD: mesmo padrão usado na tela de NL.
+        dados_pd = dados_pd.copy()
+        dados_pd["Competencia"] = pd.to_datetime(
+            dados_pd["Data Emissão"], errors="coerce"
+        ).dt.strftime("%m/%Y")
+
+        if "mem_pd_tipo_periodo" not in st.session_state:
+            st.session_state["mem_pd_tipo_periodo"] = "Por Mês de Competência"
+        if "mem_pd_comps" not in st.session_state:
+            st.session_state["mem_pd_comps"] = []
+        if "mem_pd_dt_ini" not in st.session_state:
+            periodo_anterior_pd = st.session_state.get("mem_pd_periodo")
+            st.session_state["mem_pd_dt_ini"] = (
+                periodo_anterior_pd[0]
+                if isinstance(periodo_anterior_pd, (tuple, list))
+                and len(periodo_anterior_pd) == 2
+                else None
+            )
+        if "mem_pd_dt_fim" not in st.session_state:
+            periodo_anterior_pd = st.session_state.get("mem_pd_periodo")
+            st.session_state["mem_pd_dt_fim"] = (
+                periodo_anterior_pd[1]
+                if isinstance(periodo_anterior_pd, (tuple, list))
+                and len(periodo_anterior_pd) == 2
+                else None
+            )
 
         def opcoes_pd(df, coluna):
             return sorted(
@@ -4837,22 +4862,42 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
                 if valor and valor.upper() != "NÃO INFORMADO"
             )
 
-        # Filtro PD baseado somente na memória APLICADA. Isso permite que cada
-        # lista seja recalculada em cascata apenas depois do botão Aplicar.
-        def filtrar_df_pd(df, ign_per=False, ign_ug=False, ign_fonte=False,
-                         ign_gd=False, ign_despesa=False, ign_objeto=False,
-                         ign_credor=False, ign_status=False):
+        def filtrar_df_pd(
+            df,
+            ign_per=False,
+            ign_ug=False,
+            ign_fonte=False,
+            ign_gd=False,
+            ign_despesa=False,
+            ign_objeto=False,
+            ign_credor=False,
+            ign_status=False,
+        ):
             d = df.copy()
             if d.empty:
                 return d
 
-            periodo = st.session_state.get("mem_pd_periodo")
-            if not ign_per and isinstance(periodo, (tuple, list)) and len(periodo) == 2:
-                inicio, fim = periodo
-                datas = pd.to_datetime(d["Data Emissão"], errors="coerce").dt.date
-                d = d[(datas >= inicio) & (datas <= fim)]
+            if not ign_per:
+                if st.session_state["mem_pd_tipo_periodo"] == "Por Mês de Competência":
+                    competencias_pd = st.session_state.get("mem_pd_comps", [])
+                    if competencias_pd:
+                        d = d[d["Competencia"].astype(str).isin(competencias_pd)]
+                else:
+                    inicio_pd = st.session_state.get("mem_pd_dt_ini")
+                    fim_pd = st.session_state.get("mem_pd_dt_fim")
+                    if inicio_pd and fim_pd:
+                        inicio_ts_pd = pd.Timestamp(inicio_pd).normalize()
+                        fim_ts_pd = pd.Timestamp(fim_pd).normalize()
+                        if inicio_ts_pd <= fim_ts_pd:
+                            datas_pd = pd.to_datetime(
+                                d["Data Emissão"], errors="coerce"
+                            ).dt.normalize()
+                            d = d[
+                                (datas_pd >= inicio_ts_pd)
+                                & (datas_pd <= fim_ts_pd)
+                            ]
 
-            filtros = [
+            filtros_pd = [
                 ("UG Pagadora", "mem_pd_ug", ign_ug),
                 ("Fonte", "mem_pd_fonte", ign_fonte),
                 ("GD", "mem_pd_gd", ign_gd),
@@ -4861,23 +4906,72 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
                 ("Nome do Credor", "mem_pd_credor", ign_credor),
                 ("Status", "mem_pd_status", ign_status),
             ]
-            for coluna, chave, ignorar in filtros:
-                selecionados = st.session_state.get(chave, [])
-                if not ignorar and selecionados:
-                    d = d[d[coluna].astype(str).isin(selecionados)]
+            for coluna_pd, chave_pd, ignorar_pd in filtros_pd:
+                selecionados_pd = st.session_state.get(chave_pd, [])
+                if not ignorar_pd and selecionados_pd:
+                    d = d[d[coluna_pd].astype(str).isin(selecionados_pd)]
             return d
 
-        intervalo_padrao_pd = None
-        if pd.notna(data_min_pd) and pd.notna(data_max_pd):
-            minimo_pd = data_min_pd.date()
-            maximo_pd = data_max_pd.date()
-            periodo_mem = st.session_state.get("mem_pd_periodo")
-            if isinstance(periodo_mem, (tuple, list)) and len(periodo_mem) == 2:
-                p_ini = min(max(periodo_mem[0], minimo_pd), maximo_pd)
-                p_fim = min(max(periodo_mem[1], minimo_pd), maximo_pd)
-                intervalo_padrao_pd = (p_ini, p_fim) if p_ini <= p_fim else (minimo_pd, maximo_pd)
-            else:
-                intervalo_padrao_pd = (minimo_pd, maximo_pd)
+        def exibir_competencia_pd(competencia):
+            data_competencia_pd = pd.to_datetime(
+                f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
+            )
+            if pd.isna(data_competencia_pd):
+                return competencia
+            nomes_meses_pd = [
+                "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+                "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+            ]
+            return f"{nomes_meses_pd[data_competencia_pd.month - 1]}/{data_competencia_pd.year}"
+
+        # Somente meses realmente existentes na base, respeitando os demais filtros.
+        df_para_per_pd = filtrar_df_pd(dados_pd, ign_per=True)
+        comps_unicas_pd = (
+            df_para_per_pd["Competencia"].dropna().astype(str).unique()
+            if not df_para_per_pd.empty else []
+        )
+        comps_pd = sorted(
+            [
+                competencia_pd for competencia_pd in comps_unicas_pd
+                if competencia_pd.strip() not in ["Não informada", "nan", "None", ""]
+            ],
+            key=lambda competencia_pd: pd.to_datetime(
+                f"01/{competencia_pd}", format="%d/%m/%Y", errors="coerce"
+            ),
+        )
+        validos_comp_pd = [
+            competencia_pd
+            for competencia_pd in st.session_state.get("mem_pd_comps", [])
+            if competencia_pd in comps_pd
+        ]
+
+        datas_pd_validas = pd.to_datetime(
+            dados_pd["Data Emissão"], errors="coerce"
+        ).dropna()
+        data_min_pd = (
+            datas_pd_validas.min().date()
+            if not datas_pd_validas.empty else datetime.date(2026, 1, 1)
+        )
+        data_max_pd = (
+            datas_pd_validas.max().date()
+            if not datas_pd_validas.empty else datetime.date(2026, 12, 31)
+        )
+
+        def ajustar_data_pd(valor, padrao):
+            data_pd = pd.to_datetime(valor, errors="coerce")
+            if pd.isna(data_pd):
+                return padrao
+            data_pd = data_pd.date()
+            return min(max(data_pd, data_min_pd), data_max_pd)
+
+        data_ini_padrao_pd = ajustar_data_pd(
+            st.session_state.get("mem_pd_dt_ini"), data_min_pd
+        )
+        data_fim_padrao_pd = ajustar_data_pd(
+            st.session_state.get("mem_pd_dt_fim"), data_max_pd
+        )
+        if data_ini_padrao_pd > data_fim_padrao_pd:
+            data_ini_padrao_pd, data_fim_padrao_pd = data_min_pd, data_max_pd
 
         opcoes_ug_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_ug=True), "UG Pagadora")
         opcoes_fonte_pd = opcoes_pd(filtrar_df_pd(dados_pd, ign_fonte=True), "Fonte")
@@ -4891,7 +4985,11 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
             return [v for v in st.session_state.get(chave, []) if v in opcoes]
 
         def limpar_filtros_pd():
+            st.session_state["mem_pd_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["mem_pd_comps"] = []
             st.session_state["mem_pd_periodo"] = None
+            st.session_state["mem_pd_dt_ini"] = None
+            st.session_state["mem_pd_dt_fim"] = None
             st.session_state["mem_pd_ug"] = []
             st.session_state["mem_pd_fonte"] = []
             st.session_state["mem_pd_gd"] = []
@@ -4899,9 +4997,10 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
             st.session_state["mem_pd_objeto"] = []
             st.session_state["mem_pd_credor"] = []
             st.session_state["mem_pd_status"] = []
-            if intervalo_padrao_pd is not None:
-                st.session_state["filtro_pd_dt_ini"] = intervalo_padrao_pd[0]
-                st.session_state["filtro_pd_dt_fim"] = intervalo_padrao_pd[1]
+            st.session_state["w_pd_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["w_pd_comps"] = []
+            st.session_state["w_pd_dt_ini"] = data_min_pd
+            st.session_state["w_pd_dt_fim"] = data_max_pd
             st.session_state["filtro_pd_ug"] = []
             st.session_state["filtro_pd_fonte"] = []
             st.session_state["filtro_pd_gd"] = []
@@ -4910,29 +5009,49 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
             st.session_state["filtro_pd_credor"] = []
             st.session_state["filtro_pd_status"] = []
 
+        if "w_pd_tipo_periodo" not in st.session_state:
+            st.session_state["w_pd_tipo_periodo"] = st.session_state["mem_pd_tipo_periodo"]
+
+        tipo_periodo_pd = st.sidebar.radio(
+            "Como deseja filtrar o período?",
+            options=["Por Mês de Competência", "Por Intervalo de Datas"],
+            key="w_pd_tipo_periodo",
+        )
+
         with st.sidebar.form("form_filtros_pd", border=False):
-            if intervalo_padrao_pd is not None:
+            comp_sel_pd = list(validos_comp_pd)
+            data_inicio_pd = data_ini_padrao_pd
+            data_fim_pd = data_fim_padrao_pd
+
+            if tipo_periodo_pd == "Por Mês de Competência":
+                comp_sel_pd = st.multiselect(
+                    "Filtrar Período de Competência:",
+                    options=comps_pd,
+                    default=validos_comp_pd,
+                    format_func=exibir_competencia_pd,
+                    placeholder="Selecione as opções",
+                    key="w_pd_comps",
+                )
+            else:
                 col_ini_pd, col_fim_pd = st.columns(2)
                 with col_ini_pd:
                     data_inicio_pd = st.date_input(
                         "Data Inicial:",
-                        value=intervalo_padrao_pd[0],
-                        min_value=minimo_pd,
-                        max_value=maximo_pd,
+                        value=data_ini_padrao_pd,
+                        min_value=data_min_pd,
+                        max_value=data_max_pd,
                         format="DD/MM/YYYY",
-                        key="filtro_pd_dt_ini",
+                        key="w_pd_dt_ini",
                     )
                 with col_fim_pd:
                     data_fim_pd = st.date_input(
                         "Data Final:",
-                        value=intervalo_padrao_pd[1],
-                        min_value=minimo_pd,
-                        max_value=maximo_pd,
+                        value=data_fim_padrao_pd,
+                        min_value=data_min_pd,
+                        max_value=data_max_pd,
                         format="DD/MM/YYYY",
-                        key="filtro_pd_dt_fim",
+                        key="w_pd_dt_fim",
                     )
-            else:
-                data_inicio_pd, data_fim_pd = None, None
 
             filtro_ug_pd = st.multiselect(
                 "UG pagadora", opcoes_ug_pd,
@@ -4975,13 +5094,18 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
                 )
 
         if aplicar_pd:
-            if data_inicio_pd is not None and data_fim_pd is not None:
-                if data_inicio_pd > data_fim_pd:
-                    st.sidebar.error("A data inicial deve ser anterior ou igual à data final.")
-                    st.stop()
-                st.session_state["mem_pd_periodo"] = (data_inicio_pd, data_fim_pd)
-            else:
-                st.session_state["mem_pd_periodo"] = None
+            if tipo_periodo_pd == "Por Intervalo de Datas" and data_inicio_pd > data_fim_pd:
+                st.sidebar.error("A data inicial deve ser anterior ou igual à data final.")
+                st.stop()
+
+            st.session_state["mem_pd_tipo_periodo"] = tipo_periodo_pd
+            st.session_state["mem_pd_comps"] = list(comp_sel_pd)
+            st.session_state["mem_pd_dt_ini"] = data_inicio_pd
+            st.session_state["mem_pd_dt_fim"] = data_fim_pd
+            st.session_state["mem_pd_periodo"] = (
+                (data_inicio_pd, data_fim_pd)
+                if tipo_periodo_pd == "Por Intervalo de Datas" else None
+            )
             st.session_state["mem_pd_ug"] = list(filtro_ug_pd)
             st.session_state["mem_pd_fonte"] = list(filtro_fonte_pd)
             st.session_state["mem_pd_gd"] = list(filtro_gd_pd)
