@@ -2153,7 +2153,8 @@ def carregar_dados_pd():
             "Data Emissão": pd.to_datetime(
                 serie_pd("Data Emissão", "Data Emissao", "Data", padrao=""),
                 errors="coerce",
-                dayfirst=True,
+                format="mixed",
+                dayfirst=False,
             ),
             "UG Pagadora": serie_pd("UG Pagadora", "UG_Pagadora", "UG"),
             "Fonte": fonte,
