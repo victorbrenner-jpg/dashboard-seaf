@@ -2282,9 +2282,17 @@ with st.container(key="topo_navegacao"):
     )
     tela_selecionada = None
     if st.session_state["tela_atual"] != "Início":
+        # Na própria tela não há motivo para exibir um botão que aponta para
+        # ela mesma. A barra fica reservada apenas aos demais módulos.
+        opcoes_navegacao = [
+            opcao for opcao in opcoes_tela
+            if opcao != st.session_state["tela_atual"]
+        ]
+        if st.session_state.get("seletor_tela_global") not in opcoes_navegacao:
+            st.session_state["seletor_tela_global"] = None
         tela_selecionada = st.segmented_control(
             "Módulos do sistema",
-            options=opcoes_tela,
+            options=opcoes_navegacao,
             format_func=lambda opcao: {
                 "Início": "⌂ Início",
                 "Pagamentos (OB)": "💳 Pagamentos (OB)",
