@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import home
+from modulos import conferencia, home
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
@@ -62,6 +62,10 @@ elif isinstance(st.session_state["mem_ob_despesa"], str):
         if st.session_state["mem_ob_despesa"] == "Todas as Despesas"
         else [st.session_state["mem_ob_despesa"]]
     )
+if "mem_ob_grupos" not in st.session_state:
+    st.session_state["mem_ob_grupos"] = []
+if "mem_ob_tipo_item" not in st.session_state:
+    st.session_state["mem_ob_tipo_item"] = []
 if "mem_ob_credores" not in st.session_state:
     st.session_state["mem_ob_credores"] = []
 if "mem_ob_fontes" not in st.session_state:
@@ -2296,7 +2300,10 @@ with st.container(key="topo_navegacao"):
 if tela_selecionada and tela_selecionada != st.session_state["tela_atual"]:
     # Faz um novo ciclo antes de renderizar o conteúdo. Assim a página inicial
     # não recebe a barra de navegação da tela anterior durante a transição.
+    tela_anterior = st.session_state["tela_atual"]
     st.session_state["tela_atual"] = tela_selecionada
+    if tela_anterior == "Relatório 009717":
+        st.session_state["mostrar_conferencia_ob_009717"] = False
     st.rerun()
 
 # A home não cria nenhum elemento na sidebar; assim o painel de filtros só
@@ -2571,6 +2578,11 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                 )
             )
 
+        df["Tipo_Item_Tratado"] = (
+            df["Tipo Item"].fillna("ITEM").astype(str).str.strip().str.upper()
+            if "Tipo Item" in df.columns else "ITEM"
+        )
+
         if "Valor" in df.columns:
             serie_valor = df["Valor"]
             if isinstance(serie_valor, pd.DataFrame):
@@ -2658,7 +2670,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA OB ---
     # IMPORTANTE: esta função consulta somente a memória APLICADA. As escolhas
     # feitas no formulário não alteram o painel até o usuário confirmar.
-    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_cred=False, ign_fnt=False, ign_obj=False):
+    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_grp=False, ign_item=False, ign_cred=False, ign_fnt=False, ign_obj=False):
         d = df.copy()
         if d.empty:
             return d
@@ -2690,6 +2702,12 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             if tipos_selecionados:
                 d = d[d["Despesa_Tratada"].isin(tipos_selecionados)]
 
+        if not ign_grp and st.session_state["mem_ob_grupos"]:
+            d = d[d["Grupo_Tratado"].isin(st.session_state["mem_ob_grupos"])]
+
+        if not ign_item and st.session_state["mem_ob_tipo_item"]:
+            d = d[d["Tipo_Item_Tratado"].isin(st.session_state["mem_ob_tipo_item"])]
+
         # Filtro Credores
         if not ign_cred and st.session_state["mem_ob_credores"]:
             d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
@@ -2718,6 +2736,14 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         "RP (Restos a Pagar)",
         "DEA (Exercícios Anteriores)",
     ]
+    grupos_disponiveis = [
+        grupo for grupo in ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"]
+        if grupo in filtrar_df_ob(df_base, ign_grp=True)["Grupo_Tratado"].unique()
+    ]
+    tipos_item_disponiveis = sorted([
+        str(item).strip() for item in filtrar_df_ob(df_base, ign_item=True)["Tipo_Item_Tratado"].unique()
+        if str(item).strip() and str(item).lower() != "nan"
+    ])
 
     df_para_credores = filtrar_df_ob(df_base, ign_cred=True)
     nomes_disponiveis = (
@@ -2751,6 +2777,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
     despesas_validas_ob = [d for d in st.session_state["mem_ob_despesa"] if d in opcoes_despesa_ob]
+    grupos_validos_ob = [g for g in st.session_state["mem_ob_grupos"] if g in grupos_disponiveis]
+    tipos_item_validos_ob = [i for i in st.session_state["mem_ob_tipo_item"] if i in tipos_item_disponiveis]
     validos_c_ob = [c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis]
     validos_f_ob = [f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes]
     validos_o_ob = [o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos]
@@ -2763,6 +2791,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_dt_ini"] = datetime.date(2026, 1, 1)
         st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
         st.session_state["mem_ob_despesa"] = []
+        st.session_state["mem_ob_grupos"] = []
+        st.session_state["mem_ob_tipo_item"] = []
         st.session_state["mem_ob_credores"] = []
         st.session_state["mem_ob_fontes"] = []
         st.session_state["mem_ob_objetos"] = []
@@ -2773,20 +2803,24 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["w_ob_dt_ini"] = datetime.date(2026, 1, 1)
         st.session_state["w_ob_dt_fim"] = datetime.date(2026, 12, 31)
         st.session_state["w_ob_despesa"] = []
+        st.session_state["w_ob_grupos"] = []
+        st.session_state["w_ob_tipo_item"] = []
         st.session_state["w_ob_credores"] = []
         st.session_state["w_ob_fontes"] = []
         st.session_state["w_ob_objetos"] = []
 
+    # O período fica fora do formulário para que a troca entre mês e intervalo
+    # redesenhe imediatamente os campos de data, sem deixar o intervalo inativo.
+    tipo_filtro_data = st.sidebar.radio(
+        "Como deseja filtrar o período?",
+        options=["Por Mês de Competência", "Por Intervalo de Datas"],
+        index=(0 if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência" else 1),
+        key="w_ob_tipo_data",
+    )
+
     # Formulário impede o rerun a cada clique do multiselect. O usuário pode
     # selecionar vários itens normalmente e só então aplicar o conjunto.
     with st.sidebar.form("form_filtros_ob", border=False):
-        tipo_filtro_data = st.radio(
-            "Como deseja filtrar o período?",
-            options=["Por Mês de Competência", "Por Intervalo de Datas"],
-            index=(0 if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência" else 1),
-            key="w_ob_tipo_data",
-        )
-
         meses_selecionados = []
         data_inicio = st.session_state["mem_ob_dt_ini"]
         data_fim = st.session_state["mem_ob_dt_fim"]
@@ -2831,29 +2865,35 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         )
 
         st.divider()
-        nomes_selecionados = st.multiselect(
-            "Filtrar por Entidade / Credor:",
-            options=nomes_disponiveis,
-            default=validos_c_ob,
-            key="w_ob_credores",
+        grupos_selecionados = st.multiselect(
+            "Filtrar por Grupo:", options=grupos_disponiveis,
+            default=grupos_validos_ob, placeholder="Todos os grupos", key="w_ob_grupos",
+        )
+
+        st.divider()
+        tipos_item_selecionados = st.multiselect(
+            "Filtrar por Classificação (Tipo Item):", options=tipos_item_disponiveis,
+            default=tipos_item_validos_ob, placeholder="Todas as classificações", key="w_ob_tipo_item",
         )
 
         st.divider()
         fontes_selecionadas = st.multiselect(
-            "Filtrar por Fonte de Recurso:",
-            options=lista_fontes,
-            default=validos_f_ob,
-            placeholder="Todas as fontes (Exibe tudo)",
-            key="w_ob_fontes",
+            "Filtrar por Fonte de Recurso:", options=lista_fontes,
+            default=validos_f_ob, placeholder="Todas as fontes (Exibe tudo)", key="w_ob_fontes",
         )
 
         st.divider()
         objeto_selecionado = st.multiselect(
-            "Filtrar por Objeto de Despesa:",
-            options=lista_objetos,
-            default=validos_o_ob,
-            placeholder="Todos os objetos",
-            key="w_ob_objetos",
+            "Filtrar por Objeto de Despesa:", options=lista_objetos,
+            default=validos_o_ob, placeholder="Todos os objetos", key="w_ob_objetos",
+        )
+
+        st.divider()
+        nomes_selecionados = st.multiselect(
+            "Filtrar por Credor:",
+            options=nomes_disponiveis,
+            default=validos_c_ob,
+            key="w_ob_credores",
         )
 
         col_aplicar_ob, col_limpar_ob = st.columns(2, gap="small")
@@ -2873,6 +2913,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_dt_ini"] = data_inicio
         st.session_state["mem_ob_dt_fim"] = data_fim
         st.session_state["mem_ob_despesa"] = list(despesas_selecionadas)
+        st.session_state["mem_ob_grupos"] = list(grupos_selecionados)
+        st.session_state["mem_ob_tipo_item"] = list(tipos_item_selecionados)
         st.session_state["mem_ob_credores"] = list(nomes_selecionados)
         st.session_state["mem_ob_fontes"] = list(fontes_selecionadas)
         st.session_state["mem_ob_objetos"] = list(objeto_selecionado)
@@ -3357,7 +3399,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         )
 
         html_credores = (
-            f"<div class='tabela-container'>"
+            f"<div class='tabela-container' style='max-height: 860px; overflow-y: auto;'>"
             f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #3a537d 0%, #002b49 100%);'>🏢 Distribuição Mensal de Recursos por Fornecedor / Prestador de Serviço</div>"
             f"<table class='html-executiva'>"
             f"<thead><tr>"
@@ -4484,7 +4526,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
             st.divider()
             credor_sel = st.multiselect(
-                "Filtrar por Entidade / Credor:",
+                "Filtrar por Credor:",
                 options=credores,
                 default=validos_c_nl,
                 placeholder="Selecione as opções",
@@ -5030,6 +5072,12 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
         "<p class='subtitulo-pagina'>Relatório de Pagamento — acompanhamento e conferência executiva</p>",
         unsafe_allow_html=True,
     )
+    # Esta tela não usa filtros laterais. A conferência possui seus próprios
+    # campos e ocupa o conteúdo central em modo limpo.
+    st.markdown(
+        "<style>[data-testid='stSidebar'] {display: none !important;}</style>",
+        unsafe_allow_html=True,
+    )
 
     if "url_api_relatorio_009717" not in st.session_state:
         st.session_state["url_api_relatorio_009717"] = URL_API_RELATORIO_009717_PADRAO
@@ -5039,6 +5087,8 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
         st.session_state["pdf_relatorio_009717"] = None
     if "pdf_relatorio_009717_nome" not in st.session_state:
         st.session_state["pdf_relatorio_009717_nome"] = "Relatorio_009717.pdf"
+    if "mostrar_conferencia_ob_009717" not in st.session_state:
+        st.session_state["mostrar_conferencia_ob_009717"] = False
 
     url_api_009717 = st.session_state["url_api_relatorio_009717"].strip()
 
@@ -5056,9 +5106,9 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
             st.session_state["url_api_relatorio_009717"] = url_digitada_009717
             url_api_009717 = url_digitada_009717
 
-    # Ações compactas do módulo — três botões lado a lado.
-    col_conexao_009717, col_atualizar_009717, col_pdf_topo_009717, _espaco_acoes_009717 = st.columns(
-        [0.72, 0.86, 1.02, 2.40]
+    # Ações compactas do módulo.
+    col_conexao_009717, col_atualizar_009717, col_pdf_topo_009717, col_conferir_009717, _espaco_acoes_009717 = st.columns(
+        [0.72, 0.86, 1.02, 0.98, 1.42]
     )
 
     with col_conexao_009717:
@@ -5085,6 +5135,19 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
             key="btn_exportar_pdf_009717",
             disabled=not bool(url_api_009717),
         )
+
+    with col_conferir_009717:
+        abrir_conferencia_ob_009717 = st.button(
+            "🔎 Conferir pagamentos",
+            use_container_width=True,
+            key="btn_abrir_conferencia_ob_009717",
+        )
+
+    if abrir_conferencia_ob_009717:
+        st.session_state["mostrar_conferencia_ob_009717"] = True
+    if st.session_state["mostrar_conferencia_ob_009717"]:
+        conferencia.renderizar()
+        st.stop()
 
     if testar_conexao_009717:
         try:
