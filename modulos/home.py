@@ -7,7 +7,12 @@ import plotly.express as px
 import streamlit as st
 
 
-_PX_LINE_ORIGINAL = px.line
+# Em reruns do Streamlit, o módulo do Plotly pode continuar em memória. Guardamos
+# a função original uma única vez para impedir que o wrapper seja empilhado e
+# renderize os cards estatísticos em duplicidade.
+if not hasattr(px, "_seaf_line_original"):
+    px._seaf_line_original = px.line
+_PX_LINE_ORIGINAL = px._seaf_line_original
 
 
 def _formatar_milhoes(valor):
@@ -83,8 +88,9 @@ def _line_com_estatistica_mensal(*args, **kwargs):
     return figura
 
 
-if px.line is not _line_com_estatistica_mensal:
-    px.line = _line_com_estatistica_mensal
+# O wrapper pode ser redefinido a cada rerun, mas sempre chama a função Plotly
+# original salva acima; assim não há encadeamento de wrappers nem cards repetidos.
+px.line = _line_com_estatistica_mensal
 
 
 MODULOS = [
