@@ -1301,25 +1301,30 @@ def gerar_relatorio_pd_excel(df_filtrado):
     arquivo_saida.seek(0)
     return arquivo_saida.getvalue()
 
-def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
-    """Gera um resumo mensal único, incluindo valores por tipo de despesa."""
+def gerar_resumo_gerencial_ob_excel(df_ob, credores_selecionados=None):
+    """Gera o resumo diário dos pagamentos e identifica os credores filtrados."""
 
-    resumo_mensal = (
-        df_ob.groupby("Mes_Extenso", observed=False)
+    dados_resumo = df_ob.copy()
+    dados_resumo["Data de Referência"] = pd.to_datetime(
+        dados_resumo["Data Emissão"], format="mixed", dayfirst=True, errors="coerce"
+    ).dt.normalize()
+
+    resumo_diario = (
+        dados_resumo.dropna(subset=["Data de Referência"])
+        .groupby("Data de Referência", observed=False)
         .agg(**{"Qtd. Docs": ("Valor_Limpo", "count"), "Total Pago": ("Valor_Limpo", "sum")})
-        .reindex(meses_ordem, fill_value=0)
-        .rename_axis("Mês de Referência")
         .reset_index()
+        .sort_values("Data de Referência")
     )
 
-    valores_por_tipo = df_ob.pivot_table(
-        index="Mes_Extenso",
+    valores_por_tipo = dados_resumo.dropna(subset=["Data de Referência"]).pivot_table(
+        index="Data de Referência",
         columns="Despesa_Tratada",
         values="Valor_Limpo",
         aggfunc="sum",
         fill_value=0.0,
         observed=False,
-    ).reindex(meses_ordem, fill_value=0.0)
+    ).reindex(resumo_diario["Data de Referência"], fill_value=0.0)
 
     tipos_colunas = [
         ("CORRENTE", "Corrente"),
@@ -1327,15 +1332,32 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
         ("DEA", "Exercícios Anteriores (DEA)"),
     ]
     for tipo_origem, titulo_coluna in tipos_colunas:
-        resumo_mensal[titulo_coluna] = (
+        resumo_diario[titulo_coluna] = (
             valores_por_tipo[tipo_origem].to_numpy()
             if tipo_origem in valores_por_tipo.columns
             else 0.0
         )
 
+    credores = [
+        str(credor).strip()
+        for credor in (credores_selecionados or [])
+        if str(credor).strip()
+    ]
+    if len(credores) == 1:
+        identificacao_credor = credores[0]
+    elif credores:
+        identificacao_credor = "Credores: " + "; ".join(credores)
+    else:
+        identificacao_credor = "Todos os credores"
+
     arquivo = io.BytesIO()
-    with pd.ExcelWriter(arquivo, engine="xlsxwriter") as writer:
-        resumo_mensal.to_excel(writer, sheet_name="Resumo Mensal", startrow=2, index=False)
+    with pd.ExcelWriter(
+        arquivo,
+        engine="xlsxwriter",
+        date_format="dd/mm/yyyy",
+        datetime_format="dd/mm/yyyy",
+    ) as writer:
+        resumo_diario.to_excel(writer, sheet_name="Resumo Diário", startrow=2, index=False)
 
         workbook = writer.book
         formato_titulo = workbook.add_format({
@@ -1344,12 +1366,12 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
         })
         formato_subtitulo = workbook.add_format({
             "italic": True, "font_color": "#475569", "font_size": 10,
+            "align": "left", "valign": "vcenter", "text_wrap": True,
         })
         formato_cabecalho = workbook.add_format({
             "bold": True, "font_color": "#FFFFFF", "bg_color": "#315B85",
             "border": 0, "align": "center", "valign": "vcenter",
         })
-        formato_texto = workbook.add_format({"border": 0})
         formato_qtd = workbook.add_format({"num_format": "#,##0", "border": 0, "align": "center"})
         formato_moeda = workbook.add_format({"num_format": 'R$ #,##0.00', "border": 0, "align": "right"})
         formato_total_texto = workbook.add_format({
@@ -1364,21 +1386,22 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
             "num_format": 'R$ #,##0.00', "align": "right",
         })
 
-        aba = writer.sheets["Resumo Mensal"]
-        ultima_coluna = len(resumo_mensal.columns) - 1
+        aba = writer.sheets["Resumo Diário"]
+        ultima_coluna = len(resumo_diario.columns) - 1
         aba.hide_gridlines(2)
-        aba.merge_range(0, 0, 0, ultima_coluna, "Resumo Gerencial por Mês", formato_titulo)
-        aba.merge_range(1, 0, 1, ultima_coluna, "Conforme os filtros selecionados no painel.", formato_subtitulo)
+        aba.merge_range(0, 0, 0, ultima_coluna, "Resumo Gerencial por Dia", formato_titulo)
+        aba.merge_range(1, 0, 1, ultima_coluna, identificacao_credor, formato_subtitulo)
         aba.set_row(0, 24)
+        aba.set_row(1, 24)
         aba.set_row(2, 22)
-        aba.set_column(0, 0, 20, formato_texto)
+        aba.set_column(0, 0, 20)
         aba.set_column(1, 1, 14, formato_qtd)
         aba.set_column(2, ultima_coluna, 24, formato_moeda)
 
-        for coluna, titulo_coluna in enumerate(resumo_mensal.columns):
+        for coluna, titulo_coluna in enumerate(resumo_diario.columns):
             aba.write(2, coluna, titulo_coluna, formato_cabecalho)
 
-        linha_total = len(resumo_mensal) + 3
+        linha_total = len(resumo_diario) + 3
         aba.write(linha_total, 0, "TOTAL GERAL", formato_total_texto)
         aba.write_formula(linha_total, 1, f"=SUM(B4:B{linha_total})", formato_total_qtd)
         for coluna in range(2, ultima_coluna + 1):
@@ -1389,7 +1412,7 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
                 f"=SUM({letra_coluna}4:{letra_coluna}{linha_total})",
                 formato_total_moeda,
             )
-        aba.autofilter(2, 0, len(resumo_mensal) + 2, ultima_coluna)
+        aba.autofilter(2, 0, len(resumo_diario) + 2, ultima_coluna)
         aba.freeze_panes(3, 0)
 
     arquivo.seek(0)
@@ -3336,13 +3359,13 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                     )
                 with acao_resumo:
                     resumo_ob_excel = gerar_resumo_gerencial_ob_excel(
-                        df_filtrado, lista_meses_fixa
+                        df_filtrado, st.session_state["mem_ob_credores"]
                     )
                     st.download_button(
-                        "📥 Exportar .xlsx",
+                        "📥 Exportar por dia .xlsx",
                         data=resumo_ob_excel,
                         file_name=(
-                            "Resumo_Gerencial_Pagamentos_"
+                            "Resumo_Gerencial_Diario_Pagamentos_"
                             f"{datetime.date.today().strftime('%d-%m-%Y')}.xlsx"
                         ),
                         mime=(
