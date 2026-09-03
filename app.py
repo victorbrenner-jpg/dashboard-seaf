@@ -1958,7 +1958,150 @@ def carregar_historico_ob_fonte_500():
             df[chave] = converter_valor_monetario(df[coluna]).round(2)
         elif coluna == "Data Emissão":
             data = pd.to_datetime(df[coluna], errors="coerce", dayfirst=True)
-            df[chave] = data.dt.strftime("%Y-a", "Objeto"
+            df[chave] = data.dt.strftime("%Y-%m-%d").fillna(df[coluna].fillna("").astype(str).str.strip().str.upper())
+        else:
+            df[chave] = df[coluna].fillna("").astype(str).str.strip().str.upper().str.replace(r"\s+", " ", regex=True)
+        chaves.append(chave)
+    df = df.drop_duplicates(subset=chaves, keep="first").copy()
+
+    df["Valor_Pago"] = converter_valor_monetario(df["Valor"])
+    datas = pd.to_datetime(df["Data Emissão"], errors="coerce", dayfirst=True)
+    mapa_meses = {
+        1: "Jan/2026", 2: "Fev/2026", 3: "Mar/2026", 4: "Abr/2026",
+        5: "Mai/2026", 6: "Jun/2026", 7: "Jul/2026", 8: "Ago/2026",
+        9: "Set/2026", 10: "Out/2026", 11: "Nov/2026", 12: "Dez/2026",
+    }
+    df["Mês"] = datas.dt.month.map(mapa_meses).fillna("Não identificado")
+    grupo_texto = df["GRUPO"].fillna("").astype(str).str.upper()
+    df["Grupo"] = np.where(
+        grupo_texto.str.contains("INVEST|4", regex=True),
+        "4 - INVESTIMENTOS",
+        "3 - OUTRAS DESPESAS CORRENTES",
+    )
+    despesa_texto = df["Despesa"].fillna("").astype(str).str.upper()
+    df["Tipo de Despesa"] = np.select(
+        [
+            despesa_texto.str.contains("DEA|EXERC|ANTERIOR|RECONHECIMENTO", regex=True),
+            despesa_texto.str.contains("RP|RESTO|PAGAR", regex=True),
+        ],
+        ["DEA", "RP"],
+        default="CORRENTE",
+    )
+    fonte_500 = df["Fonte"].fillna("").astype(str).str.contains(r"(?<!\d)500(?!\d)", regex=True, na=False)
+    return df.loc[fonte_500, ["Número", "Mês", "Grupo", "Tipo de Despesa", "Valor_Pago"]]
+
+
+# -------------------------------------------------------------------------
+# CONEXÃO EXCLUSIVA DA TELA RELATÓRIO 009717
+# -------------------------------------------------------------------------
+URL_API_RELATORIO_009717_PADRAO = "https://script.google.com/macros/s/AKfycbywfyRrszPy3wqbSsrLsFBgd5rTw3d4tNKl3zBmJBknhjAv2bI0qAvzZv3Tk35KkTwI/exec"
+
+# Base exclusiva do Programa de Desembolso. A origem deve ser a aba
+# PD_ABA_TRATADA, publicada como CSV para que o Streamlit Cloud possa lê-la.
+LINK_PD_ABA_TRATADA = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vRsMrqzxYHgTRv_tBJnDU_Rg1OpFmh_FCCo55w671Kna-IE8FIPD4rhL7O-bDwCsNMQW4Qj7UZGaBFP/"
+    "pub?gid=27472472&single=true&output=csv"
+)
+
+# Base de relacionamento do PD. É a planilha Base_de_dados_QLIKVIEW,
+# usada somente como tabela de consulta pela chave NE. A tela de PD continua
+# tendo PD_ABA_TRATADA como sua base principal; não depende da tela de NL.
+LINK_PD_BASE_QLIKVIEW = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vTDHDK6dPnS9favMwwkNSLYZ5i9yjQrJjCEGxpifdQfD9_8dAsHSVlc8TECEyKJi0hWy3Wi5gEM_tI0/"
+    "pub?gid=1866981074&single=true&output=csv"
+)
+
+
+def _normalizar_nome_pd(nome):
+    """Normaliza cabeçalhos da base de PD sem depender de acentos ou espaços."""
+    texto = unicodedata.normalize("NFKD", str(nome or ""))
+    texto = "".join(caractere for caractere in texto if not unicodedata.combining(caractere))
+    return re.sub(r"[^a-z0-9]+", "", texto.lower())
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def carregar_dados_pd():
+    """Carrega a tela de PD e enriquece os PDs pela NE na Base_de_dados_QLIKVIEW."""
+    try:
+        # BASE PRINCIPAL DA TELA DE PD
+        bruto = ler_csv_url(LINK_PD_ABA_TRATADA)
+
+        # BASE AUXILIAR DE RELACIONAMENTO. Não é carregada nenhuma base da tela NL.
+        qlikview = ler_csv_url(LINK_PD_BASE_QLIKVIEW)
+    except Exception as erro:
+        return pd.DataFrame(), str(erro)
+
+    if bruto.empty:
+        return pd.DataFrame(), "A aba PD_ABA_TRATADA não possui registros para exibir."
+    if qlikview.empty:
+        return pd.DataFrame(), "A Base_de_dados_QLIKVIEW não possui registros para relacionar os PDs."
+
+    bruto = bruto.loc[:, ~bruto.columns.duplicated()].copy()
+    qlikview = qlikview.loc[:, ~qlikview.columns.duplicated()].copy()
+    bruto.columns = [str(coluna).strip() for coluna in bruto.columns]
+    qlikview.columns = [str(coluna).strip() for coluna in qlikview.columns]
+
+    colunas_pd = {_normalizar_nome_pd(c): c for c in bruto.columns}
+    colunas_qlik = {_normalizar_nome_pd(c): c for c in qlikview.columns}
+
+    def localizar_pd(*aliases):
+        for alias in aliases:
+            original = colunas_pd.get(_normalizar_nome_pd(alias))
+            if original is not None:
+                return original
+        return None
+
+    def localizar_qlik(*aliases):
+        for alias in aliases:
+            original = colunas_qlik.get(_normalizar_nome_pd(alias))
+            if original is not None:
+                return original
+        return None
+
+    def serie_pd(*aliases, padrao="NÃO INFORMADO"):
+        coluna = localizar_pd(*aliases)
+        if coluna is None:
+            return pd.Series(padrao, index=bruto.index, dtype="object")
+        return bruto[coluna].fillna("").astype(str).str.strip().replace("", padrao)
+
+    def chave_ne(serie):
+        # Mesma REGRA de relacionamento da NL, mas aplicada à BASE DE PD.
+        return (
+            serie.fillna("").astype(str).str.strip().str.upper()
+            .str.replace(r"\.0$", "", regex=True)
+            .str.replace(r"[^A-Z0-9]", "", regex=True)
+        )
+
+    coluna_numero = localizar_pd("Número", "Numero", "Número PD", "Numero PD", "PD")
+    coluna_valor = localizar_pd("Valor", "Valor Total", "Valor PD", "Valor Programado")
+    coluna_ne_pd = localizar_pd(
+        "DocumentoNE", "Documento NE", "NE", "Número NE", "Numero NE",
+        "Empenho", "Nota de Empenho", "Documento Empenho"
+    )
+
+    faltantes_pd = []
+    if coluna_numero is None:
+        faltantes_pd.append("Número do PD")
+    if coluna_valor is None:
+        faltantes_pd.append("Valor")
+    if coluna_ne_pd is None:
+        faltantes_pd.append("NE")
+    if faltantes_pd:
+        return pd.DataFrame(), (
+            "A PD_ABA_TRATADA precisa conter: " + ", ".join(faltantes_pd)
+            + ". Cabeçalhos encontrados: " + ", ".join(bruto.columns)
+        )
+
+    # Colunas da Base_de_dados_QLIKVIEW.
+    coluna_ne_qlik = localizar_qlik(
+        "DocumentoNE", "Documento NE", "NE", "Número NE", "Numero NE",
+        "Empenho", "Nota de Empenho"
+    )
+    coluna_fonte_qlik = localizar_qlik("Fonte", "Fonte de Recurso")
+    coluna_objeto_qlik = localizar_qlik(
+        "Objeto da Despesa", "Objeto de Despesa", "Objeto Despesa", "Objeto"
     )
     coluna_grupo_qlik = localizar_qlik("Grupo", "GD", "GND", "Grupo de Despesa")
 
@@ -1978,7 +2121,127 @@ def carregar_historico_ob_fonte_500():
     # A CHAVE DA ESQUERDA vem exclusivamente da PD_ABA_TRATADA.
     bruto["NE_Chave_PD"] = chave_ne(bruto[coluna_ne_pd])
 
-    # A CHAVE DA DIREITA vem exclusivam try:
+    # A CHAVE DA DIREITA vem exclusivamente da Base_de_dados_QLIKVIEW.
+    qlikview["NE_Chave_PD"] = chave_ne(qlikview[coluna_ne_qlik])
+    qlikview["Fonte_QLIK_PD"] = (
+        qlikview[coluna_fonte_qlik].fillna("NÃO INFORMADA").astype(str).str.strip()
+        if coluna_fonte_qlik else "NÃO INFORMADA"
+    )
+    qlikview["Objeto_QLIK_PD"] = (
+        qlikview[coluna_objeto_qlik].fillna("NÃO INFORMADO").astype(str).str.strip()
+    )
+    qlikview["Grupo_QLIK_PD"] = (
+        qlikview[coluna_grupo_qlik].fillna("NÃO INFORMADO").astype(str).str.strip()
+    )
+
+    qlik_lookup = qlikview[qlikview["NE_Chave_PD"] != ""].drop_duplicates(
+        subset=["NE_Chave_PD"], keep="first"
+    )[["NE_Chave_PD", "Fonte_QLIK_PD", "Objeto_QLIK_PD", "Grupo_QLIK_PD"]]
+
+    # LEFT JOIN: preserva todos os PDs e apenas consulta a QLIKVIEW pela mesma NE.
+    bruto = bruto.merge(qlik_lookup, on="NE_Chave_PD", how="left")
+
+    natureza = serie_pd("Natureza", "Natureza da Despesa", padrao="")
+
+    # Objeto e grupo vêm da QLIKVIEW quando a NE foi localizada.
+    objeto = (
+        bruto["Objeto_QLIK_PD"].fillna("NÃO INFORMADO").astype(str).str.strip()
+        .replace({"": "NÃO INFORMADO", "NAN": "NÃO INFORMADO"})
+    )
+
+    grupo_relacao = (
+        bruto["Grupo_QLIK_PD"].fillna("NÃO INFORMADO").astype(str).str.strip().str.upper()
+    )
+    grupo_relacao = grupo_relacao.str.extract(r"(?:GD|GND)?\s*([134])", expand=False)
+
+    # Fallback do GD somente para PDs cuja NE não foi encontrada na QLIKVIEW.
+    grupo_pd = serie_pd("GD", "Grupo", "GND", padrao="").astype(str).str.upper()
+    grupo_pd_num = grupo_pd.str.extract(r"(?:GD|GND)?\s*([134])", expand=False)
+    grupo_natureza = natureza.astype(str).str.extract(r"^\s*([134])", expand=False)
+    grupo_num = grupo_relacao.fillna(grupo_pd_num).fillna(grupo_natureza)
+    grupo = "GD" + grupo_num.fillna("NÃO INFORMADO")
+
+    fonte_relacao = (
+        bruto["Fonte_QLIK_PD"].fillna("").astype(str).str.strip()
+        if "Fonte_QLIK_PD" in bruto.columns else pd.Series("", index=bruto.index)
+    )
+    fonte_pd = serie_pd("Fonte", "Fonte de Recurso", padrao="")
+    fonte = fonte_relacao.where(~fonte_relacao.isin(["", "NAN", "NÃO INFORMADA"]), fonte_pd)
+    fonte = fonte.replace("", "NÃO INFORMADA")
+
+    dados = pd.DataFrame(
+        {
+            "Número PD": bruto[coluna_numero].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+            "NE": bruto[coluna_ne_pd].fillna("").astype(str).str.strip().str.replace(r"\.0$", "", regex=True),
+            "Data Emissão": pd.to_datetime(
+                serie_pd("Data Emissão", "Data Emissao", "Data", padrao=""),
+                errors="coerce",
+                format="mixed",
+                dayfirst=False,
+            ),
+            "UG Pagadora": serie_pd("UG Pagadora", "UG_Pagadora", "UG"),
+            "Fonte": fonte,
+            "GD": grupo,
+            "Despesa": natureza.replace("", "NÃO INFORMADA"),
+            "Objeto da Despesa": objeto,
+            "Nome do Credor": serie_pd("Nome do Credor", "Credor", "Entidade / Credor", "Entidade"),
+            "Tipo de PD": serie_pd("Tipo de PD", "Tipo PD", "Tipo_PD", "Tipo de OB", "OB", "Tipo OB"),
+            "Tipo de OB": serie_pd("Tipo de PD", "Tipo PD", "Tipo_PD", "Tipo de OB", "OB", "Tipo OB"),
+            "Status": serie_pd("Status"),
+            "Valor": converter_valor_monetario(bruto[coluna_valor]),
+        }
+    )
+
+    dados = dados[dados["Número PD"].ne("")].copy()
+    dados["UG Pagadora"] = dados["UG Pagadora"].str.replace(r"\.0$", "", regex=True)
+    dados["Fonte"] = dados["Fonte"].astype(str).str.replace(r"\.0$", "", regex=True)
+    dados["Valor"] = dados["Valor"].fillna(0.0)
+    return dados, ""
+
+
+def chamar_api_relatorio_009717(url_api, acao="status", timeout=120):
+    """Conversa via POST com o Web App usado exclusivamente pelo Relatório 009717.
+
+    O parâmetro _ts impede que proxies/CDNs reutilizem uma resposta anterior.
+    """
+    url_api = (url_api or "").strip()
+    if not url_api:
+        raise ValueError("Informe a URL do Web App do Apps Script.")
+
+    separador = "&" if "?" in url_api else "?"
+    url_chamada = (
+        f"{url_api}{separador}_ts="
+        f"{int(datetime.datetime.now().timestamp() * 1000)}"
+    )
+
+    payload = json.dumps(
+        {
+            "acao": str(acao),
+            "_ts": int(datetime.datetime.now().timestamp() * 1000),
+        },
+        ensure_ascii=False,
+    ).encode("utf-8")
+
+    req = urllib.request.Request(
+        url_chamada,
+        data=payload,
+        headers={
+            "Content-Type": "application/json; charset=utf-8",
+            "User-Agent": "Mozilla/5.0",
+            "Cache-Control": "no-cache, no-store, max-age=0",
+            "Pragma": "no-cache",
+            "Expires": "0",
+        },
+        method="POST",
+    )
+
+    with urllib.request.urlopen(req, timeout=timeout) as resposta:
+        corpo = resposta.read().decode("utf-8", errors="replace").strip()
+
+    if not corpo:
+        raise ValueError("O Apps Script retornou uma resposta vazia.")
+
+    try:
         conteudo = json.loads(corpo)
     except json.JSONDecodeError as erro_json:
         inicio_resposta = re.sub(r"\s+", " ", corpo[:220]).strip()
@@ -2084,7 +2347,49 @@ if st.session_state["tela_atual"] != "Início":
 # RENDERIZAÇÃO CONDICIONAL DAS TELAS
 # -------------------------------------------------------------------------
 if st.session_state["tela_atual"] == "Início":
-                 df_novo.columns[0],
+    home.render()
+
+elif st.session_state["tela_atual"] == "Pagamentos (OB)":
+
+    def atualizar_banco_via_csv():
+        caminho_csv = r"C:\Users\victor.brenner\Desktop\Pagamentos_2026\02_Bases_Novas_Fontes\base_2026.csv"
+        caminho_db = "pagamentos2026.db"
+
+        if not os.path.exists(caminho_csv):
+            st.sidebar.error(
+                "Arquivo CSV não encontrado no caminho especificado."
+            )
+            return False
+
+        try:
+            df_novo = None
+            for enc in ["utf-8-sig", "latin-1", "cp1252", "utf-8"]:
+                for sep_tentativa in [";", ","]:
+                    try:
+                        df_novo = pd.read_csv(
+                            caminho_csv, sep=sep_tentativa, encoding=enc
+                        )
+                        if df_novo is not None and len(df_novo.columns) > 1:
+                            break
+                    except:
+                        continue
+                if df_novo is not None and len(df_novo.columns) > 1:
+                    break
+
+            if df_novo is None:
+                st.sidebar.error("Não foi possível ler o arquivo CSV.")
+                return False
+
+            df_novo.columns = [str(c).strip() for c in df_novo.columns]
+
+            col_data = next(
+                (
+                    c
+                    for c in df_novo.columns
+                    if c.lower()
+                    in ["data emissão", "data emissao", "data", "dt_emissao"]
+                ),
+                df_novo.columns[0],
             )
             col_ob = next(
                 (
@@ -2092,7 +2397,59 @@ if st.session_state["tela_atual"] == "Início":
                     for c in df_novo.columns
                     if c == "DocumentoGD"
                     or "OB" in c.upper()
-   M pagamentos", conn
+                    or "NÚMERO" in c.upper()
+                    or "NUMERO" in c.upper()
+                ),
+                df_novo.columns[0],
+            )
+            col_valor = next(
+                (
+                    c
+                    for c in df_novo.columns
+                    if "VALOR" in c.upper() or "PAGAMENTO" in c.upper()
+                ),
+                df_novo.columns[-1],
+            )
+
+            df_novo = df_novo.dropna(subset=[col_data, col_ob, col_valor])
+            df_novo["id_controle"] = (
+                df_novo[col_data].astype(str).str.strip()
+                + "_"
+                + df_novo[col_valor].astype(str).str.strip()
+                + "_"
+                + df_novo.index.astype(str)
+            )
+            df_novo = df_novo.drop_duplicates(subset=["id_controle"])
+
+            conn = sqlite3.connect(caminho_db)
+            cursor = conn.cursor()
+
+            cursor.execute(
+                "SELECT name FROM sqlite_master WHERE type='table' AND name='pagamentos'"
+            )
+            if not cursor.fetchone():
+                df_novo.to_sql(
+                    "pagamentos", conn, if_exists="replace", index=False
+                )
+                cursor.execute(
+                    "CREATE UNIQUE INDEX IF NOT EXISTS idx_pag_controle ON pagamentos(id_controle)"
+                )
+                conn.commit()
+                st.sidebar.success(
+                    f"Banco inicializado com {len(df_novo)} registros."
+                )
+            else:
+                cursor.execute("PRAGMA table_info(pagamentos)")
+                colunas_bd = [info[1] for info in cursor.fetchall()]
+                if "id_controle" not in colunas_bd:
+                    cursor.execute(
+                        "ALTER TABLE pagamentos ADD COLUMN id_controle TEXT"
+                    )
+                    conn.commit()
+
+                ids_existentes = (
+                    pd.read_sql_query(
+                        "SELECT id_controle FROM pagamentos", conn
                     )["id_controle"]
                     .dropna()
                     .tolist()
@@ -2145,7 +2502,48 @@ if st.session_state["tela_atual"] == "Início":
             "Data Emissão",
             "Status",
             "Tipo de OB",
-            "unas_chave_ob:
+            "NE",
+            "Credor",
+            "Nome do Credor",
+            "Valor",
+            "Fonte",
+            "Natureza",
+            "Status de Envio",
+            "RE",
+            "PD",
+            "GRUPO",
+            "Elemento",
+            "Despesa",
+            "OBJETO",
+            "DocumentoGD",
+        ]
+        for col in colunas_obrigatorias:
+            if col not in df.columns:
+                df[col] = None
+
+        df = df.dropna(subset=["Valor"])
+
+        # TRAVA DE DUPLICIDADE DA BASE OB
+        # A planilha consolidada pode trazer a mesma OB duas vezes, com o CPF/CNPJ
+        # apresentado de forma diferente (por exemplo, com zero à esquerda). Antes
+        # de qualquer filtro ou soma, conservamos somente uma linha para a mesma
+        # identificação financeira. Assim, atualizações futuras da base não voltam
+        # a inflar os valores exibidos pelo painel.
+        colunas_chave_ob = [
+            coluna
+            for coluna in [
+                "Número",
+                "NE",
+                "Data Emissão",
+                "Valor",
+                "Fonte",
+                "Nome do Credor",
+                "Tipo de OB",
+            ]
+            if coluna in df.columns
+        ]
+
+        if colunas_chave_ob:
             for coluna in colunas_chave_ob:
                 chave_coluna = f"__chave_ob_{coluna}"
                 if coluna == "Valor":
@@ -2352,12 +2750,97 @@ if st.session_state["tela_atual"] == "Início":
         if not ign_grp and st.session_state["mem_ob_grupos"]:
             d = d[d["Grupo_Tratado"].isin(st.session_state["mem_ob_grupos"])]
 
-        if not ]
+        if not ign_tipo_item and st.session_state["mem_ob_tipo_item"]:
+            d = d[d["Tipo_Item_Tratado"].isin(st.session_state["mem_ob_tipo_item"])]
+
+        # Filtro Fontes
+        if not ign_fnt and st.session_state["mem_ob_fontes"]:
+            d = d[d["Fonte_Tratada"].isin(st.session_state["mem_ob_fontes"])]
+
+        # Filtro Objetos
+        if not ign_obj and st.session_state["mem_ob_objetos"] and coluna_objeto in d.columns:
+            d = d[d[coluna_objeto].isin(st.session_state["mem_ob_objetos"])]
+
+        # Filtro Credores
+        if not ign_cred and st.session_state["mem_ob_credores"]:
+            d = d[d["Credor_Nome_Tratado"].isin(st.session_state["mem_ob_credores"])]
+
+        return d
+
+    # Opções disponíveis são calculadas a partir dos filtros JÁ APLICADOS.
+    # Ex.: Agosto aplicado + Fonte 500 aplicada => Credor mostra somente o
+    # universo compatível com Agosto + Fonte 500.
+    df_para_meses = filtrar_df_ob(df_base, ign_mes=True)
+    lista_meses_fixa = [
+        m for m in ordem_meses_ano
+        if m in df_para_meses["Mes_Extenso"].unique()
+    ] if not df_para_meses.empty else []
+
+    opcoes_despesa_ob = [
+        "CORRENTE (Dotação do Ano)",
+        "RP (Restos a Pagar)",
+        "DEA (Exercícios Anteriores)",
+    ]
     df_para_grupos = filtrar_df_ob(df_base, ign_grp=True)
     ordem_grupos_ob = ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"]
     grupos_disponiveis = [
         grupo for grupo in ordem_grupos_ob
-        if not df_para_grupos.empty and grubjetos]
+        if not df_para_grupos.empty and grupo in df_para_grupos["Grupo_Tratado"].dropna().unique()
+    ]
+    if not df_para_grupos.empty:
+        grupos_disponiveis += sorted(
+            str(grupo).strip() for grupo in df_para_grupos["Grupo_Tratado"].dropna().unique()
+            if str(grupo).strip() and str(grupo).strip() not in grupos_disponiveis
+        )
+    df_para_tipo_item = filtrar_df_ob(df_base, ign_tipo_item=True)
+    ordem_tipo_item_ob = ["ITEM", "RETENÇÃO"]
+    tipos_item_disponiveis = [
+        tipo for tipo in ordem_tipo_item_ob
+        if not df_para_tipo_item.empty and tipo in df_para_tipo_item["Tipo_Item_Tratado"].dropna().unique()
+    ]
+    if not df_para_tipo_item.empty:
+        tipos_item_disponiveis += sorted(
+            str(tipo).strip() for tipo in df_para_tipo_item["Tipo_Item_Tratado"].dropna().unique()
+            if str(tipo).strip() and str(tipo).strip() not in tipos_item_disponiveis
+        )
+
+    df_para_credores = filtrar_df_ob(df_base, ign_cred=True)
+    nomes_disponiveis = (
+        sorted([
+            str(n).strip()
+            for n in df_para_credores["Credor_Nome_Tratado"].unique()
+            if n and str(n).lower() != "nan"
+        ])
+        if not df_para_credores.empty else []
+    )
+
+    df_para_fontes = filtrar_df_ob(df_base, ign_fnt=True)
+    lista_fontes = (
+        sorted([
+            str(f).strip()
+            for f in df_para_fontes["Fonte_Tratada"].unique()
+            if f and str(f).lower() != "nan"
+        ])
+        if not df_para_fontes.empty else []
+    )
+
+    df_para_objetos = filtrar_df_ob(df_base, ign_obj=True)
+    if not df_para_objetos.empty and coluna_objeto in df_para_objetos.columns:
+        lista_objetos = sorted([
+            str(obj).strip()
+            for obj in df_para_objetos[coluna_objeto].dropna().unique()
+            if str(obj).lower() != "nan"
+        ])
+    else:
+        lista_objetos = []
+
+    validos_m_ob = [m for m in st.session_state["mem_ob_meses"] if m in lista_meses_fixa]
+    despesas_validas_ob = [d for d in st.session_state["mem_ob_despesa"] if d in opcoes_despesa_ob]
+    validos_g_ob = [g for g in st.session_state["mem_ob_grupos"] if g in grupos_disponiveis]
+    validos_ti_ob = [t for t in st.session_state["mem_ob_tipo_item"] if t in tipos_item_disponiveis]
+    validos_c_ob = [c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis]
+    validos_f_ob = [f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes]
+    validos_o_ob = [o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos]
 
     # Em formulários, o callback é executado antes de os widgets serem
     # recriados. Assim, a limpeza remove também uma seleção ainda não aplicada.
@@ -2367,7 +2850,149 @@ if st.session_state["tela_atual"] == "Início":
         st.session_state["mem_ob_dt_ini"] = datetime.date(2026, 1, 1)
         st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
         st.session_state["mem_ob_despesa"] = []
-     rcício 2026</h2>",
+        st.session_state["mem_ob_grupos"] = []
+        st.session_state["mem_ob_tipo_item"] = []
+        st.session_state["mem_ob_credores"] = []
+        st.session_state["mem_ob_fontes"] = []
+        st.session_state["mem_ob_objetos"] = []
+        # Não removemos as chaves: o navegador pode reenviar o último valor do
+        # formulário. Ao atribuir os valores vazios, o widget é redesenhado limpo.
+        st.session_state["w_ob_tipo_data"] = "Por Mês de Competência"
+        st.session_state["w_ob_meses"] = []
+        st.session_state["w_ob_dt_ini"] = datetime.date(2026, 1, 1)
+        st.session_state["w_ob_dt_fim"] = datetime.date(2026, 12, 31)
+        st.session_state["w_ob_despesa"] = []
+        st.session_state["w_ob_grupos"] = []
+        st.session_state["w_ob_tipo_item"] = []
+        st.session_state["w_ob_credores"] = []
+        st.session_state["w_ob_fontes"] = []
+        st.session_state["w_ob_objetos"] = []
+
+    # O período fica fora do formulário para que a troca entre mês e intervalo
+    # redesenhe imediatamente os campos de data, sem deixar o intervalo inativo.
+    if "w_ob_tipo_data" not in st.session_state:
+        st.session_state["w_ob_tipo_data"] = st.session_state["mem_ob_tipo_data"]
+    tipo_filtro_data = st.sidebar.radio(
+        "Como deseja filtrar o período?",
+        options=["Por Mês de Competência", "Por Intervalo de Datas"],
+        key="w_ob_tipo_data",
+    )
+
+    # Formulário impede o rerun a cada clique do multiselect. O usuário pode
+    # selecionar vários itens normalmente e só então aplicar o conjunto.
+    with st.sidebar.form("form_filtros_ob", border=False):
+        meses_selecionados = []
+        data_inicio = st.session_state["mem_ob_dt_ini"]
+        data_fim = st.session_state["mem_ob_dt_fim"]
+
+        if tipo_filtro_data == "Por Mês de Competência":
+            meses_selecionados = st.multiselect(
+                "Filtrar Período de Competência:",
+                options=lista_meses_fixa,
+                default=validos_m_ob,
+                key="w_ob_meses",
+            )
+        else:
+            if not df_base.empty and coluna_data in df_base.columns:
+                datas_convertidas = pd.to_datetime(
+                    df_base[coluna_data], format="mixed", dayfirst=True, errors="coerce"
+                ).dt.date.dropna()
+                data_min = datas_convertidas.min() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
+                data_max = datas_convertidas.max() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
+            else:
+                data_min = datetime.date(2026, 1, 1)
+                data_max = datetime.date(2026, 12, 31)
+
+            val_ini = st.session_state["mem_ob_dt_ini"] or data_min
+            val_fim = st.session_state["mem_ob_dt_fim"] or data_max
+            col_dt1, col_dt2 = st.columns(2)
+            with col_dt1:
+                data_inicio = st.date_input(
+                    "Data Inicial:", value=val_ini, format="DD/MM/YYYY", key="w_ob_dt_ini"
+                )
+            with col_dt2:
+                data_fim = st.date_input(
+                    "Data Final:", value=val_fim, format="DD/MM/YYYY", key="w_ob_dt_fim"
+                )
+
+        st.divider()
+        despesas_selecionadas = st.multiselect(
+            "Filtrar por Tipo de Despesa:",
+            options=opcoes_despesa_ob,
+            default=despesas_validas_ob,
+            placeholder="Todas as despesas",
+            key="w_ob_despesa",
+        )
+
+        st.divider()
+        grupos_selecionados = st.multiselect(
+            "Filtrar por Grupo:", options=grupos_disponiveis,
+            default=validos_g_ob, placeholder="Todos os grupos", key="w_ob_grupos",
+        )
+
+        st.divider()
+        tipos_item_selecionados = st.multiselect(
+            "Filtrar por Classificação (Tipo Item):", options=tipos_item_disponiveis,
+            default=validos_ti_ob, placeholder="ITEM e RETENÇÃO", key="w_ob_tipo_item",
+        )
+
+        st.divider()
+        fontes_selecionadas = st.multiselect(
+            "Filtrar por Fonte de Recurso:", options=lista_fontes,
+            default=validos_f_ob, placeholder="Todas as fontes (Exibe tudo)", key="w_ob_fontes",
+        )
+
+        st.divider()
+        objeto_selecionado = st.multiselect(
+            "Filtrar por Objeto de Despesa:", options=lista_objetos,
+            default=validos_o_ob, placeholder="Todos os objetos", key="w_ob_objetos",
+        )
+
+        st.divider()
+        nomes_selecionados = st.multiselect(
+            "Filtrar por Credor:",
+            options=nomes_disponiveis,
+            default=validos_c_ob,
+            key="w_ob_credores",
+        )
+
+        col_aplicar_ob, col_limpar_ob = st.columns(2, gap="small")
+        with col_aplicar_ob:
+            aplicar_ob = st.form_submit_button(
+                "✅ Aplicar filtros", use_container_width=True, type="primary"
+            )
+        with col_limpar_ob:
+            limpar_ob = st.form_submit_button(
+                "🧹 Limpar filtros", use_container_width=True,
+                on_click=limpar_filtros_ob,
+            )
+
+    if aplicar_ob:
+        st.session_state["mem_ob_tipo_data"] = tipo_filtro_data
+        st.session_state["mem_ob_meses"] = list(meses_selecionados)
+        st.session_state["mem_ob_dt_ini"] = data_inicio
+        st.session_state["mem_ob_dt_fim"] = data_fim
+        st.session_state["mem_ob_despesa"] = list(despesas_selecionadas)
+        st.session_state["mem_ob_grupos"] = list(grupos_selecionados)
+        st.session_state["mem_ob_tipo_item"] = list(tipos_item_selecionados)
+        st.session_state["mem_ob_credores"] = list(nomes_selecionados)
+        st.session_state["mem_ob_fontes"] = list(fontes_selecionadas)
+        st.session_state["mem_ob_objetos"] = list(objeto_selecionado)
+        st.rerun()
+
+    st.sidebar.markdown("---")
+
+    # DATAFRAME FINAL: somente filtros que já foram confirmados em Aplicar.
+    df_filtrado = filtrar_df_ob(df_base)
+
+    st.sidebar.markdown("### 🔄 Atualizar Dados do Painel")
+    if st.sidebar.button("🔄 Incorporar Novos Pagamentos do CSV", key="btn_csv_ob"):
+        atualizar_banco_via_csv()
+        st.rerun()
+
+    # CABEÇALHO TELA 1
+    st.markdown(
+        "<h2 class='titulo-pagina'>📊 Painel de Controle de Pagamentos — Exercício 2026</h2>",
         unsafe_allow_html=True,
     )
     st.markdown(
@@ -2407,10 +3032,33 @@ if st.session_state["tela_atual"] == "Início":
     with col_kpi1:
         qtd_formatada_br = f"{qtd_registros:,}".replace(",", ".")
         st.markdown(
-            f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL PAGO</p><h3 style='color: #002b49; margin: 5px 0;'>{formatar_brl(total_real_calculado)}</h3><p style='color: #28a745d; margin:0;'>EXERC. ANTERIORES (DEA)</p><h3 style='color: #d62828; margin: 5px 0;'>{formatar_brl(total_dea)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Reconhecimento de Passivo</p></div>",
+            f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL PAGO</p><h3 style='color: #002b49; margin: 5px 0;'>{formatar_brl(total_real_calculado)}</h3><p style='color: #28a745; font-size: 11px; margin:0;'>📋 Registros: {qtd_formatada_br}</p></div>",
             unsafe_allow_html=True,
         )
-ecionados
+    with col_kpi2:
+        st.markdown(
+            f"<div class='metric-card'><p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>CORRENTE</p><h3 style='color: #028090; margin: 5px 0;'>{formatar_brl(total_corrente)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Dotação do Ano</p></div>",
+            unsafe_allow_html=True,
+        )
+    with col_kpi3:
+        st.markdown(
+            f"<div class='metric-card'><p style='color: #f77f00; font-size: 11px; font-weight: bold; margin:0;'>RESTOS A PAGAR (RP)</p><h3 style='color: #f77f00; margin: 5px 0;'>{formatar_brl(total_rp)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Exercícios Anteriores</p></div>",
+            unsafe_allow_html=True,
+        )
+    with col_kpi4:
+        st.markdown(
+            f"<div class='metric-card'><p style='color: #d62828; font-size: 11px; font-weight: bold; margin:0;'>EXERC. ANTERIORES (DEA)</p><h3 style='color: #d62828; margin: 5px 0;'>{formatar_brl(total_dea)}</h3><p style='color: #6c757d; font-size: 11px; margin:0;'>Reconhecimento de Passivo</p></div>",
+            unsafe_allow_html=True,
+        )
+
+    st.markdown("<br>", unsafe_allow_html=True)
+
+    st.markdown("### 📋 1. Demonstrativo Analítico por tipo de Despesa")
+
+    if not df_filtrado.empty:
+        if (
+            tipo_filtro_data == "Por Mês de Competência"
+            and meses_selecionados
         ):
             meses_exibicao = [
                 m for m in lista_meses_fixa if m in meses_selecionados
@@ -2418,14 +3066,57 @@ if st.session_state["tela_atual"] == "Início":
         else:
             meses_presentes = df_filtrado["Mes_Extenso"].unique()
             meses_exibicao = [
-o_bloco,
+                m for m in lista_meses_fixa if m in meses_presentes
+            ]
+
+        if not meses_exibicao:
+            meses_exibicao = lista_meses_fixa
+
+        df_matriz = df_filtrado.pivot_table(
+            index=["Despesa_Tratada", "Grupo_Tratado"],
+            columns="Mes_Extenso",
+            values="Valor_Limpo",
+            aggfunc="sum",
+            fill_value=0.0,
+        ).reset_index()
+
+        for m in meses_exibicao:
+            if m not in df_matriz.columns:
+                df_matriz[m] = 0.0
+
+        df_matriz["Total Geral"] = df_matriz[meses_exibicao].sum(axis=1)
+
+        def renderizar_tabela_simetrica_html(
+            df_origem,
+            chave_natureza,
+            grupos_obrigatorios,
+            titulo_bloco,
             cor_hexa,
         ):
             linhas = []
             for gnd in grupos_obrigatorios:
                 match = df_origem[
                     (df_origem["Despesa_Tratada"] == chave_natureza)
-                    & (df_origem["G= float(row.get(m, 0.0))
+                    & (df_origem["Grupo_Tratado"] == gnd)
+                ]
+                if not match.empty:
+                    linhas.append(match.iloc[0].to_dict())
+                else:
+                    nova_linha = {
+                        "Despesa_Tratada": chave_natureza,
+                        "Grupo_Tratado": gnd,
+                    }
+                    for col_m in meses_exibicao + ["Total Geral"]:
+                        nova_linha[col_m] = 0.0
+                    linhas.append(nova_linha)
+
+            linhas_corpo_html = ""
+            totais_colunas = {m: 0.0 for m in meses_exibicao + ["Total Geral"]}
+
+            for row in linhas:
+                colunas_valores = ""
+                for m in meses_exibicao + ["Total Geral"]:
+                    val = float(row.get(m, 0.0))
                     totais_colunas[m] += val
                     colunas_valores += f"<td>{formatar_brl(val)}</td>"
 
@@ -2472,13 +3163,91 @@ o_bloco,
         )
         renderizar_tabela_simetrica_html(
             df_matriz,
-         "
+            "DEA",
+            ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"],
+            "🔴 DESPESAS DE EXERCÍCIOS ANTERIORES - DEA (Reconhecimento de Passivo)",
+            "#d62828",
+        )
+
+    else:
+        st.info("Nenhum registro financeiro localizado. Verifique os filtros.")
+
+    st.markdown("---")
+
+    st.markdown(
+        "### 🏦 2. Distribuição Mensal Consolidada por Fonte de Recurso"
+    )
+
+    if not df_filtrado.empty:
+        df_matriz_fonte = df_filtrado.pivot_table(
+            index="Fonte_Tratada",
+            columns="Mes_Extenso",
+            values="Valor_Limpo",
+            aggfunc="sum",
+            fill_value=0.0,
+        ).reset_index()
+
+        for m in lista_meses_fixa:
+            if m not in df_matriz_fonte.columns:
+                df_matriz_fonte[m] = 0.0
+
+        df_matriz_fonte["Total Geral"] = df_matriz_fonte[lista_meses_fixa].sum(
+            axis=1
+        )
+        df_matriz_fonte = df_matriz_fonte.sort_values(
+            by="Total Geral", ascending=False
+        )
+
+        linhas_fonte_html = ""
+        totais_meses_fonte = {
+            m: 0.0 for m in lista_meses_fixa + ["Total Geral"]
+        }
+
+        for _, row in df_matriz_fonte.iterrows():
+            colunas_valores = ""
+            for m in lista_meses_fixa + ["Total Geral"]:
+                val = float(row[m])
+                totais_meses_fonte[m] += val
+                colunas_valores += f"<td>{formatar_brl(val)}</td>"
+            linhas_fonte_html += (
+                f"<tr><td>🏛️ {row['Fonte_Tratada']}</td>{colunas_valores}</tr>"
+            )
+
+        valores_totais_fonte = ""
+        for m in lista_meses_fixa + ["Total Geral"]:
+            valores_totais_fonte += (
+                f"<td>{formatar_brl(totais_meses_fonte[m])}</td>"
+            )
+
+        cabecalhos_meses_fonte = "".join(
+            [f"<th style='width: 10%;'>{mes}</th>" for mes in lista_meses_fixa]
+        )
+
+        html_fontes_resumo = (
+            f"<div class='tabela-container'>"
+            f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #1d3557 0%, #002b49 100%);'>💰 Origem dos Recursos e Fluxo de Saída Monetária</div>"
+            f"<table class='html-executiva'>"
+            f"<thead><tr>"
             f"<th style='width: 30%;'>FONTE DE RECURSO</th>"
             f"{cabecalhos_meses_fonte}"
             f"<th style='width: 10%;'>Total Geral</th>"
             f"</tr></thead>"
             f"<tbody>{linhas_fonte_html}"
-            f"<tr clalor_Limpo", "sum"),
+            f"<tr class='linha-total-html'><td>💰 TOTAL CONSOLIDADO POR FONTE</td>{valores_totais_fonte}</tr>"
+            f"</tbody></table></div>"
+        )
+        st.markdown(html_fontes_resumo, unsafe_allow_html=True)
+
+    st.markdown("---")
+
+    st.markdown("### 📊 3. Análise Temporal e Desembolso Mensal")
+
+    if not df_filtrado.empty:
+        df_agrupado_mes = (
+            df_filtrado.groupby("Mes_Extenso")
+            .agg(
+                Qtd_Docs=("Valor_Limpo", "count"),
+                Total_Liq=("Valor_Limpo", "sum"),
             )
             .reset_index()
         )
@@ -2486,7 +3255,16 @@ o_bloco,
         df_agrupado_mes = df_agrupado_mes.rename(
             columns={"Mes_Extenso": "Mês de Referência"}
         )
-        df_agrupado_mes["Mês de Referência"] = pd.Categori for m in lista_meses_fixa:
+        df_agrupado_mes["Mês de Referência"] = pd.Categorical(
+            df_agrupado_mes["Mês de Referência"],
+            categories=lista_meses_fixa,
+            ordered=True,
+        )
+        df_agrupado_mes = df_agrupado_mes.sort_values(
+            "Mês de Referência"
+        ).fillna(0)
+
+        for m in lista_meses_fixa:
             if m not in df_agrupado_mes["Mês de Referência"].values:
                 nova_linha_vazia = pd.DataFrame(
                     [{"Mês de Referência": m, "Qtd_Docs": 0, "Total_Liq": 0.0}]
@@ -2503,7 +3281,30 @@ o_bloco,
         df_agrupado_mes = df_agrupado_mes.sort_values("Mês de Referência")
 
         with st.container(border=True):
-            col_grafico, col_tabela = st.columns([1.1, 0.9], g,")
+            col_grafico, col_tabela = st.columns([1.1, 0.9], gap="large")
+
+            with col_grafico:
+                st.markdown(
+                    "<p style='font-weight: 700; color: #002b49; margin-bottom: 5px; font-family: sans-serif;'>Curva Crítica de Desembolso Mensal</p>",
+                    unsafe_allow_html=True,
+                )
+
+                def formatar_dinamico_br(x):
+                    if x >= 1_000_000:
+                        valor_m = x / 1_000_000
+                        return (
+                            f"R$ {valor_m:,.1f}".replace(",", "X")
+                            .replace(".", ",")
+                            .replace("X", ".")
+                            + "M"
+                        )
+                    elif x >= 1_000:
+                        valor_k = int(x / 1_000)
+                        return f"R$ {valor_k:,}".replace(",", ".") + "K"
+                    elif x > 0:
+                        return (
+                            f"R$ {x:,.2f}".replace(",", "X")
+                            .replace(".", ",")
                             .replace("X", ".")
                         )
                     return "R$ 0"
@@ -2511,7 +3312,20 @@ o_bloco,
                 fig = px.line(
                     df_agrupado_mes,
                     x="Mês de Referência",
-                    y="To
+                    y="Total_Liq",
+                    markers=True,
+                    text=df_agrupado_mes["Total_Liq"].apply(
+                        formatar_dinamico_br
+                    ),
+                    hover_data={"Qtd_Docs": True, "Total_Liq": ":,.2f"},
+                )
+
+                fig.update_traces(
+                    line=dict(color="#028090", width=4),
+                    marker=dict(size=10, color="#f77f00", symbol="circle"),
+                    textposition="top center",
+                )
+
                 fig.update_layout(
                     xaxis=dict(
                         title=None,
@@ -2531,10 +3345,87 @@ o_bloco,
                     height=320,
                 )
 
-               for _, row in df_agrupado_mes.iterrows():
+                st.plotly_chart(
+                    fig,
+                    use_container_width=True,
+                    config={"displayModeBar": False},
+                )
+
+            with col_tabela:
+                titulo_resumo, acao_resumo = st.columns([1.15, 1], gap="small")
+                with titulo_resumo:
+                    st.markdown(
+                        "<p style='font-weight: 700; color: #002b49; margin: 6px 0 12px; font-family: sans-serif;'>Resumo Gerencial por Mês</p>",
+                        unsafe_allow_html=True,
+                    )
+                with acao_resumo:
+                    resumo_ob_excel = gerar_resumo_gerencial_ob_excel(
+                        df_filtrado, st.session_state["mem_ob_credores"]
+                    )
+                    st.download_button(
+                        "📥 Exportar por dia .xlsx",
+                        data=resumo_ob_excel,
+                        file_name=(
+                            "Resumo_Gerencial_Diario_Pagamentos_"
+                            f"{datetime.date.today().strftime('%d-%m-%Y')}.xlsx"
+                        ),
+                        mime=(
+                            "application/vnd.openxmlformats-officedocument."
+                            "spreadsheetml.sheet"
+                        ),
+                        key="baixar_resumo_gerencial_ob",
+                        use_container_width=True,
+                    )
+
+                total_documentos = int(df_agrupado_mes["Qtd_Docs"].sum())
+                total_financeiro = float(df_agrupado_mes["Total_Liq"].sum())
+
+                total_docs_formatado_br = f"{total_documentos:,}".replace(
+                    ",", "."
+                )
+
+                linhas_tabela_html = ""
+                for _, row in df_agrupado_mes.iterrows():
                     valor_formatado = formatar_brl(row["Total_Liq"])
                     qtd_docs_br = f"{int(row['Qtd_Docs']):,}".replace(",", ".")
-                    linhas_tabela_html += f'<tr style="border-bottom: 1px solid #f1f5f9;"><td style="padding: 10px 15px; text-align: left; color: #334155; font-family: sans-serif; font-size: 13px;">{row["Mês de Referência"]}</td><td style="padding: 10px 15px; text-align: center; color: #334155; font-family: sans:
+                    linhas_tabela_html += f'<tr style="border-bottom: 1px solid #f1f5f9;"><td style="padding: 10px 15px; text-align: left; color: #334155; font-family: sans-serif; font-size: 13px;">{row["Mês de Referência"]}</td><td style="padding: 10px 15px; text-align: center; color: #334155; font-family: sans-serif; font-size: 13px;">{qtd_docs_br}</td><td style="padding: 10px 15px; text-align: right; color: #0f172a; font-family: sans-serif; font-size: 13px; font-weight: 600;">{valor_formatado}</td></tr>'
+
+                html_tabela_gerencial = (
+                    f'<div style="border: 1px solid #e2e8f0; border-radius: 8px; overflow: hidden; background-color: #ffffff; width: 100%;">'
+                    f'<table style="width: 100%; border-collapse: collapse; text-align: left; margin: 0; padding: 0;">'
+                    f"<thead>"
+                    f'<tr style="background-color: #f8fafc; border-bottom: 1px solid #e2e8f0;">'
+                    f'<th style="padding: 12px 15px; font-family: sans-serif; font-size: 11px; font-weight: 700; color: #475569; text-align: left;">MÊS DE REFERÊNCIA</th>'
+                    f'<th style="padding: 12px 15px; font-family: sans-serif; font-size: 11px; font-weight: 700; color: #475569; text-align: center;">QTD. DOCS</th>'
+                    f'<th style="padding: 12px 15px; font-family: sans-serif; font-size: 11px; font-weight: 700; color: #475569; text-align: right;">TOTAL PAGO</th>'
+                    f"</tr>"
+                    f"</thead>"
+                    f"<tbody>{linhas_tabela_html}</tbody>"
+                    f"<tfoot>"
+                    f'<tr style="background-color: #f8fafc; border-top: 2px solid #002b49; font-weight: 700;">'
+                    f'<td style="padding: 12px 15px; font-family: sans-serif; font-size: 13px; color: #002b49; text-align: left;">📊 TOTAL GERAL</td>'
+                    f'<td style="padding: 12px 15px; font-family: sans-serif; font-size: 13px; color: #002b49; text-align: center;">{total_docs_formatado_br}</td>'
+                    f'<td style="padding: 12px 15px; font-family: sans-serif; font-size: 13px; color: #002b49; text-align: right;">{formatar_brl(total_financeiro)}</td>'
+                    f"</tr>"
+                    f"</tfoot>"
+                    f"</table>"
+                    f"</div>"
+                )
+                st.html(html_tabela_gerencial)
+
+        st.markdown("<br>", unsafe_allow_html=True)
+        st.markdown("### 🏢 4. Detalhamento de Pagamentos por Credor")
+
+        df_matriz_credor = df_filtrado.pivot_table(
+            index="Credor_Nome_Tratado",
+            columns="Mes_Extenso",
+            values="Valor_Limpo",
+            aggfunc="sum",
+            fill_value=0.0,
+        ).reset_index()
+
+        for m in lista_meses_fixa:
+            if m not in df_matriz_credor.columns:
                 df_matriz_credor[m] = 0.0
 
         df_matriz_credor["Total Geral"] = df_matriz_credor[
@@ -2624,7 +3515,40 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             re.search(r"\bGD3\b", texto)
             or re.search(r"\bGND3\b", texto)
             or compacto.startswith("GD3")
-            or compacto.startswith("Gumns[0]
+            or compacto.startswith("GND3")
+            or compacto == "3"
+            or compacto.startswith("3OUTRAS")
+        ):
+            return "GD3"
+
+        if (
+            re.search(r"\bGD4\b", texto)
+            or re.search(r"\bGND4\b", texto)
+            or compacto.startswith("GD4")
+            or compacto.startswith("GND4")
+            or compacto == "4"
+            or compacto.startswith("4INVESTIMENTOS")
+        ):
+            return "GD4"
+
+        return "NÃO INFORMADO"
+
+    @st.cache_data(ttl=60)
+    def carregar_dados_integrados():
+        try:
+            df1 = ler_csv_url(LINK_PLANILHA_1)
+            df2 = ler_csv_url(LINK_PLANILHA_2)
+        except Exception as e:
+            st.error(f"Erro no carregamento das planilhas: {e}")
+            return pd.DataFrame()
+
+        if df1.empty:
+            return df1
+
+        df1.columns = [str(c).strip() for c in df1.columns]
+        df2.columns = [str(c).strip() for c in df2.columns]
+
+        col_nl = "Número" if "Número" in df1.columns else df1.columns[0]
         col_ne1 = next(
             (
                 c
@@ -2633,7 +3557,47 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             ),
             df1.columns[0],
         )
-        col_     else "Todos"
+        col_credor = (
+            "Nome do Credor" if "Nome do Credor" in df1.columns else df1.columns[0]
+        )
+        col_retido = next(
+            (c for c in df1.columns if "retido" in c.lower()), None
+        )
+        col_valor = "Valor" if "Valor" in df1.columns else df1.columns[-1]
+
+        df1["NL_Numero"] = (
+            df1[col_nl].fillna("NL NÃO INFORMADA").astype(str).str.strip()
+        )
+        df1["NE_Chave"] = limpar_chave_ne(df1[col_ne1])
+        df1["Credor_Tratado"] = (
+            df1[col_credor]
+            .fillna("NÃO IDENTIFICADO")
+            .astype(str)
+            .str.strip()
+            .str.upper()
+        )
+
+        col_data = next((c for c in df1.columns if "data" in c.lower()), None)
+        if col_data:
+            # A planilha traz Data Emissão em dd/mm/aaaa. Sem dayfirst, 12/01
+            # vira 01/12 e surgem competências futuras inexistentes.
+            df1["Data_DT"] = pd.to_datetime(
+                df1[col_data], errors="coerce", dayfirst=True
+            )
+            df1["Competencia"] = df1["Data_DT"].dt.strftime("%m/%Y")
+        else:
+            df1["Data_DT"] = pd.NaT
+            df1["Competencia"] = "Não informada"
+
+        df1["Grupo_Filtro"] = (
+            df1["Grupo"].fillna("Todos").astype(str).str.strip()
+            if "Grupo" in df1.columns
+            else "Todos"
+        )
+        df1["Status_Filtro"] = (
+            df1["Status"].fillna("Todos").astype(str).str.strip()
+            if "Status" in df1.columns
+            else "Todos"
         )
 
         df1["Valor_Total_Limpo"] = converter_para_float(df1[col_valor])
@@ -2642,19 +3606,117 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         )
 
         col_ne2 = (
-    f2["Grupo_Relacao"] = (
+            "DocumentoNE"
+            if "DocumentoNE" in df2.columns
+            else next(
+                (c for c in df2.columns if "NE" in c.upper()), df2.columns[0]
+            )
+        )
+        col_fonte2 = (
+            "Fonte"
+            if "Fonte" in df2.columns
+            else next(
+                (c for c in df2.columns if "FONTE" in c.upper()), None
+            )
+        )
+        col_objeto2 = (
+            "Objeto da Despesa"
+            if "Objeto da Despesa" in df2.columns
+            else next(
+                (c for c in df2.columns if "OBJETO" in c.upper()), None
+            )
+        )
+        col_grupo2 = (
+            "Grupo"
+            if "Grupo" in df2.columns
+            else next(
+                (c for c in df2.columns if "GRUPO" in c.upper()), None
+            )
+        )
+
+        df2["NE_Chave"] = limpar_chave_ne(df2[col_ne2])
+
+        df2["Fonte_Relacao"] = (
+            df2[col_fonte2].fillna("NÃO INFORMADA").astype(str).str.strip()
+            if col_fonte2
+            else "NÃO INFORMADA"
+        )
+        df2["Objeto_Relacao"] = (
+            df2[col_objeto2].fillna("NÃO INFORMADO").astype(str).str.strip()
+            if col_objeto2
+            else "NÃO INFORMADO"
+        )
+        df2["Grupo_Relacao"] = (
             df2[col_grupo2].fillna("NÃO INFORMADO").astype(str).str.strip()
             if col_grupo2
             else "NÃO INFORMADO"
         )
 
         df2_dedup = df2[df2["NE_Chave"] != ""].drop_duplicates(
-            sub
+            subset=["NE_Chave"]
+        )
+
+        df_merged = pd.merge(
+            df1,
+            df2_dedup[
+                ["NE_Chave", "Fonte_Relacao", "Objeto_Relacao", "Grupo_Relacao"]
+            ],
+            on="NE_Chave",
+            how="left",
+        )
+
+        df_merged["Fonte_Relacao"] = df_merged["Fonte_Relacao"].fillna(
+            "NÃO INFORMADA"
+        )
+        df_merged["Objeto_Relacao"] = df_merged["Objeto_Relacao"].fillna(
+            "NÃO INFORMADO"
+        )
+        df_merged["Grupo_Relacao"] = df_merged["Grupo_Relacao"].fillna(
+            "NÃO INFORMADO"
+        )
+
+        df_merged["Grupo_Classificado"] = df_merged["Grupo_Relacao"].apply(
+            classificar_grupo_nl
+        )
+        mask_grupo_indisponivel = df_merged["Grupo_Classificado"] == "NÃO INFORMADO"
+        df_merged.loc[mask_grupo_indisponivel, "Grupo_Classificado"] = (
+            df_merged.loc[mask_grupo_indisponivel, "Grupo_Filtro"]
+            .apply(classificar_grupo_nl)
+        )
+
+        return df_merged
+
+    def renderizar_tabela_credor_dinamica(df_filtrado):
+        totais_credor = (
+            df_filtrado.groupby("Credor_Tratado")
+            .agg({"Valor_Retido_Limpo": "sum", "Valor_Total_Limpo": "sum"})
+            .sort_values(by="Valor_Total_Limpo", ascending=False)
+        )
+
+        tot_retido_geral = totais_credor["Valor_Retido_Limpo"].sum()
+        tot_valor_geral = totais_credor["Valor_Total_Limpo"].sum()
+
+        html_grupos = ""
+
+        for credor, row_tot in totais_credor.iterrows():
+            v_ret_credor = row_tot["Valor_Retido_Limpo"]
+            v_tot_credor = row_tot["Valor_Total_Limpo"]
+
+            df_cred = df_filtrado[df_filtrado["Credor_Tratado"] == credor]
+            df_sub = (
+                df_cred.groupby(["NL_Numero", "NE_Chave"], as_index=False)
+                .agg({"Valor_Retido_Limpo": "sum", "Valor_Total_Limpo": "sum"})
+                .sort_values(by="NL_Numero", ascending=True)
+            )
+
+            linhas_subtabela = ""
             for _, r in df_sub.iterrows():
                 linhas_subtabela += f"""
 <tr>
     <td style='width: 25%; text-align: center; font-family: monospace; font-weight: 600; color: #005691;'>{r['NL_Numero']}</td>
-    <td style='width: 25%; text-ar: #002b49;'>{formatar_brl(r['Valor_Total_Limpo'])}</td>
+    <td style='width: 25%; text-align: center; font-family: monospace; color: #475569;'>{r['NE_Chave']}</td>
+    <td style='width: 25%; text-align: center; color: #d97706;'>{formatar_brl(r['Valor_Retido_Limpo'])}</td>
+    <td style='width: 25%; text-align: center; font-weight: 600; color: #002b49;'>{formatar_brl(r['Valor_Total_Limpo'])}</td>
 </tr>"""
 
             html_grupos += f"""
@@ -2681,14 +3743,76 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
     </div>
 </details>"""
 
-        htmlnsões e XMLs das
+        html_final = f"""
+<div class='tabela-dinamica-container'>
+    <div class='tabela-dinamica-header'>
+        <div>CREDOR</div>
+        <div style='text-align: right;'>VAL. RET.</div>
+        <div style='text-align: right;'>VALOR TOTAL</div>
+    </div>
+    {html_grupos}
+    <div class='tabela-dinamica-header' style='background: #f1f5f9; border-top: 2px solid #005691; border-bottom: none;'>
+        <div style='color: #002b49; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;'>TOTAL GERAL</div>
+        <div style='text-align: right; color: #f77f00; font-weight: 800;'>{formatar_brl(tot_retido_geral)}</div>
+        <div style='text-align: right; color: #028090; font-weight: 800;'>{formatar_brl(tot_valor_geral)}</div>
+    </div>
+</div>"""
+
+        if hasattr(st, "html"):
+            st.html(html_final)
+        else:
+            st.markdown(html_final, unsafe_allow_html=True)
+
+    def gerar_relatorio_nl_excel(df_filtrado):
+        """Preenche o modelo oficial de NL preservando integralmente a Tabela Dinâmica.
+
+        Assim como no relatório de PD, esta rotina NÃO abre/salva o arquivo com
+        openpyxl. O .xlsx é tratado como um pacote ZIP e somente o XML da aba-base
+        é alterado. Dessa forma, estilos, cores, caches, extensões e XMLs das
         tabelas dinâmicas permanecem exatamente como estão no modelo original.
         """
         if df_filtrado.empty:
             raise ValueError("Não há NLs para exportar com os filtros selecionados.")
 
         import zipfile
-               return float(valor)
+        import xml.etree.ElementTree as ET
+
+        def normalizar_nome_coluna(valor):
+            texto = unicodedata.normalize("NFKD", str(valor or ""))
+            texto = "".join(
+                caractere for caractere in texto
+                if not unicodedata.combining(caractere)
+            )
+            return re.sub(r"[^a-z0-9]+", "", texto.lower())
+
+        def localizar_coluna(*opcoes):
+            colunas_normalizadas = {
+                normalizar_nome_coluna(coluna): coluna
+                for coluna in df_filtrado.columns
+            }
+            for opcao in opcoes:
+                coluna = colunas_normalizadas.get(normalizar_nome_coluna(opcao))
+                if coluna is not None:
+                    return coluna
+            return None
+
+        def serie_texto(coluna, padrao=""):
+            if coluna is None:
+                return pd.Series(padrao, index=df_filtrado.index, dtype="object")
+            return df_filtrado[coluna].fillna(padrao).astype(str).str.strip()
+
+        def serie_numero(coluna):
+            if coluna is None:
+                return pd.Series(0.0, index=df_filtrado.index, dtype="float64")
+            valores = df_filtrado[coluna]
+            if pd.api.types.is_numeric_dtype(valores):
+                return pd.to_numeric(valores, errors="coerce").fillna(0.0)
+
+            def converter_valor(valor):
+                if pd.isna(valor):
+                    return 0.0
+                if isinstance(valor, (int, float, np.number)):
+                    return float(valor)
                 texto = str(valor).strip()
                 if texto.lower() in {"", "nan", "none", "null", "-"}:
                     return 0.0
@@ -2709,14 +3833,49 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         coluna_credor = localizar_coluna(
             "Credor_Tratado", "Nome do Credor", "Credor_NL",
-            "Entidade / Credor", "Entidade", despesa": coluna_objeto,
+            "Entidade / Credor", "Entidade", "Credor"
+        )
+        coluna_objeto = localizar_coluna(
+            "Objeto_Relacao", "Objeto Despesa", "Objeto da Despesa",
+            "Objeto de Despesa", "Objeto"
+        )
+        coluna_grupo = localizar_coluna(
+            "Grupo_Classificado", "GD", "Grupo_Relacao",
+            "Grupo", "Grupo de Despesa"
+        )
+        coluna_numero = localizar_coluna(
+            "NL_Numero", "Numero_NL", "Número NL", "Numero NL",
+            "Número", "Numero", "NL"
+        )
+        coluna_status = localizar_coluna(
+            "Status_Filtro", "Status", "Status Comp.", "Status Comp"
+        )
+        coluna_valor = localizar_coluna(
+            "Valor_Total_Limpo", "Valor", "Valor Total",
+            "Valor Pago", "Valor Liquidado", "Valor da NL"
+        )
+        coluna_tipo_nl_modelo = localizar_coluna(
+            "Tipo_NL_Filtro", "Tipo_NL", "Tipo de NL", "Tipo NL"
+        )
+
+        campos_obrigatorios = {
+            "credor tratado": coluna_credor,
+            "objeto da despesa": coluna_objeto,
             "grupo": coluna_grupo,
             "número da NL": coluna_numero,
             "valor": coluna_valor,
         }
         campos_ausentes = [
             nome for nome, coluna in campos_obrigatorios.items()
-        torio = serie_texto(coluna_grupo, padrao="NÃO INFORMADO").str.upper()
+            if coluna is None
+        ]
+        if campos_ausentes:
+            raise ValueError(
+                "Não foi possível montar o relatório de NL. Colunas ausentes: "
+                + ", ".join(campos_ausentes)
+            )
+
+        grupo_relatorio = serie_texto(coluna_grupo, padrao="NÃO INFORMADO").str.upper()
         grupo_relatorio = grupo_relatorio.replace({
             "GD1": "1", "GD3": "3", "GD4": "4",
             "": "NÃO INFORMADO", "NAN": "NÃO INFORMADO",
@@ -2740,33 +3899,112 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             / "modelo_relatorio_liquidacao.xlsx"
         )
         if not caminho_modelo.exists():
- "
+            raise FileNotFoundError(
+                "Modelo não encontrado. Inclua "
+                "modelos/modelo_relatorio_liquidacao.xlsx no repositório."
+            )
+
+        NS_MAIN = "http://schemas.openxmlformats.org/spreadsheetml/2006/main"
         NS_REL = "http://schemas.openxmlformats.org/officeDocument/2006/relationships"
         NS_PKG = "http://schemas.openxmlformats.org/package/2006/relationships"
         NS_XML = "http://www.w3.org/XML/1998/namespace"
 
-        ET.register_namesquivos_modelo["xl/workbook.xml"])
+        ET.register_namespace("", NS_MAIN)
+        ET.register_namespace("r", NS_REL)
+
+        with zipfile.ZipFile(caminho_modelo, "r") as origem:
+            arquivos_modelo = {nome: origem.read(nome) for nome in origem.namelist()}
+
+        workbook_root = ET.fromstring(arquivos_modelo["xl/workbook.xml"])
         rels_root = ET.fromstring(arquivos_modelo["xl/_rels/workbook.xml.rels"])
         mapa_relacoes = {
             rel.attrib.get("Id"): rel.attrib.get("Target")
-            for rel in rels_root.findall(f"{{{NS_PKGase = None
+            for rel in rels_root.findall(f"{{{NS_PKG}}}Relationship")
+        }
+
+        # Shared strings são necessárias apenas para identificar a aba-base
+        # caso os cabeçalhos estejam armazenados como índices compartilhados.
+        shared_strings = []
+        if "xl/sharedStrings.xml" in arquivos_modelo:
+            shared_root = ET.fromstring(arquivos_modelo["xl/sharedStrings.xml"])
+            for si in shared_root.findall(f"{{{NS_MAIN}}}si"):
+                partes = [
+                    t.text or ""
+                    for t in si.iter(f"{{{NS_MAIN}}}t")
+                ]
+                shared_strings.append("".join(partes))
+
+        def texto_celula(celula):
+            tipo = celula.attrib.get("t")
+            if tipo == "inlineStr":
+                return "".join(
+                    (t.text or "") for t in celula.iter(f"{{{NS_MAIN}}}t")
+                )
+            valor = celula.find(f"{{{NS_MAIN}}}v")
+            if valor is None or valor.text is None:
+                return ""
+            if tipo == "s":
+                try:
+                    return shared_strings[int(valor.text)]
+                except (ValueError, IndexError):
+                    return ""
+            return valor.text
+
+        cabecalhos_esperados = [
+            "Nome do Credor", "Objeto Despesa", "GD", "Número",
+            "Tipo de NL", "Status", "Valor",
+        ]
+        esperado_normalizado = {
+            normalizar_nome_coluna(cabecalho)
+            for cabecalho in cabecalhos_esperados
+        }
+
+        caminho_aba_base = None
         linha_cabecalho_numero = None
         for sheet in workbook_root.findall(f".//{{{NS_MAIN}}}sheet"):
             rel_id = sheet.attrib.get(f"{{{NS_REL}}}id")
             alvo = mapa_relacoes.get(rel_id, "")
             if not alvo:
-             encontrados = {
+                continue
+            caminho = "xl/" + alvo.lstrip("/")
+            if caminho not in arquivos_modelo:
+                continue
+            try:
+                raiz_teste = ET.fromstring(arquivos_modelo[caminho])
+            except ET.ParseError:
+                continue
+            dados_teste = raiz_teste.find(f"{{{NS_MAIN}}}sheetData")
+            if dados_teste is None:
+                continue
+            for linha in list(dados_teste.findall(f"{{{NS_MAIN}}}row"))[:10]:
+                encontrados = {
                     normalizar_nome_coluna(texto_celula(celula))
                     for celula in linha.findall(f"{{{NS_MAIN}}}c")
                     if texto_celula(celula)
                 }
-                if esperado_if not caminho_aba_base:
+                if esperado_normalizado.issubset(encontrados):
+                    caminho_aba_base = caminho
+                    linha_cabecalho_numero = int(linha.attrib.get("r", "1"))
+                    break
+            if caminho_aba_base:
+                break
+
+        if not caminho_aba_base:
             raise ValueError(
                 "A aba-base do modelo de NL não foi localizada. "
                 "Ela precisa conter as sete colunas esperadas do relatório."
             )
 
-        # ---------------------------r"<sheetData(?P<attrs>[^>]*)>(?P<body>.*?)</sheetData>",
+        # --------------------------------------------------------------
+        # Grava a base sem reserializar a worksheet inteira.
+        # Mantemos os namespaces/prefixes/extensões exatamente como vieram do
+        # Excel. Isso evita o aviso "Encontramos um problema em um conteúdo".
+        # --------------------------------------------------------------
+        from xml.sax.saxutils import escape as _xml_escape
+
+        xml_aba = arquivos_modelo[caminho_aba_base].decode("utf-8")
+        match_sheetdata = re.search(
+            r"<sheetData(?P<attrs>[^>]*)>(?P<body>.*?)</sheetData>",
             xml_aba,
             flags=re.DOTALL,
         )
@@ -2778,6 +4016,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         def _numero_linha_xml(linha_xml):
             achado = re.search(r'\br="(\d+)"', linha_xml)
+            return int(achado.group(1)) if achado else 0
+
+        def _estilos_linha_xml(linha_xml):
+            estilos = {}
+            for tag_c in re.findall(r"<c\b[^>]*>", linha_xml):
+                ref = re.search(r'\br="([A-Z]+)\d+"', tag_c)
                 sty = re.search(r'\bs="(\d+)"', tag_c)
                 if ref:
                     estilos[ref.group(1)] = sty.group(1) if sty else None
@@ -2790,7 +4034,28 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         if linha_cabecalho_xml is None:
             raise ValueError("O cabeçalho da aba-base do modelo de NL não foi localizado.")
 
-        primeira_linha_dados = linha_cabecae str(valor)
+        primeira_linha_dados = linha_cabecalho_numero + 1
+        linha_modelo_1 = next((l for l in linhas_xml if _numero_linha_xml(l) == primeira_linha_dados), None)
+        linha_modelo_2 = next((l for l in linhas_xml if _numero_linha_xml(l) == primeira_linha_dados + 1), linha_modelo_1)
+        estilos_1 = _estilos_linha_xml(linha_modelo_1 or "")
+        estilos_2 = _estilos_linha_xml(linha_modelo_2 or "")
+
+        # Preserva byte a byte todas as linhas anteriores e o próprio cabeçalho.
+        linhas_preservadas = [
+            l for l in linhas_xml if _numero_linha_xml(l) <= linha_cabecalho_numero
+        ]
+        colunas_excel = ["A", "B", "C", "D", "E", "F", "G"]
+
+        def _attrs(ref, estilo=None, tipo=None):
+            itens = [f'r="{ref}"']
+            if estilo is not None:
+                itens.append(f's="{estilo}"')
+            if tipo is not None:
+                itens.append(f't="{tipo}"')
+            return " ".join(itens)
+
+        def _texto(ref, valor, estilo=None):
+            texto = "" if valor is None else str(valor)
             texto_esc = _xml_escape(texto, {'"': '&quot;'})
             espaco = ' xml:space="preserve"' if texto.startswith(" ") or texto.endswith(" ") else ""
             return f'<c {_attrs(ref, estilo, "inlineStr")}><is><t{espaco}>{texto_esc}</t></is></c>'
@@ -2952,7 +4217,27 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             )
 
         resumo_objeto = adicionar_total(
-            base_relatorio.groupby("Objeto Despesa", as_index=False)["Valor"].sum()index=False)
+            base_relatorio.groupby("Objeto Despesa", as_index=False)["Valor"].sum().sort_values("Valor", ascending=False)
+        )
+        resumo_tipo = adicionar_total(
+            base_relatorio.groupby("Tipo de NL", as_index=False)["Valor"].sum().sort_values("Valor", ascending=False)
+        )
+        resumo_status = adicionar_total(
+            base_relatorio.groupby("Status", as_index=False)["Valor"].sum().sort_values("Valor", ascending=False)
+        )
+        resumo_gd = adicionar_total(
+            base_relatorio.groupby("GD", as_index=False)["Valor"].sum().sort_values("GD")
+        )
+
+        arquivo = io.BytesIO()
+        with pd.ExcelWriter(arquivo, engine="xlsxwriter") as writer:
+            base_relatorio.to_excel(writer, sheet_name="Relatório Geral de NL", index=False)
+            resumo_objeto.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=2, startcol=1, index=False)
+            resumo_tipo.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=2, startcol=4, index=False)
+            linha_status = 5 + len(resumo_tipo)
+            resumo_status.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_status, startcol=4, index=False)
+            linha_gd = linha_status + 3 + len(resumo_status)
+            resumo_gd.to_excel(writer, sheet_name="Tabela_Dinâmica", startrow=linha_gd, startcol=4, index=False)
 
             workbook = writer.book
             aba_base = writer.sheets["Relatório Geral de NL"]
@@ -2969,7 +4254,69 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             formato_total_moeda = workbook.add_format({"bold": True, "bg_color": "#D9EAF7", "num_format": "R$ #,##0.00", "align": "right"})
 
             aba_base.freeze_panes(1, 0)
-            aba_bas )
+            aba_base.autofilter(0, 0, len(base_relatorio), len(base_relatorio.columns) - 1)
+            aba_base.hide_gridlines(0)
+            aba_base.set_column("A:A", 42)
+            aba_base.set_column("B:B", 55)
+            aba_base.set_column("C:C", 8)
+            aba_base.set_column("D:F", 18)
+            aba_base.set_column("G:G", 18, formato_moeda)
+            aba_base.set_row(0, 24)
+            for coluna, cabecalho in enumerate(base_relatorio.columns):
+                aba_base.write(0, coluna, cabecalho, formato_cabecalho)
+            for linha, valores in enumerate(
+                base_relatorio.itertuples(index=False, name=None), start=1
+            ):
+                for coluna, valor in enumerate(valores[:-1]):
+                    aba_base.write(linha, coluna, valor, formato_texto_branco)
+                aba_base.write_number(linha, 6, float(valores[-1]), formato_moeda_branco)
+            aba_base.set_tab_color("#028090")
+
+            aba_painel.set_column("A:Z", 10, formato_texto_branco)
+            aba_painel.set_column("A:A", 3, formato_texto_branco)
+            aba_painel.merge_range("B1:F1", "Relatório Geral de Liquidações", formato_titulo)
+            aba_painel.merge_range("B2:F2", "Painel consolidado conforme os filtros selecionados no sistema.", formato_subtitulo)
+            aba_painel.set_column("B:B", 56, formato_texto_branco)
+            aba_painel.set_column("C:C", 18, formato_moeda_branco)
+            aba_painel.set_column("D:D", 4, formato_texto_branco)
+            aba_painel.set_column("E:E", 24, formato_texto_branco)
+            aba_painel.set_column("F:F", 18, formato_moeda_branco)
+            aba_painel.freeze_panes(2, 1)
+            aba_painel.hide_gridlines(0)
+            aba_painel.set_tab_color("#002B49")
+
+            for linha, coluna, dados, nome in [
+                (2, 1, resumo_objeto, "ResumoObjeto"),
+                (2, 4, resumo_tipo, "ResumoTipoNL"),
+                (linha_status, 4, resumo_status, "ResumoStatus"),
+                (linha_gd, 4, resumo_gd, "ResumoGD"),
+            ]:
+                aba_painel.add_table(
+                    linha, coluna, linha + len(dados), coluna + 1,
+                    {
+                        "name": nome,
+                        "columns": [
+                            {
+                                "header": dados.columns[0],
+                                "header_format": formato_cabecalho_painel,
+                            },
+                            {
+                                "header": "Soma de Valor",
+                                "header_format": formato_cabecalho_painel_direita,
+                                "format": formato_moeda,
+                            },
+                        ],
+                        "style": None,
+                        "banded_rows": False,
+                    },
+                )
+                for indice, valores in enumerate(dados.iloc[:-1].itertuples(index=False, name=None)):
+                    aba_painel.write(
+                        linha + 1 + indice, coluna, valores[0], formato_texto_branco
+                    )
+                    aba_painel.write_number(
+                        linha + 1 + indice, coluna + 1, float(valores[1]), formato_moeda_branco
+                    )
                 linha_total = linha + len(dados)
                 aba_painel.write(
                     linha_total, coluna, dados.iloc[-1, 0], formato_total_rotulo
@@ -2991,13 +4338,66 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             by="Valor_Total_Limpo", ascending=False
         )
 
-        total_geral = df_agrupn(
+        total_geral = df_agrupado["Valor_Total_Limpo"].sum()
+
+        linhas_html = ""
+        for _, row in df_agrupado.iterrows():
+            item = row[coluna_grupo]
+            valor = row["Valor_Total_Limpo"]
+            linhas_html += f"""
+<tr>
+<td style='text-align: left; font-weight: 500;'>{item}</td>
+<td style='text-align: right; font-weight: 600; color: #002b49; white-space: nowrap;'>{formatar_brl(valor)}</td>
+</tr>"""
+
+        classe_tabela = (
+            "tabela-simples tabela-fontes"
+            if titulo_coluna == "FONTE"
+            else "tabela-simples"
+        )
+        html = f"""<div class='tabela-simples-container'>
+<table class='{classe_tabela}'>
+<thead>
+<tr>
+<th style='text-align: left;'>{titulo_coluna}</th>
+<th style='text-align: right;'>VALOR TOTAL</th>
+</tr>
+</thead>
+<tbody>
+{linhas_html}
+<tr class='total-row'>
+<td style='text-align: left;'>TOTAL GERAL</td>
+<td style='text-align: right; color: #028090; white-space: nowrap;'>{formatar_brl(total_geral)}</td>
+</tr>
+</tbody>
+</table>
+</div>"""
+
+        st.markdown(html, unsafe_allow_html=True)
+
+    # CABEÇALHO TELA 2
+    st.markdown(
+        "<h2 class='titulo-pagina'>📊 Painel de Controle Liquidação — Exercício 2026</h2>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
         "<p class='subtitulo-pagina'>Secretaria Executiva de Administração e Finanças (SEAF)</p>",
         unsafe_allow_html=True,
     )
     st.markdown(
         "<p class='subtitulo-pagina'>Gerência Financeira (GFIN)</p>",
-        unsafe_allow_ht("#### 📑 Filtros — Liquidação (NL)")
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+
+    _, coluna_relatorio = st.columns([5, 1])
+    with coluna_relatorio:
+        botao_relatorio = st.empty()
+
+    df_base = carregar_dados_integrados()
+
+    if not df_base.empty:
+        st.sidebar.markdown("#### 📑 Filtros — Liquidação (NL)")
 
         # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA NL ---
         # A função lê exclusivamente a memória dos filtros APLICADOS.
@@ -3012,7 +4412,51 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     if st.session_state["mem_nl_comps"]:
                         d = d[d["Competencia"].astype(str).isin(st.session_state["mem_nl_comps"])]
                 else:
-                    data_inicio = st.session_state.get("meer=True)
+                    data_inicio = st.session_state.get("mem_nl_dt_ini")
+                    data_fim = st.session_state.get("mem_nl_dt_fim")
+                    if data_inicio and data_fim:
+                        inicio = pd.Timestamp(data_inicio).normalize()
+                        fim = pd.Timestamp(data_fim).normalize()
+                        if inicio <= fim:
+                            datas_nl = pd.to_datetime(d["Data_DT"], errors="coerce").dt.normalize()
+                            d = d[(datas_nl >= inicio) & (datas_nl <= fim)]
+
+            # Grupo
+            if not ign_grp and st.session_state["mem_nl_grupo"]:
+                d = d[d["Grupo_Classificado"].isin(st.session_state["mem_nl_grupo"])]
+
+            # Status
+            if not ign_sts and st.session_state["mem_nl_status"] != "Todos":
+                d = d[d["Status_Filtro"] == st.session_state["mem_nl_status"]]
+
+            # Credor
+            if not ign_cred and st.session_state["mem_nl_credores"]:
+                d = d[d["Credor_Tratado"].isin(st.session_state["mem_nl_credores"])]
+
+            # Fonte
+            if not ign_fnt and st.session_state["mem_nl_fonte"]:
+                d = d[d["Fonte_Relacao"].isin(st.session_state["mem_nl_fonte"])]
+
+            # Objeto
+            if not ign_obj and st.session_state["mem_nl_objetos"]:
+                d = d[d["Objeto_Relacao"].isin(st.session_state["mem_nl_objetos"])]
+
+            return d
+
+        def exibir_competencia_nl(competencia):
+            data_competencia = pd.to_datetime(
+                f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
+            )
+            if pd.isna(data_competencia):
+                return competencia
+            nomes_meses = [
+                "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+                "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+            ]
+            return f"{nomes_meses[data_competencia.month - 1]}/{data_competencia.year}"
+
+        # Opções calculadas somente sobre o conjunto atualmente aplicado.
+        df_para_per = filtrar_df_nl(df_base, ign_per=True)
         comps_unicas = (
             df_para_per["Competencia"].dropna().astype(str).unique()
             if not df_para_per.empty else []
@@ -3025,7 +4469,23 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         )
 
         opcoes_grp_nl = ["GD1", "GD3", "GD4"]
-        df_para_sts = fil() if o != "NÃO INFORMADO"
+        df_para_sts = filtrar_df_nl(df_base, ign_sts=True)
+        statuses = sorted([
+            s for s in df_para_sts["Status_Filtro"].unique() if s != "Todos"
+        ]) if not df_para_sts.empty else []
+        opcoes_sts_nl = ["Todos"] + statuses
+
+        df_para_cred = filtrar_df_nl(df_base, ign_cred=True)
+        credores = sorted(df_para_cred["Credor_Tratado"].unique()) if not df_para_cred.empty else []
+
+        df_para_fnt = filtrar_df_nl(df_base, ign_fnt=True)
+        fontes = sorted([
+            f for f in df_para_fnt["Fonte_Relacao"].unique() if f != "NÃO INFORMADA"
+        ]) if not df_para_fnt.empty else []
+
+        df_para_obj = filtrar_df_nl(df_base, ign_obj=True)
+        objetos = sorted([
+            o for o in df_para_obj["Objeto_Relacao"].unique() if o != "NÃO INFORMADO"
         ]) if not df_para_obj.empty else []
 
         validos_comp_nl = [c for c in st.session_state["mem_nl_comps"] if c in comps]
@@ -3042,12 +4502,76 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         data_min_nl = datas_nl_validas.min().date() if not datas_nl_validas.empty else datetime.date(2026, 1, 1)
         data_max_nl = datas_nl_validas.max().date() if not datas_nl_validas.empty else datetime.date(2026, 12, 31)
 
-       datas"] = None
+        def ajustar_data_nl(valor, padrao):
+            data = pd.to_datetime(valor, errors="coerce")
+            if pd.isna(data):
+                return padrao
+            data = data.date()
+            return min(max(data, data_min_nl), data_max_nl)
+
+        data_ini_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_ini"), data_min_nl)
+        data_fim_padrao = ajustar_data_nl(st.session_state.get("mem_nl_dt_fim"), data_max_nl)
+        if data_ini_padrao > data_fim_padrao:
+            data_ini_padrao, data_fim_padrao = data_min_nl, data_max_nl
+
+        def limpar_filtros_nl():
+            st.session_state["mem_nl_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["mem_nl_comps"] = []
+            st.session_state["mem_nl_datas"] = None
             st.session_state["mem_nl_dt_ini"] = None
             st.session_state["mem_nl_dt_fim"] = None
             st.session_state["mem_nl_grupo"] = []
             st.session_state["mem_nl_status"] = "Todos"
-            st.session_s                       "Data Final:", value=data_fim_padrao,
+            st.session_state["mem_nl_credores"] = []
+            st.session_state["mem_nl_fonte"] = []
+            st.session_state["mem_nl_objetos"] = []
+            st.session_state["w_nl_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["w_nl_comps"] = []
+            st.session_state["w_nl_dt_ini"] = data_min_nl
+            st.session_state["w_nl_dt_fim"] = data_max_nl
+            st.session_state["w_nl_grupo"] = []
+            st.session_state["w_nl_status"] = "Todos"
+            st.session_state["w_nl_credores"] = []
+            st.session_state["w_nl_fonte"] = []
+            st.session_state["w_nl_objetos"] = []
+
+        # O seletor de período fica fora do formulário para redesenhar os
+        # campos de competência ou datas assim que o usuário alterná-lo.
+        if "w_nl_tipo_periodo" not in st.session_state:
+            st.session_state["w_nl_tipo_periodo"] = st.session_state["mem_nl_tipo_periodo"]
+        tipo_periodo = st.sidebar.radio(
+            "Como deseja filtrar o período?",
+            options=["Por Mês de Competência", "Por Intervalo de Datas"],
+            key="w_nl_tipo_periodo",
+        )
+
+        # O formulário elimina o rerun a cada seleção dos demais filtros.
+        with st.sidebar.form("form_filtros_nl", border=False):
+
+            comp_sel = list(validos_comp_nl)
+            data_ini_nl = data_ini_padrao
+            data_fim_nl = data_fim_padrao
+
+            if tipo_periodo == "Por Mês de Competência":
+                comp_sel = st.multiselect(
+                    "Filtrar Período de Competência:",
+                    options=comps,
+                    default=validos_comp_nl,
+                    format_func=exibir_competencia_nl,
+                    placeholder="Selecione as opções",
+                    key="w_nl_comps",
+                )
+            else:
+                col_ini_nl, col_fim_nl = st.columns(2)
+                with col_ini_nl:
+                    data_ini_nl = st.date_input(
+                        "Data Inicial:", value=data_ini_padrao,
+                        min_value=data_min_nl, max_value=data_max_nl,
+                        format="DD/MM/YYYY", key="w_nl_dt_ini",
+                    )
+                with col_fim_nl:
+                    data_fim_nl = st.date_input(
+                        "Data Final:", value=data_fim_padrao,
                         min_value=data_min_nl, max_value=data_max_nl,
                         format="DD/MM/YYYY", key="w_nl_dt_fim",
                     )
@@ -3156,20 +4680,222 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             # Remove seleções antigas do diálogo que já não pertencem ao recorte
             # atual. O Streamlit mantém session_state entre aberturas do diálogo;
             # sem esta limpeza, um filtro antigo podia gerar um relatório muito
-            # menor que ---
+            # menor que os cards mesmo sem o usuário perceber.
+            grupos_estado = st.session_state.get("relatorio_nl_grupos", [])
+            st.session_state["relatorio_nl_grupos"] = [
+                grupo for grupo in grupos_estado
+                if grupo in grupos_disponiveis_relatorio
+            ]
+
+            grupos_relatorio = st.multiselect(
+                "Grupo (vazio = todos os exibidos no painel)",
+                grupos_disponiveis_relatorio,
+                key="relatorio_nl_grupos",
+            )
+
+            df_exportacao = df_base_relatorio.copy()
+            if grupos_relatorio:
+                df_exportacao = df_exportacao[
+                    df_exportacao["Grupo_Classificado"].isin(grupos_relatorio)
+                ]
+
+            fontes_disponiveis_relatorio = sorted(
+                df_exportacao["Fonte_Relacao"]
+                .dropna().astype(str).unique().tolist()
+            )
+            fontes_estado = st.session_state.get("relatorio_nl_fontes", [])
+            st.session_state["relatorio_nl_fontes"] = [
+                fonte for fonte in fontes_estado
+                if fonte in fontes_disponiveis_relatorio
+            ]
+
+            fontes_selecionadas = st.multiselect(
+                "Fonte de recurso (vazio = todas as exibidas no painel)",
+                fontes_disponiveis_relatorio,
+                key="relatorio_nl_fontes",
+            )
+            if fontes_selecionadas:
+                df_exportacao = df_exportacao[
+                    df_exportacao["Fonte_Relacao"].isin(fontes_selecionadas)
+                ]
+
+            if df_exportacao.empty:
+                st.warning("Não há liquidações para os filtros escolhidos.")
+                return
+
+            try:
+                relatorio_excel = gerar_relatorio_nl_excel(df_exportacao)
+                st.download_button(
+                    "Baixar relatório",
+                    data=relatorio_excel,
+                    file_name=(
+                        "Relatório Geral de Liquidação "
+                        f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_baixar_relatorio_nl",
+                )
+            except (ModuleNotFoundError, FileNotFoundError, RuntimeError, ValueError) as erro:
+                st.error(f"Não foi possível gerar o relatório pelo modelo: {erro}")
+
+        if botao_relatorio.button(
+            "📊 Gerar Relatório",
+            use_container_width=True,
+            key="btn_gerar_relatorio_nl",
+        ):
+            janela_relatorio_nl()
+
+        qtd_liquidada = len(df_filtrado)
+        valor_total = df_filtrado["Valor_Total_Limpo"].sum()
+
+        mask_gd3 = df_filtrado["Grupo_Classificado"] == "GD3"
+        mask_gd4 = df_filtrado["Grupo_Classificado"] == "GD4"
+
+        valor_gd3 = df_filtrado.loc[mask_gd3, "Valor_Total_Limpo"].sum()
+        valor_gd4 = df_filtrado.loc[mask_gd4, "Valor_Total_Limpo"].sum()
+
+        col_k1, col_k2, col_k3, col_k4 = st.columns(4)
+
+        with col_k1:
+            qtd_formatada_br = f"{qtd_liquidada:,}".replace(",", ".")
+            st.markdown(
+                f"""
+                <div class='metric-card'>
+                    <p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>QTD DE LIQUIDAÇÕES</p>
+                    <h3 style='color: #002b49; margin: 5px 0;'>{qtd_formatada_br}</h3>
+                    <p style='color: #28a745; font-size: 11px; margin:0;'>📋 Documentos NL</p>
+                </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        with col_k2:
+            st.markdown(
+                f"""
+                <div class='metric-card'>
+                    <p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL</p>
+                    <h3 style='color: #028090; margin: 5px 0;'>{formatar_brl(valor_total)}</h3>
+                    <p style='color: #6c757d; font-size: 11px; margin:0;'>Total Liquidado</p>
+                </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        with col_k3:
+            st.markdown(
+                f"""
+                <div class='metric-card'>
+                    <p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL GD3</p>
+                    <h3 style='color: #f77f00; margin: 5px 0;'>{formatar_brl(valor_gd3)}</h3>
+                    <p style='color: #6c757d; font-size: 11px; margin:0;'>Grupo GD3</p>
+                </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        with col_k4:
+            st.markdown(
+                f"""
+                <div class='metric-card'>
+                    <p style='color: #6c757d; font-size: 11px; font-weight: bold; margin:0;'>VALOR TOTAL GD4</p>
+                    <h3 style='color: #2563eb; margin: 5px 0;'>{formatar_brl(valor_gd4)}</h3>
+                    <p style='color: #6c757d; font-size: 11px; margin:0;'>Grupo GD4</p>
+                </div>
+            """,
+                unsafe_allow_html=True,
+            )
+
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        col_credor, col_resumos = st.columns([1.15, 0.85])
+
+        with col_credor:
+            renderizar_tabela_credor_dinamica(df_filtrado)
+
+        with col_resumos:
+            renderizar_tabela_resumida(df_filtrado, "Fonte_Relacao", "FONTE")
+            st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+            renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
+    else:
+        st.warning("Aguardando carregamento e relacionamento das planilhas...")
+
+elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
+    # ---------------------------------------------------------------------
+    # TELA PD — Programa de Desembolso
+    # ---------------------------------------------------------------------
     st.markdown(
         "<h2 class='titulo-pagina'>📅 Programa de Desembolso — Exercício 2026</h2>",
         unsafe_allow_html=True,
     )
     st.markdown(
-        "<p class='subtitulo-pagina'>Secretaria Executiva de Administração e Finanças (SE with coluna_relatorio_pd:
+        "<p class='subtitulo-pagina'>Secretaria Executiva de Administração e Finanças (SEAF)</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='subtitulo-pagina'>Gerência Financeira (GFIN)</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+    _, coluna_relatorio_pd = st.columns([5, 1])
+    with coluna_relatorio_pd:
         botao_relatorio_pd = st.empty()
 
     dados_pd, erro_pd = carregar_dados_pd()
     if erro_pd:
         st.error(
             "Não foi possível carregar a base de PD. "
-            "Confirme que a aba PD_ABA_TRATADA e=False,
+            "Confirme que a aba PD_ABA_TRATADA está publicada na web como CSV "
+            "ou liberada para leitura pública. Detalhe técnico: " + erro_pd
+        )
+    elif dados_pd.empty:
+        st.info("Ainda não há PDs tratados para os filtros selecionados.")
+    else:
+        st.sidebar.markdown("#### 📅 Filtros — Programa de Desembolso (PD)")
+
+        # Competência da PD: mesmo padrão usado na tela de NL.
+        dados_pd = dados_pd.copy()
+        dados_pd["Competencia"] = pd.to_datetime(
+            dados_pd["Data Emissão"], errors="coerce"
+        ).dt.strftime("%m/%Y")
+
+        if "mem_pd_tipo_periodo" not in st.session_state:
+            st.session_state["mem_pd_tipo_periodo"] = "Por Mês de Competência"
+        if "mem_pd_comps" not in st.session_state:
+            st.session_state["mem_pd_comps"] = []
+        if "mem_pd_dt_ini" not in st.session_state:
+            periodo_anterior_pd = st.session_state.get("mem_pd_periodo")
+            st.session_state["mem_pd_dt_ini"] = (
+                periodo_anterior_pd[0]
+                if isinstance(periodo_anterior_pd, (tuple, list))
+                and len(periodo_anterior_pd) == 2
+                else None
+            )
+        if "mem_pd_dt_fim" not in st.session_state:
+            periodo_anterior_pd = st.session_state.get("mem_pd_periodo")
+            st.session_state["mem_pd_dt_fim"] = (
+                periodo_anterior_pd[1]
+                if isinstance(periodo_anterior_pd, (tuple, list))
+                and len(periodo_anterior_pd) == 2
+                else None
+            )
+
+        def opcoes_pd(df, coluna):
+            return sorted(
+                valor for valor in df[coluna].dropna().astype(str).unique()
+                if valor and valor.upper() != "NÃO INFORMADO"
+            )
+
+        def filtrar_df_pd(
+            df,
+            ign_per=False,
+            ign_ug=False,
+            ign_fonte=False,
+            ign_gd=False,
+            ign_despesa=False,
+            ign_objeto=False,
+            ign_credor=False,
+            ign_status=False,
         ):
             d = df.copy()
             if d.empty:
@@ -3304,7 +5030,434 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["filtro_pd_gd"] = []
             st.session_state["filtro_pd_despesa"] = []
             st.session_state["filtro_pd_objeto"] = []
-            st.sessir_coluna_009717(
+            st.session_state["filtro_pd_credor"] = []
+            st.session_state["filtro_pd_status"] = []
+
+        if "w_pd_tipo_periodo" not in st.session_state:
+            st.session_state["w_pd_tipo_periodo"] = st.session_state["mem_pd_tipo_periodo"]
+
+        tipo_periodo_pd = st.sidebar.radio(
+            "Como deseja filtrar o período?",
+            options=["Por Mês de Competência", "Por Intervalo de Datas"],
+            key="w_pd_tipo_periodo",
+        )
+
+        with st.sidebar.form("form_filtros_pd", border=False):
+            comp_sel_pd = list(validos_comp_pd)
+            data_inicio_pd = data_ini_padrao_pd
+            data_fim_pd = data_fim_padrao_pd
+
+            if tipo_periodo_pd == "Por Mês de Competência":
+                comp_sel_pd = st.multiselect(
+                    "Filtrar Período de Competência:",
+                    options=comps_pd,
+                    default=validos_comp_pd,
+                    format_func=exibir_competencia_pd,
+                    placeholder="Selecione as opções",
+                    key="w_pd_comps",
+                )
+            else:
+                col_ini_pd, col_fim_pd = st.columns(2)
+                with col_ini_pd:
+                    data_inicio_pd = st.date_input(
+                        "Data Inicial:",
+                        value=data_ini_padrao_pd,
+                        min_value=data_min_pd,
+                        max_value=data_max_pd,
+                        format="DD/MM/YYYY",
+                        key="w_pd_dt_ini",
+                    )
+                with col_fim_pd:
+                    data_fim_pd = st.date_input(
+                        "Data Final:",
+                        value=data_fim_padrao_pd,
+                        min_value=data_min_pd,
+                        max_value=data_max_pd,
+                        format="DD/MM/YYYY",
+                        key="w_pd_dt_fim",
+                    )
+
+            filtro_ug_pd = st.multiselect(
+                "UG pagadora", opcoes_ug_pd,
+                default=validos_pd("mem_pd_ug", opcoes_ug_pd), key="filtro_pd_ug",
+            )
+            filtro_fonte_pd = st.multiselect(
+                "Fonte de recurso", opcoes_fonte_pd,
+                default=validos_pd("mem_pd_fonte", opcoes_fonte_pd), key="filtro_pd_fonte",
+            )
+            filtro_gd_pd = st.multiselect(
+                "GD", opcoes_gd_pd,
+                default=validos_pd("mem_pd_gd", opcoes_gd_pd), key="filtro_pd_gd",
+            )
+            filtro_despesa_pd = st.multiselect(
+                "Natureza da despesa", opcoes_despesa_pd,
+                default=validos_pd("mem_pd_despesa", opcoes_despesa_pd), key="filtro_pd_despesa",
+            )
+            filtro_objeto_pd = st.multiselect(
+                "Objeto da despesa", opcoes_objeto_pd,
+                default=validos_pd("mem_pd_objeto", opcoes_objeto_pd), key="filtro_pd_objeto",
+            )
+            filtro_credor_pd = st.multiselect(
+                "Credor", opcoes_credor_pd,
+                default=validos_pd("mem_pd_credor", opcoes_credor_pd), key="filtro_pd_credor",
+            )
+            filtro_status_pd = st.multiselect(
+                "Status", opcoes_status_pd,
+                default=validos_pd("mem_pd_status", opcoes_status_pd), key="filtro_pd_status",
+            )
+
+            col_aplicar_pd, col_limpar_pd = st.columns(2, gap="small")
+            with col_aplicar_pd:
+                aplicar_pd = st.form_submit_button(
+                    "✅ Aplicar filtros", use_container_width=True, type="primary"
+                )
+            with col_limpar_pd:
+                limpar_pd = st.form_submit_button(
+                    "🧹 Limpar filtros", use_container_width=True,
+                    on_click=limpar_filtros_pd,
+                )
+
+        if aplicar_pd:
+            if tipo_periodo_pd == "Por Intervalo de Datas" and data_inicio_pd > data_fim_pd:
+                st.sidebar.error("A data inicial deve ser anterior ou igual à data final.")
+                st.stop()
+
+            st.session_state["mem_pd_tipo_periodo"] = tipo_periodo_pd
+            st.session_state["mem_pd_comps"] = list(comp_sel_pd)
+            st.session_state["mem_pd_dt_ini"] = data_inicio_pd
+            st.session_state["mem_pd_dt_fim"] = data_fim_pd
+            st.session_state["mem_pd_periodo"] = (
+                (data_inicio_pd, data_fim_pd)
+                if tipo_periodo_pd == "Por Intervalo de Datas" else None
+            )
+            st.session_state["mem_pd_ug"] = list(filtro_ug_pd)
+            st.session_state["mem_pd_fonte"] = list(filtro_fonte_pd)
+            st.session_state["mem_pd_gd"] = list(filtro_gd_pd)
+            st.session_state["mem_pd_despesa"] = list(filtro_despesa_pd)
+            st.session_state["mem_pd_objeto"] = list(filtro_objeto_pd)
+            st.session_state["mem_pd_credor"] = list(filtro_credor_pd)
+            st.session_state["mem_pd_status"] = list(filtro_status_pd)
+            st.rerun()
+
+        filtrado_pd = filtrar_df_pd(dados_pd)
+
+        if st.sidebar.button("🔄 Atualizar dados de PD", key="atualizar_pd"):
+            carregar_dados_pd.clear()
+            st.rerun()
+
+        @st.dialog("Gerar Relatório de Programa de Desembolso")
+        def janela_relatorio_pd():
+            st.caption(
+                "Escolha o GD e a fonte para o arquivo. Os demais filtros "
+                "selecionados nesta tela serão mantidos."
+            )
+            opcoes_gd_relatorio = opcoes_pd(filtrado_pd, "GD")
+            grupos_relatorio_pd = st.multiselect(
+                "GD (vazio = todos)",
+                opcoes_gd_relatorio,
+                key="relatorio_pd_grupos",
+            )
+            base_fontes_relatorio_pd = filtrado_pd.copy()
+            if grupos_relatorio_pd:
+                base_fontes_relatorio_pd = base_fontes_relatorio_pd[
+                    base_fontes_relatorio_pd["GD"].isin(grupos_relatorio_pd)
+                ]
+            fontes_relatorio_pd = st.multiselect(
+                "Fonte de recurso (vazio = todas)",
+                opcoes_pd(base_fontes_relatorio_pd, "Fonte"),
+                key="relatorio_pd_fontes",
+            )
+            exportacao_pd = base_fontes_relatorio_pd.copy()
+            if fontes_relatorio_pd:
+                exportacao_pd = exportacao_pd[
+                    exportacao_pd["Fonte"].isin(fontes_relatorio_pd)
+                ]
+            if exportacao_pd.empty:
+                st.warning("Não há PDs para os filtros escolhidos.")
+                return
+            try:
+                relatorio_pd_excel = gerar_relatorio_pd_excel(exportacao_pd)
+                st.download_button(
+                    "Baixar relatório",
+                    data=relatorio_pd_excel,
+                    file_name=(
+                        "Relatório Programa de Desembolso "
+                        f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_baixar_relatorio_pd",
+                )
+            except (ModuleNotFoundError, RuntimeError, ValueError) as erro:
+                st.error(f"Não foi possível gerar o relatório de PD: {erro}")
+
+        if botao_relatorio_pd.button(
+            "📊 Gerar Relatório",
+            use_container_width=True,
+            key="btn_gerar_relatorio_pd",
+            type="primary",
+        ):
+            janela_relatorio_pd()
+
+        qtd_pds = len(filtrado_pd)
+        valor_pd = float(filtrado_pd["Valor"].sum())
+        valor_gd3_pd = float(filtrado_pd.loc[filtrado_pd["GD"] == "GD3", "Valor"].sum())
+        valor_gd4_pd = float(filtrado_pd.loc[filtrado_pd["GD"] == "GD4", "Valor"].sum())
+        kpi1, kpi2, kpi3, kpi4 = st.columns(4)
+        with kpi1:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>QTD. DE PDs</p><h3 style='color:#002b49; margin:5px 0;'>{qtd_pds:,}</h3><p style='color:#28a745; font-size:11px; margin:0;'>📋 Documentos PD</p></div>".replace(",", "."),
+                unsafe_allow_html=True,
+            )
+        with kpi2:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL</p><h3 style='color:#028090; margin:5px 0;'>{formatar_brl(valor_pd)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Total programado</p></div>",
+                unsafe_allow_html=True,
+            )
+        with kpi3:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD3</p><h3 style='color:#f77f00; margin:5px 0;'>{formatar_brl(valor_gd3_pd)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD3</p></div>",
+                unsafe_allow_html=True,
+            )
+        with kpi4:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD4</p><h3 style='color:#2563eb; margin:5px 0;'>{formatar_brl(valor_gd4_pd)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD4</p></div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        def resumo_pd(coluna, titulo, limite=10):
+            resumo = (
+                filtrado_pd.groupby(coluna, dropna=False, as_index=False)["Valor"].sum()
+                .sort_values("Valor", ascending=False)
+                .head(limite)
+            )
+            resumo.columns = [titulo, "Valor total"]
+            return resumo
+
+        coluna_credor_pd, coluna_resumos_pd = st.columns([1.25, 0.75])
+        with coluna_credor_pd:
+            renderizar_tabela_credor_pd(filtrado_pd)
+        with coluna_resumos_pd:
+            renderizar_tabela_resumo_pd(
+                resumo_pd("UG Pagadora", "UG pagadora"),
+                "UG pagadora",
+                "UG pagadora",
+            )
+            st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+            renderizar_tabela_resumo_pd(
+                resumo_pd("Fonte", "Fonte"),
+                "Fonte",
+                "Fonte",
+            )
+
+elif st.session_state["tela_atual"] == "Relatório 009717":
+    # ---------------------------------------------------------------------
+    # TELA EXCLUSIVA — RELATÓRIO 009717
+    # IMPORTANTE: todas as alterações deste módulo ficam isoladas aqui.
+    # ---------------------------------------------------------------------
+    st.markdown(
+        "<h2 class='titulo-pagina'>📊 Relatório 009717</h2>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='subtitulo-pagina'>Relatório de Pagamento — acompanhamento e conferência executiva</p>",
+        unsafe_allow_html=True,
+    )
+    # Esta tela não usa filtros laterais. A conferência possui seus próprios
+    # campos e ocupa o conteúdo central em modo limpo.
+    st.markdown(
+        "<style>[data-testid='stSidebar'] {display: none !important;}</style>",
+        unsafe_allow_html=True,
+    )
+
+    if "url_api_relatorio_009717" not in st.session_state:
+        st.session_state["url_api_relatorio_009717"] = URL_API_RELATORIO_009717_PADRAO
+    if "dados_relatorio_009717" not in st.session_state:
+        st.session_state["dados_relatorio_009717"] = None
+    if "pdf_relatorio_009717" not in st.session_state:
+        st.session_state["pdf_relatorio_009717"] = None
+    if "pdf_relatorio_009717_nome" not in st.session_state:
+        st.session_state["pdf_relatorio_009717_nome"] = "Relatorio_009717.pdf"
+    if "mostrar_conferencia_ob_009717" not in st.session_state:
+        st.session_state["mostrar_conferencia_ob_009717"] = False
+
+    url_api_009717 = st.session_state["url_api_relatorio_009717"].strip()
+
+    if not url_api_009717:
+        st.warning(
+            "A conexão está pronta, mas ainda falta informar a URL de implantação "
+            "do Web App do Apps Script."
+        )
+        url_digitada_009717 = st.text_input(
+            "URL do Web App do Relatório 009717",
+            placeholder="https://script.google.com/macros/s/.../exec",
+            key="campo_url_api_relatorio_009717",
+        ).strip()
+        if url_digitada_009717:
+            st.session_state["url_api_relatorio_009717"] = url_digitada_009717
+            url_api_009717 = url_digitada_009717
+
+    # Ações compactas do módulo.
+    col_conexao_009717, col_atualizar_009717, col_pdf_topo_009717, col_conferir_009717, _espaco_acoes_009717 = st.columns(
+        [0.72, 0.86, 1.02, 0.98, 1.42]
+    )
+
+    with col_conexao_009717:
+        testar_conexao_009717 = st.button(
+            "🔗 Testar conexão",
+            use_container_width=True,
+            key="btn_testar_conexao_009717",
+            disabled=not bool(url_api_009717),
+        )
+
+    with col_atualizar_009717:
+        atualizar_relatorio_009717 = st.button(
+            "🔄 Atualizar relatório",
+            use_container_width=True,
+            key="btn_atualizar_relatorio_009717",
+            disabled=not bool(url_api_009717),
+            type="primary",
+        )
+
+    with col_pdf_topo_009717:
+        gerar_pdf_topo_009717 = st.button(
+            "📄 Exportar relatório em PDF",
+            use_container_width=True,
+            key="btn_exportar_pdf_009717",
+            disabled=not bool(url_api_009717),
+        )
+
+    with col_conferir_009717:
+        abrir_conferencia_ob_009717 = st.button(
+            "🔎 Conferir pagamentos",
+            use_container_width=True,
+            key="btn_abrir_conferencia_ob_009717",
+        )
+
+    if abrir_conferencia_ob_009717:
+        st.session_state["mostrar_conferencia_ob_009717"] = True
+    if st.session_state["mostrar_conferencia_ob_009717"]:
+        conferencia.renderizar()
+        st.stop()
+
+    if testar_conexao_009717:
+        try:
+            with st.spinner("Testando conexão com o Apps Script..."):
+                retorno = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "status",
+                    timeout=30,
+                )
+            st.success(
+                f"Conexão realizada com sucesso — "
+                f"{retorno.get('planilha', 'planilha localizada')}."
+            )
+        except Exception as erro:
+            st.error(f"Não foi possível conectar ao Apps Script: {erro}")
+
+    if atualizar_relatorio_009717:
+        try:
+            with st.spinner(
+                "Processando cronologia, OB, retenção e recalculando o Relatório 009717..."
+            ):
+                retorno_processamento = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "processar",
+                    timeout=180,
+                )
+
+                # Depois de processar, relê a aba FOI_PAGO diretamente.
+                # Assim o painel não fica preso ao conteúdo retornado pela
+                # própria ação "processar", que pode representar o layout anterior.
+                retorno = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "ler",
+                    timeout=60,
+                )
+
+            st.session_state["dados_relatorio_009717"] = retorno
+            st.session_state["pdf_relatorio_009717"] = None
+            st.success(
+                retorno_processamento.get(
+                    "mensagem",
+                    "Relatório atualizado com sucesso."
+                )
+            )
+        except Exception as erro:
+            st.error(f"Falha ao atualizar o Relatório 009717: {erro}")
+
+    # Ao abrir a aplicação novamente, carrega automaticamente o último relatório
+    # calculado no Google Sheets. Isso substitui o antigo botão "Carregar atual".
+    if (
+        st.session_state.get("dados_relatorio_009717") is None
+        and url_api_009717
+    ):
+        try:
+            with st.spinner("Carregando o último Relatório 009717..."):
+                retorno_inicial_009717 = chamar_api_relatorio_009717(
+                    url_api_009717,
+                    "ler",
+                    timeout=60,
+                )
+            st.session_state["dados_relatorio_009717"] = retorno_inicial_009717
+        except Exception as erro:
+            st.warning(
+                "Não foi possível carregar automaticamente o último relatório. "
+                f"Use 'Atualizar Relatório'. Detalhe: {erro}"
+            )
+
+    dados_009717 = st.session_state.get("dados_relatorio_009717")
+
+    if isinstance(dados_009717, dict):
+        foi_pago_009717 = dados_009717.get("foi_pago", {}) or {}
+        cabecalho_009717 = foi_pago_009717.get("cabecalho", []) or []
+        linhas_009717 = foi_pago_009717.get("linhas", []) or []
+
+        st.caption(
+            f"Última atualização: "
+            f"{dados_009717.get('atualizado_em', 'não informada')}"
+        )
+
+        if cabecalho_009717 and linhas_009717:
+            df_009717 = pd.DataFrame(
+                linhas_009717,
+                columns=cabecalho_009717,
+            )
+
+            def _localizar_coluna_009717(df, *nomes):
+                mapa = {
+                    unicodedata.normalize("NFKD", str(coluna))
+                    .encode("ascii", "ignore")
+                    .decode("ascii")
+                    .strip()
+                    .upper()
+                    .replace("_", " "): coluna
+                    for coluna in df.columns
+                }
+                for nome in nomes:
+                    chave = (
+                        unicodedata.normalize("NFKD", str(nome))
+                        .encode("ascii", "ignore")
+                        .decode("ascii")
+                        .strip()
+                        .upper()
+                        .replace("_", " ")
+                    )
+                    if chave in mapa:
+                        return mapa[chave]
+                return None
+
+            col_fonte_009717 = _localizar_coluna_009717(
+                df_009717,
+                "Fonte",
+            )
+            col_credor_009717 = _localizar_coluna_009717(
+                df_009717,
+                "Nome do Credor",
+                "Credor",
+            )
+            col_natureza_009717 = _localizar_coluna_009717(
                 df_009717,
                 "Natureza Despesa",
                 "Natureza da Despesa",
@@ -3312,7 +5465,115 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             )
             col_valor_009717 = _localizar_coluna_009717(
                 df_009717,
-         valor
+                "Valor",
+            )
+            col_ob_009717 = _localizar_coluna_009717(
+                df_009717,
+                "OB_NUMERO",
+                "OB Numero",
+                "OB",
+            )
+            col_status_009717 = _localizar_coluna_009717(
+                df_009717,
+                "STATUS_OB",
+                "Status OB",
+                "Status",
+            )
+
+            colunas_obrigatorias_009717 = {
+                "Fonte": col_fonte_009717,
+                "Credor": col_credor_009717,
+                "Natureza": col_natureza_009717,
+                "Valor": col_valor_009717,
+                "OB": col_ob_009717,
+                "Status": col_status_009717,
+            }
+            faltantes_009717 = [
+                nome
+                for nome, coluna in colunas_obrigatorias_009717.items()
+                if coluna is None
+            ]
+
+            if faltantes_009717:
+                st.error(
+                    "Não foi possível montar a visão executiva. "
+                    "Colunas não encontradas na aba FOI_PAGO: "
+                    + ", ".join(faltantes_009717)
+                )
+            else:
+                df_exec_009717 = pd.DataFrame(
+                    {
+                        "Fonte": df_009717[col_fonte_009717],
+                        "Credor": df_009717[col_credor_009717],
+                        "Natureza": df_009717[col_natureza_009717],
+                        "Valor": converter_valor_monetario(
+                            df_009717[col_valor_009717]
+                        ),
+                        "OB": df_009717[col_ob_009717],
+                        "Status_Original": df_009717[col_status_009717],
+                    }
+                )
+
+                def _status_executivo_009717(valor):
+                    texto_status = str(valor or "").strip().upper()
+                    if "NÃO PAGO" in texto_status or "NAO PAGO" in texto_status:
+                        return "Não pago"
+                    if "RETEN" in texto_status:
+                        return "Retenção"
+                    if "PAGO" in texto_status:
+                        return "Pago"
+                    return "Sem status"
+
+                df_exec_009717["Status"] = (
+                    df_exec_009717["Status_Original"]
+                    .apply(_status_executivo_009717)
+                )
+
+                df_exec_009717["Fonte"] = (
+                    df_exec_009717["Fonte"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_exec_009717["Credor"] = (
+                    df_exec_009717["Credor"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_exec_009717["Natureza"] = (
+                    df_exec_009717["Natureza"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+                df_exec_009717["OB"] = (
+                    df_exec_009717["OB"]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                )
+
+                # ---------------------------------------------------------
+                # FILTROS EXECUTIVOS — BARRA LATERAL RESERVADA
+                # ---------------------------------------------------------
+                status_disponiveis_009717 = [
+                    status
+                    for status in ["Pago", "Não pago", "Retenção", "Sem status"]
+                    if status in df_exec_009717["Status"].unique()
+                ]
+
+                fontes_disponiveis_009717 = sorted(
+                    [
+                        valor
+                        for valor in df_exec_009717["Fonte"].unique()
+                        if valor
+                    ]
+                )
+
+                credores_disponiveis_009717 = sorted(
+                    [
+                        valor
                         for valor in df_exec_009717["Credor"].unique()
                         if valor
                     ]
@@ -3346,7 +5607,13 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                         key="filtro_fonte_009717",
                     )
 
-                    st.divider()       key="filtro_credor_009717",
+                    st.divider()
+                    credor_sel_009717 = st.multiselect(
+                        "Credor",
+                        options=credores_disponiveis_009717,
+                        default=[],
+                        placeholder="Todos",
+                        key="filtro_credor_009717",
                     )
 
                     st.divider()
@@ -3363,7 +5630,14 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                         aplicar_009717 = st.form_submit_button(
                             "✅ Aplicar filtros", use_container_width=True, type="primary"
                         )
-                    with col_limpa                   "filtro_status_009717", "filtro_fonte_009717",
+                    with col_limpar_009717:
+                        limpar_009717 = st.form_submit_button(
+                            "🧹 Limpar filtros", use_container_width=True
+                        )
+
+                if limpar_009717:
+                    for _chave in [
+                        "filtro_status_009717", "filtro_fonte_009717",
                         "filtro_credor_009717", "filtro_natureza_009717",
                     ]:
                         st.session_state.pop(_chave, None)
@@ -3395,7 +5669,15 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                         df_filtrado_009717["Natureza"].isin(natureza_sel_009717)
                     ]
 
-     
+                # ---------------------------------------------------------
+                # CARDS EXECUTIVOS
+                # ---------------------------------------------------------
+                # Base dos cards financeiros respeita Fonte/Credor/Natureza.
+                # O filtro de Status fica refletido no card "Valor em exibição".
+                df_base_cards_009717 = df_exec_009717.copy()
+
+                if fonte_sel_009717:
+                    df_base_cards_009717 = df_base_cards_009717[
                         df_base_cards_009717["Fonte"].isin(fonte_sel_009717)
                     ]
                 if credor_sel_009717:
@@ -3452,7 +5734,13 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                                 VALOR NÃO PAGO
                             </p>
                             <h3 style='color:#9f2d2d;margin:5px 0;'>
-                                {formatar_brl(valor_total_nao_pag                 """,
+                                {formatar_brl(valor_total_nao_pago_009717)}
+                            </h3>
+                            <p style='color:#6c757d;font-size:11px;margin:0;'>
+                                Registros ainda sem OB
+                            </p>
+                        </div>
+                        """,
                         unsafe_allow_html=True,
                     )
 
@@ -3464,7 +5752,11 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                                 VALOR EM EXIBIÇÃO
                             </p>
                             <h3 style='color:#005691;margin:5px 0;'>
-                        </p>
+                                {formatar_brl(valor_filtrado_009717)}
+                            </h3>
+                            <p style='color:#6c757d;font-size:11px;margin:0;'>
+                                Conforme os filtros selecionados
+                            </p>
                         </div>
                         """,
                         unsafe_allow_html=True,
@@ -3481,14 +5773,73 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                                 {qtd_filtrada_009717}
                             </h3>
                             <p style='color:#6c757d;font-size:11px;margin:0;'>
-                                Linhas visíveis nNone
+                                Linhas visíveis na conferência
+                            </p>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
+
+                st.markdown("<div style='height: 12px;'></div>", unsafe_allow_html=True)
+
+                # ---------------------------------------------------------
+                # EXPORTAÇÃO DO RELATÓRIO
+                # O botão fica no topo, ao lado de Testar e Atualizar.
+                # ---------------------------------------------------------
+                col_pdf_1, col_pdf_2 = st.columns([1.05, 2.95])
+                gerar_pdf_009717 = gerar_pdf_topo_009717
+
+                if gerar_pdf_009717:
+                    try:
+                        with st.spinner(
+                            "Gerando o PDF consolidado diretamente da aba RELATORIO_SIAFIN..."
+                        ):
+                            retorno_pdf_009717 = chamar_api_relatorio_009717(
+                                url_api_009717,
+                                "pdf",
+                                timeout=120,
+                            )
+
+                        conteudo_pdf_base64 = retorno_pdf_009717.get(
+                            "pdf_base64",
+                            "",
+                        )
+                        if not conteudo_pdf_base64:
+                            raise ValueError(
+                                "O Apps Script não retornou o conteúdo do PDF."
+                            )
+
+                        st.session_state["pdf_relatorio_009717"] = (
+                            base64.b64decode(conteudo_pdf_base64)
+                        )
+                        st.session_state["pdf_relatorio_009717_nome"] = (
+                            retorno_pdf_009717.get("nome_arquivo")
+                            or "Relatorio_009717.pdf"
+                        )
+                        st.success(
+                            retorno_pdf_009717.get(
+                                "mensagem",
+                                "PDF consolidado gerado com sucesso.",
+                            )
+                        )
+                    except Exception as erro:
+                        st.session_state["pdf_relatorio_009717"] = None
                         st.error(
                             f"Falha ao gerar o PDF do Relatório 009717: {erro}"
                         )
 
                 pdf_pronto_009717 = st.session_state.get(
                     "pdf_relatorio_009717"
-           vertical_alignment="bottom",
+                )
+
+                # ---------------------------------------------------------
+                # CABEÇALHO DA TABELA + DOWNLOAD COMPACTO
+                # O download fica alinhado à direita, imediatamente acima
+                # da tabela, evitando a aparência de botão solto na tela.
+                # ---------------------------------------------------------
+                col_titulo_tabela_009717, col_download_tabela_009717 = st.columns(
+                    [3.75, 1.05],
+                    vertical_alignment="bottom",
                 )
 
                 with col_titulo_tabela_009717:
@@ -3513,7 +5864,37 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     )
 
                 if pdf_pronto_009717:
-stro encontrado para os filtros selecionados."
+                    with col_download_tabela_009717:
+                        st.download_button(
+                            "⬇️ Baixar PDF consolidado",
+                            data=pdf_pronto_009717,
+                            file_name=st.session_state.get(
+                                "pdf_relatorio_009717_nome",
+                                "Relatorio_009717.pdf",
+                            ),
+                            mime="application/pdf",
+                            use_container_width=True,
+                            key="download_pdf_009717",
+                        )
+
+                # ---------------------------------------------------------
+                # TABELA EXECUTIVA — SOMENTE AS COLUNAS NECESSÁRIAS
+                # ---------------------------------------------------------
+
+                tabela_009717 = df_filtrado_009717[
+                    [
+                        "Fonte",
+                        "Credor",
+                        "Natureza",
+                        "Valor",
+                        "OB",
+                        "Status",
+                    ]
+                ].copy()
+
+                if tabela_009717.empty:
+                    st.info(
+                        "Nenhum registro encontrado para os filtros selecionados."
                     )
                 else:
                     # -----------------------------------------------------
