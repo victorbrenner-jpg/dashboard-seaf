@@ -2,7 +2,83 @@
 
 from urllib.parse import quote
 
+import pandas as pd
+import plotly.express as px
 import streamlit as st
+
+
+_PX_LINE_ORIGINAL = px.line
+
+
+def _formatar_milhoes(valor):
+    return f"R$ {float(valor) / 1_000_000:,.1f}M".replace(",", "X").replace(".", ",").replace("X", ".")
+
+
+def _line_com_estatistica_mensal(*args, **kwargs):
+    """Enriquece apenas a curva mensal do painel com média e desvio-padrão."""
+    figura = _PX_LINE_ORIGINAL(*args, **kwargs)
+
+    data_frame = kwargs.get("data_frame")
+    if data_frame is None and args:
+        data_frame = args[0]
+
+    if (
+        isinstance(data_frame, pd.DataFrame)
+        and kwargs.get("x") == "Mês de Referência"
+        and kwargs.get("y") == "Total_Liq"
+        and {"Mês de Referência", "Total_Liq"}.issubset(data_frame.columns)
+    ):
+        valores = pd.to_numeric(data_frame["Total_Liq"], errors="coerce")
+        valores_validos = valores[valores > 0].dropna()
+
+        if not valores_validos.empty:
+            media = float(valores_validos.mean())
+            desvio = float(valores_validos.std(ddof=0)) if len(valores_validos) > 1 else 0.0
+            limite_inferior = max(0.0, media - desvio)
+            limite_superior = media + desvio
+
+            st.markdown(
+                f"""
+                <div style="display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:2px 0 8px 0;">
+                    <div style="border:1px solid #dbe5ee;border-radius:8px;padding:8px 10px;background:#f8fbfd;">
+                        <div style="font-size:10px;color:#64748b;font-weight:700;letter-spacing:.03em;">MÉDIA MENSAL</div>
+                        <div style="font-size:16px;color:#005691;font-weight:800;margin-top:2px;">{_formatar_milhoes(media)}</div>
+                    </div>
+                    <div style="border:1px solid #dbe5ee;border-radius:8px;padding:8px 10px;background:#f8fbfd;">
+                        <div style="font-size:10px;color:#64748b;font-weight:700;letter-spacing:.03em;">DESVIO-PADRÃO</div>
+                        <div style="font-size:16px;color:#475569;font-weight:800;margin-top:2px;">{_formatar_milhoes(desvio)}</div>
+                    </div>
+                    <div style="border:1px solid #dbe5ee;border-radius:8px;padding:8px 10px;background:#f8fbfd;">
+                        <div style="font-size:10px;color:#64748b;font-weight:700;letter-spacing:.03em;">FAIXA DE REFERÊNCIA ±1 DP</div>
+                        <div style="font-size:13px;color:#334155;font-weight:800;margin-top:3px;">{_formatar_milhoes(limite_inferior)} – {_formatar_milhoes(limite_superior)}</div>
+                    </div>
+                </div>
+                """,
+                unsafe_allow_html=True,
+            )
+
+            figura.add_hrect(
+                y0=limite_inferior,
+                y1=limite_superior,
+                fillcolor="rgba(2, 128, 144, 0.09)",
+                line_width=0,
+                layer="below",
+            )
+            figura.add_hline(
+                y=media,
+                line_width=1.5,
+                line_dash="dash",
+                line_color="#64748b",
+                annotation_text=f"Média {_formatar_milhoes(media)}",
+                annotation_position="top left",
+                annotation_font=dict(size=10, color="#475569"),
+            )
+
+    return figura
+
+
+if px.line is not _line_com_estatistica_mensal:
+    px.line = _line_com_estatistica_mensal
 
 
 MODULOS = [
