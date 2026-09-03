@@ -4,23 +4,51 @@ from urllib.parse import quote
 
 import pandas as pd
 import plotly.express as px
+from plotly.express import _chart_types as _px_chart_types
 import streamlit as st
 
 
-# Em reruns do Streamlit, o módulo do Plotly pode continuar em memória. Guardamos
-# a função original uma única vez para impedir que o wrapper seja empilhado e
-# renderize os cards estatísticos em duplicidade.
-if not hasattr(px, "_seaf_line_original"):
-    px._seaf_line_original = px.line
-_PX_LINE_ORIGINAL = px._seaf_line_original
+# Usa diretamente a implementação nativa do Plotly Express. Isso impede que
+# wrappers de reruns/deploys anteriores sejam encadeados e renderizem os cards
+# estatísticos mais de uma vez.
+_PX_LINE_ORIGINAL = _px_chart_types.line
+
+_MESES_PT = {
+    "JAN": 1,
+    "FEV": 2,
+    "MAR": 3,
+    "ABR": 4,
+    "MAI": 5,
+    "JUN": 6,
+    "JUL": 7,
+    "AGO": 8,
+    "SET": 9,
+    "OUT": 10,
+    "NOV": 11,
+    "DEZ": 12,
+}
 
 
 def _formatar_milhoes(valor):
     return f"R$ {float(valor) / 1_000_000:,.1f}M".replace(",", "X").replace(".", ",").replace("X", ".")
 
 
+def _eh_mes_atual(rotulo, hoje):
+    """Reconhece rótulos do gráfico no formato Jan/2026, Fev/2026, Set/2026 etc."""
+    texto = str(rotulo).strip().upper()
+    if "/" not in texto:
+        return False
+    parte_mes, parte_ano = texto.split("/", 1)
+    mes = _MESES_PT.get(parte_mes[:3])
+    try:
+        ano = int(parte_ano[:4])
+    except (TypeError, ValueError):
+        return False
+    return mes == hoje.month and ano == hoje.year
+
+
 def _line_com_estatistica_mensal(*args, **kwargs):
-    """Enriquece apenas a curva mensal do painel com média e desvio-padrão."""
+    """Enriquece somente a curva mensal do painel com média e desvio-padrão."""
     figura = _PX_LINE_ORIGINAL(*args, **kwargs)
 
     data_frame = kwargs.get("data_frame")
@@ -34,10 +62,10 @@ def _line_com_estatistica_mensal(*args, **kwargs):
         and {"Mês de Referência", "Total_Liq"}.issubset(data_frame.columns)
     ):
         valores = pd.to_numeric(data_frame["Total_Liq"], errors="coerce")
-        meses = pd.to_datetime(data_frame["Mês de Referência"], errors="coerce", dayfirst=True)
         hoje = pd.Timestamp.now()
-        mes_atual = hoje.to_period("M")
-        mascara_mes_em_andamento = meses.dt.to_period("M").eq(mes_atual)
+        mascara_mes_em_andamento = data_frame["Mês de Referência"].apply(
+            lambda rotulo: _eh_mes_atual(rotulo, hoje)
+        )
         valores_validos = valores[(valores > 0) & ~mascara_mes_em_andamento].dropna()
         mes_em_andamento_excluido = bool(mascara_mes_em_andamento.any())
 
@@ -88,8 +116,8 @@ def _line_com_estatistica_mensal(*args, **kwargs):
     return figura
 
 
-# O wrapper pode ser redefinido a cada rerun, mas sempre chama a função Plotly
-# original salva acima; assim não há encadeamento de wrappers nem cards repetidos.
+# Atribuição única para o processo atual; o wrapper sempre chama a função
+# nativa acima, nunca outro wrapper de execução anterior.
 px.line = _line_com_estatistica_mensal
 
 
