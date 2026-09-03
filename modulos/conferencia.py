@@ -12,7 +12,7 @@ import streamlit as st
 
 try:
     import pdfplumber
-except ImportError:  # A mensagem para o usuário é tratada ao executar a conferência.
+except ImportError:
     pdfplumber = None
 
 
@@ -65,17 +65,24 @@ def _fonte(valor):
 
 
 def _consolidar_pagamentos_coletivos(pdf, base):
-    """Agrupa beneficiários individuais quando o PDF usa um credor coletivo.
+    """Consolida Bolsa Atleta/Bolsa Escola sem interferir nos demais credores.
 
-    Bolsa Atleta e Bolsa Escola aparecem no PDF como um único credor, mas na
-    Base OB cada beneficiário é uma linha separada. O objeto da despesa
-    identifica esses casos sem interferir nos demais pagamentos.
+    Primeiro tenta identificar as linhas pelo objeto da despesa. Se a base
+    publicada não trouxer o objeto (ou ele não casar), usa a característica
+    operacional desses pagamentos: muitos beneficiários na mesma OB. O
+    fallback só é aceito quando existe uma única OB repetida, no mesmo GD,
+    cuja soma confere exatamente com o valor coletivo apresentado no PDF.
     """
-    if base.empty or "Objeto_Conferencia" not in base.columns:
+    if base.empty:
         return base
 
-    objetos = base["Objeto_Conferencia"].fillna("").astype(str).map(_normalizar)
+    objetos = (
+        base["Objeto_Conferencia"].fillna("").astype(str).map(_normalizar)
+        if "Objeto_Conferencia" in base.columns
+        else pd.Series("", index=base.index, dtype=str)
+    )
     itens = base["Tipo_Item_Conferencia"].eq("ITEM")
+    numeros = base["Número"].fillna("").astype(str).str.strip()
 
     for marcador_pdf, marcador_objeto in _PAGAMENTOS_COLETIVOS:
         linhas_pdf = pdf[
@@ -86,13 +93,62 @@ def _consolidar_pagamentos_coletivos(pdf, base):
         if linhas_pdf.empty:
             continue
 
-        alvo = objetos.str.contains(re.escape(marcador_objeto), regex=True, na=False) & itens
-        if not alvo.any():
-            continue
+        for _, linha_pdf in linhas_pdf.iterrows():
+            gd_pdf = str(linha_pdf["GD"]).strip()
+            valor_pdf = float(linha_pdf["Valor_PDF"])
+            credor_pdf = str(linha_pdf["Credor"]).strip()
+            chave_pdf = str(linha_pdf["Credor_Chave"]).strip()
 
-        credor_pdf = str(linhas_pdf.iloc[0]["Credor"]).strip()
-        chave_pdf = str(linhas_pdf.iloc[0]["Credor_Chave"]).strip()
-        base.loc[alvo, ["Credor_Exibicao", "Credor_Chave"]] = [credor_pdf, chave_pdf]
+            mesmo_gd = base["GD_Conferencia"].astype(str).eq(gd_pdf)
+            alvo_objeto = (
+                objetos.str.contains(re.escape(marcador_objeto), regex=True, na=False)
+                & itens
+                & mesmo_gd
+            )
+
+            if alvo_objeto.any():
+                base.loc[alvo_objeto, ["Credor_Exibicao", "Credor_Chave"]] = [
+                    credor_pdf,
+                    chave_pdf,
+                ]
+                continue
+
+            # Fallback pela OB repetida: considera somente ITEM, mesmo GD,
+            # número de OB válido e grupos com mais de um beneficiário.
+            elegiveis = base[
+                itens
+                & mesmo_gd
+                & numeros.ne("")
+                & ~numeros.isin(["-", "NAN", "NONE"])
+            ].copy()
+            if elegiveis.empty:
+                continue
+
+            grupos_ob = (
+                elegiveis.groupby("Número", dropna=False)
+                .agg(
+                    Valor_OB=("Valor_Conferencia", "sum"),
+                    Registros_OB=("Valor_Conferencia", "size"),
+                    Credores_OB=("Credor_Chave", "nunique"),
+                )
+                .reset_index()
+            )
+            candidatos = grupos_ob[
+                grupos_ob["Registros_OB"].ge(2)
+                & grupos_ob["Credores_OB"].ge(2)
+                & (grupos_ob["Valor_OB"] - valor_pdf).abs().le(0.005)
+            ]
+
+            # Só consolida quando a correspondência por OB é inequívoca.
+            if len(candidatos) != 1:
+                continue
+
+            numero_ob = str(candidatos.iloc[0]["Número"]).strip()
+            alvo_ob = itens & mesmo_gd & numeros.eq(numero_ob)
+            base.loc[alvo_ob, ["Credor_Exibicao", "Credor_Chave"]] = [
+                credor_pdf,
+                chave_pdf,
+            ]
 
     return base
 
@@ -112,8 +168,6 @@ def carregar_base_ob():
     base = base.loc[:, ~base.columns.duplicated()].copy()
     base.columns = [str(c).strip() for c in base.columns]
 
-    # A tela principal já aceita essas variações de cabeçalho. A conferência
-    # usa a mesma tolerância para não depender de uma grafia única no CSV.
     coluna_objeto = next(
         (
             coluna
@@ -139,7 +193,6 @@ def carregar_base_ob():
     base["GD_Conferencia"] = base["GRUPO"].map(_gd)
     base["Tipo_Item_Conferencia"] = base["Tipo Item"].map(_tipo_item)
     base["Fonte_Conferencia"] = base["Fonte"].map(_fonte)
-    # A exportação pode repetir linhas idênticas; não se deve somá-las duas vezes.
     chave = ["Número", "Data Emissão", "Valor", "Fonte", "Nome do Credor", "Tipo Item"]
     return base.drop_duplicates(subset=chave, keep="first")
 
@@ -154,9 +207,6 @@ def _linhas_pdf(conteudo):
     registros, estruturais, fontes, total_declarado = [], [], [], None
     with pdfplumber.open(io.BytesIO(conteudo)) as pdf:
         for pagina in pdf.pages:
-            # Leitura estrutural: necessária quando um nome longo invade
-            # visualmente a coluna GD/valor. A ordem dos caracteres preserva
-            # o que foi desenhado primeiro pelo relatório.
             palavras = pagina.extract_words(x_tolerance=1.5, y_tolerance=3, use_text_flow=False) or []
             grupos_palavras = []
             for palavra in sorted(palavras, key=lambda p: (float(p["top"]), float(p["x0"]))):
@@ -202,8 +252,6 @@ def _linhas_pdf(conteudo):
                     if valor and chave and re.search(r"[A-Z]", chave) and not chave.startswith("TOTAL"):
                         estruturais.append({"Credor": credor, "Credor_Chave": chave, "GD": str(gd_char["text"]), "Valor_PDF": float(_valor([valor.group(1)]).iloc[0])})
             texto = pagina.extract_text() or ""
-            # A segunda página não repete o cabeçalho; por isso a leitura da
-            # lista principal começa habilitada em todas as páginas.
             em_tabela, credor_pendente = True, ""
             for linha in texto.splitlines():
                 limpa = linha.strip()
@@ -214,20 +262,12 @@ def _linhas_pdf(conteudo):
                 if "NOME DO CREDOR" in normal and "GD" in normal and "VALOR" in normal:
                     em_tabela, credor_pendente = True, ""
                     continue
-                if "FONTE DESPESA TOTAL POR FONTE" in normal:
-                    # Em alguns layouts o cabeçalho do quadro de fonte ocupa a
-                    # mesma linha de um credor. A tabela principal continua.
-                    pass
-                # O código de fonte fica no quadro próprio, acompanhado de R$.
                 achado_fonte = re.search(r"(?<!\d)(\d{3})\s+R\$\s*[0-9.]+,[0-9]{2}", limpa)
                 if achado_fonte:
                     fontes.append(achado_fonte.group(1))
                 if not em_tabela:
                     continue
                 if normal.startswith("TOTAL GERAL"):
-                    # Os quadros laterais também usam "TOTAL GERAL" antes de
-                    # a lista de credores terminar. Ignoramos a linha, sem
-                    # encerrar a tabela principal.
                     credor_pendente = ""
                     continue
                 achado = padrao.match(limpa)
@@ -276,13 +316,7 @@ def comparar(conteudo, data, classificacao):
     if fontes:
         base = base[base["Fonte_Conferencia"].isin(fontes)].copy()
     base = base[~base["Credor_Chave"].str.contains("INSS", na=False)].copy()
-
-    # Pagamentos coletivos: o PDF apresenta Bolsa Atleta/Bolsa Escola em uma
-    # única linha, enquanto a Base OB detalha um beneficiário por registro.
-    # A consolidação ocorre somente quando o credor coletivo existe no PDF e
-    # o objeto da despesa identifica o mesmo programa.
     base = _consolidar_pagamentos_coletivos(pdf, base)
-
     chave_ret = _normalizar(_CREDOR_RETENCAO)
     if pdf["Credor_Chave"].eq(chave_ret).any():
         ret = base["Tipo_Item_Conferencia"].eq("RETENÇÃO")
