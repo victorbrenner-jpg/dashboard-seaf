@@ -36,7 +36,7 @@ _RESPONSIVE_CSS = r"""
         margin-left: 0 !important;
         padding-left: 0.85rem !important;
         padding-right: 0.85rem !important;
-        padding-top: 104px !important;
+        padding-top: 94px !important;
         box-sizing: border-box !important;
     }
 
@@ -62,17 +62,15 @@ _RESPONSIVE_CSS = r"""
         flex: 0 0 auto !important;
     }
 
-    /* Acesso rápido mobile: uma única faixa horizontal rolável. */
+    /* Mobile: mantém somente o botão Início no acesso rápido. */
     body .st-key-seletor_tela_global {
         top: 42px !important;
         left: 0 !important;
         width: 100vw !important;
         max-width: 100vw !important;
-        height: 52px !important;
-        overflow-x: auto !important;
-        overflow-y: hidden !important;
-        -webkit-overflow-scrolling: touch !important;
-        padding: 6px 8px !important;
+        height: 44px !important;
+        overflow: hidden !important;
+        padding: 4px 8px !important;
         margin: 0 !important;
         box-sizing: border-box !important;
     }
@@ -81,17 +79,23 @@ _RESPONSIVE_CSS = r"""
     body .st-key-seletor_tela_global [data-baseweb="button-group"] {
         display: flex !important;
         flex-wrap: nowrap !important;
-        width: max-content !important;
-        min-width: max-content !important;
-        gap: 6px !important;
+        width: auto !important;
+        min-width: 0 !important;
+        gap: 0 !important;
     }
 
-    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button,
-    body .st-key-seletor_tela_global button[data-testid*="segmented_control"] {
+    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button:not(:first-child),
+    body .st-key-seletor_tela_global button[data-testid*="segmented_control"]:not(:first-child) {
+        display: none !important;
+    }
+
+    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button:first-child,
+    body .st-key-seletor_tela_global button[data-testid*="segmented_control"]:first-child {
+        display: inline-flex !important;
         flex: 0 0 auto !important;
         width: auto !important;
-        min-width: max-content !important;
-        min-height: 36px !important;
+        min-width: 92px !important;
+        min-height: 34px !important;
         padding: 4px 12px !important;
         font-size: 11.5px !important;
         line-height: 1.15 !important;
@@ -129,7 +133,6 @@ _RESPONSIVE_CSS = r"""
         box-sizing: border-box !important;
     }
 
-    /* Corrige rótulos claros sobre fundo claro no painel de filtros. */
     body [data-testid="stSidebar"] label,
     body [data-testid="stSidebar"] label p,
     body [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
@@ -145,7 +148,7 @@ _RESPONSIVE_CSS = r"""
 
     body [data-testid="stSidebar"] [data-testid="stForm"]
     [data-testid="stHorizontalBlock"]:has([data-testid="stFormSubmitButton"]) {
-        top: 98px !important;
+        top: 88px !important;
         left: 38px !important;
         width: min(282px, calc(100vw - 76px)) !important;
         max-width: calc(100vw - 76px) !important;
@@ -157,7 +160,6 @@ _RESPONSIVE_CSS = r"""
         font-size: 12px !important;
     }
 
-    /* Colunas do conteúdo: até duas por linha no tablet. */
     body [data-testid="stMain"] [data-testid="stHorizontalBlock"] {
         flex-wrap: wrap !important;
         gap: 0.75rem !important;
@@ -216,7 +218,7 @@ _RESPONSIVE_CSS = r"""
     body [data-testid="stMainBlockContainer"] {
         padding-left: 0.65rem !important;
         padding-right: 0.65rem !important;
-        padding-top: 102px !important;
+        padding-top: 92px !important;
     }
 
     body [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
@@ -231,14 +233,15 @@ _RESPONSIVE_CSS = r"""
     body .barra-sistema .exercicio-sistema { font-size: 9.5px !important; }
 
     body .st-key-seletor_tela_global {
-        height: 50px !important;
-        padding: 6px !important;
+        height: 42px !important;
+        padding: 4px 6px !important;
     }
 
-    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button,
-    body .st-key-seletor_tela_global button[data-testid*="segmented_control"] {
-        min-height: 34px !important;
-        padding: 4px 10px !important;
+    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button:first-child,
+    body .st-key-seletor_tela_global button[data-testid*="segmented_control"]:first-child {
+        min-height: 32px !important;
+        min-width: 86px !important;
+        padding: 3px 10px !important;
         font-size: 10.5px !important;
     }
 
@@ -259,7 +262,7 @@ _RESPONSIVE_CSS = r"""
 
     body [data-testid="stSidebar"] [data-testid="stForm"]
     [data-testid="stHorizontalBlock"]:has([data-testid="stFormSubmitButton"]) {
-        top: 96px !important;
+        top: 86px !important;
         left: 36px !important;
         width: calc(100vw - 72px) !important;
         max-width: calc(100vw - 72px) !important;
@@ -284,7 +287,7 @@ _RESPONSIVE_CSS = r"""
     }
 
     body [data-testid="stMainBlockContainer"] {
-        padding-top: 90px !important;
+        padding-top: 82px !important;
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
     }
@@ -296,25 +299,16 @@ _RESPONSIVE_CSS = r"""
 
     body .st-key-seletor_tela_global {
         top: 36px !important;
-        height: 46px !important;
-        padding: 5px 8px !important;
+        height: 40px !important;
+        padding: 4px 8px !important;
     }
 
-    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] [role="radiogroup"],
-    body .st-key-seletor_tela_global [data-baseweb="button-group"] {
-        display: flex !important;
-        flex-wrap: nowrap !important;
-        width: max-content !important;
-        min-width: max-content !important;
-        gap: 5px !important;
-    }
-
-    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button,
-    body .st-key-seletor_tela_global button[data-testid*="segmented_control"] {
+    body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button:first-child,
+    body .st-key-seletor_tela_global button[data-testid*="segmented_control"]:first-child {
         min-height: 30px !important;
+        min-width: 84px !important;
         padding: 3px 9px !important;
         font-size: 10px !important;
-        white-space: nowrap !important;
     }
 
     body [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
