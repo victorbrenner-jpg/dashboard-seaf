@@ -22,6 +22,10 @@ LINK_BASE_OB_CONFERENCIA = (
     "pub?gid=1786485134&single=true&output=csv"
 )
 _CREDOR_RETENCAO = "PREFEITURA DA CIDADE DO RECIFE - RETENÇÃO"
+_PAGAMENTOS_COLETIVOS = (
+    ("BOLSA ATLETA", "BOLSA ATLETA"),
+    ("BOLSA ESCOLA", "BOLSA ESCOLA"),
+)
 
 
 def _brl(valor):
@@ -60,6 +64,39 @@ def _fonte(valor):
     return achado.group(1) if achado else ""
 
 
+def _consolidar_pagamentos_coletivos(pdf, base):
+    """Agrupa beneficiários individuais quando o PDF usa um credor coletivo.
+
+    Bolsa Atleta e Bolsa Escola aparecem no PDF como um único credor, mas na
+    Base OB cada beneficiário é uma linha separada. O Objeto Despesa identifica
+    esses casos sem interferir nos demais pagamentos.
+    """
+    if base.empty or "Objeto Despesa" not in base.columns:
+        return base
+
+    objetos = base["Objeto Despesa"].fillna("").astype(str).map(_normalizar)
+    itens = base["Tipo_Item_Conferencia"].eq("ITEM")
+
+    for marcador_pdf, marcador_objeto in _PAGAMENTOS_COLETIVOS:
+        linhas_pdf = pdf[
+            pdf["Credor_Chave"].fillna("").astype(str).str.contains(
+                re.escape(marcador_pdf), regex=True, na=False
+            )
+        ]
+        if linhas_pdf.empty:
+            continue
+
+        alvo = objetos.str.contains(re.escape(marcador_objeto), regex=True, na=False) & itens
+        if not alvo.any():
+            continue
+
+        credor_pdf = str(linhas_pdf.iloc[0]["Credor"]).strip()
+        chave_pdf = str(linhas_pdf.iloc[0]["Credor_Chave"]).strip()
+        base.loc[alvo, ["Credor_Exibicao", "Credor_Chave"]] = [credor_pdf, chave_pdf]
+
+    return base
+
+
 @st.cache_data(ttl=60, show_spinner=False)
 def carregar_base_ob():
     """Lê a mesma aba publicada que alimenta a tela de Pagamentos (OB)."""
@@ -74,7 +111,7 @@ def carregar_base_ob():
         return pd.DataFrame()
     base = base.loc[:, ~base.columns.duplicated()].copy()
     base.columns = [str(c).strip() for c in base.columns]
-    for coluna in ("Número", "Data Emissão", "Valor", "Fonte", "Nome do Credor", "Credor", "Tipo Item", "GRUPO"):
+    for coluna in ("Número", "Data Emissão", "Valor", "Fonte", "Nome do Credor", "Credor", "Tipo Item", "GRUPO", "Objeto Despesa"):
         if coluna not in base:
             base[coluna] = ""
     base["Data_Conferencia"] = pd.to_datetime(base["Data Emissão"], dayfirst=True, errors="coerce").dt.date
@@ -221,6 +258,13 @@ def comparar(conteudo, data, classificacao):
     if fontes:
         base = base[base["Fonte_Conferencia"].isin(fontes)].copy()
     base = base[~base["Credor_Chave"].str.contains("INSS", na=False)].copy()
+
+    # Pagamentos coletivos: o PDF apresenta Bolsa Atleta/Bolsa Escola em uma
+    # única linha, enquanto a Base OB detalha um beneficiário por registro.
+    # A consolidação ocorre somente quando o credor coletivo existe no PDF e
+    # o Objeto Despesa identifica o mesmo programa.
+    base = _consolidar_pagamentos_coletivos(pdf, base)
+
     chave_ret = _normalizar(_CREDOR_RETENCAO)
     if pdf["Credor_Chave"].eq(chave_ret).any():
         ret = base["Tipo_Item_Conferencia"].eq("RETENÇÃO")
@@ -242,7 +286,7 @@ def comparar(conteudo, data, classificacao):
 
 
 def _tabela(df, formatos=None):
-    estilo = df.style.format(formatos or {}).set_table_styles([{"selector": "th", "props": [("background-color", "#003b5c"), ("color", "#fff"), ("font-weight", "700")]}])
+    estilo = df.style.format(formatos or {}).set_table_styles([{"selector": "th", "props": [("background-color", "#003b5c"), ("color", "#fff"), ("font-weight", "700")] }])
     if "Situação" in df:
         cores = {"Conciliado": "background-color:#e8f7ee;color:#166534", "Valor divergente": "background-color:#fff7df;color:#92400e", "Somente no PDF": "background-color:#feecec;color:#b42318", "Somente na Base OB": "background-color:#feecec;color:#b42318"}
         estilo = estilo.apply(lambda linha: [cores.get(linha["Situação"], "")] * len(linha), axis=1)
