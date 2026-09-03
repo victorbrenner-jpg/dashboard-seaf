@@ -134,9 +134,19 @@ def render() -> None:
     st.markdown(
         """
         <style>
-          .home-shell {width: min(1420px, calc(100vw - 4rem)); margin: 0 auto; padding: 8.6rem 0 0;}
+          .home-shell {
+            width: min(1420px, calc(100vw - 4rem));
+            min-height: calc(100vh - 8.5rem);
+            margin: 0 auto;
+            padding: 0;
+            box-sizing: border-box;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            transform: translateY(-1.2rem);
+          }
           .home-title {margin: 0; color: #1d344d; font: 600 2.15rem/1.15 'Segoe UI', Arial, sans-serif; letter-spacing: -.035em;}
-          .home-grid {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-top: clamp(3.5rem, 9vh, 7rem);}
+          .home-grid {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-top: clamp(3rem, 7vh, 5rem);}
           .home-module {
             min-height: 172px; box-sizing: border-box; background: #fff; border: 1px solid #d7e1eb;
             border-radius: 9px; box-shadow: 0 4px 13px rgba(25, 56, 85, .07); color: #173753 !important;
@@ -149,8 +159,16 @@ def render() -> None:
           .home-module:hover::before {opacity:1;}
           .home-icon {width:43px; height:43px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.22rem; background:#eef6f8; border:1px solid #d7e9ec;}
           .home-name {text-align:center; font:650 .94rem/1.25 'Segoe UI', Arial, sans-serif;}
-          @media (max-width: 950px) {.home-grid {grid-template-columns: repeat(3, minmax(0, 1fr));}}
-          @media (max-width: 640px) {.home-shell {width:calc(100vw - 2rem); padding-top:6.7rem;} .home-title {font-size:1.7rem;} .home-grid {grid-template-columns:repeat(2, minmax(0, 1fr)); margin-top:2.5rem;} .home-module {min-height:135px;}}
+          @media (max-width: 950px) {
+            .home-shell {min-height:auto; padding:5rem 0 2rem; transform:none;}
+            .home-grid {grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top:2.5rem;}
+          }
+          @media (max-width: 640px) {
+            .home-shell {width:calc(100vw - 2rem); min-height:auto; padding:4rem 0 2rem; transform:none;}
+            .home-title {font-size:1.7rem;}
+            .home-grid {grid-template-columns:repeat(2, minmax(0, 1fr)); margin-top:2rem;}
+            .home-module {min-height:135px;}
+          }
         </style>
         """,
         unsafe_allow_html=True,
