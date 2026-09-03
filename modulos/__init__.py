@@ -25,12 +25,6 @@ _RESPONSIVE_CSS = r"""
         overflow-x: hidden !important;
     }
 
-    /* No mobile o trilho lateral de 28px do desktop desaparece por completo.
-       Isso devolve toda a largura ao conteúdo e elimina a faixa branca lateral. */
-    body [data-testid="stSidebar"] {
-        display: none !important;
-    }
-
     body [data-testid="stMain"] {
         margin-left: 0 !important;
         width: 100vw !important;
@@ -42,7 +36,7 @@ _RESPONSIVE_CSS = r"""
         margin-left: 0 !important;
         padding-left: 0.85rem !important;
         padding-right: 0.85rem !important;
-        padding-top: 168px !important;
+        padding-top: 104px !important;
         box-sizing: border-box !important;
     }
 
@@ -68,41 +62,99 @@ _RESPONSIVE_CSS = r"""
         flex: 0 0 auto !important;
     }
 
-    /* Navegação mobile em grade compacta, sem barra horizontal e sem cobrir
-       o título da página. */
+    /* Acesso rápido mobile: uma única faixa horizontal rolável. */
     body .st-key-seletor_tela_global {
         top: 42px !important;
         left: 0 !important;
         width: 100vw !important;
         max-width: 100vw !important;
-        height: auto !important;
-        overflow: visible !important;
-        padding: 7px 8px 8px !important;
+        height: 52px !important;
+        overflow-x: auto !important;
+        overflow-y: hidden !important;
+        -webkit-overflow-scrolling: touch !important;
+        padding: 6px 8px !important;
         margin: 0 !important;
         box-sizing: border-box !important;
     }
 
     body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] [role="radiogroup"],
     body .st-key-seletor_tela_global [data-baseweb="button-group"] {
-        display: grid !important;
-        grid-template-columns: repeat(2, minmax(0, 1fr)) !important;
-        width: 100% !important;
-        min-width: 0 !important;
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        width: max-content !important;
+        min-width: max-content !important;
         gap: 6px !important;
     }
 
     body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button,
     body .st-key-seletor_tela_global button[data-testid*="segmented_control"] {
-        width: 100% !important;
-        min-width: 0 !important;
+        flex: 0 0 auto !important;
+        width: auto !important;
+        min-width: max-content !important;
         min-height: 36px !important;
-        padding: 5px 8px !important;
+        padding: 4px 12px !important;
         font-size: 11.5px !important;
         line-height: 1.15 !important;
-        white-space: normal !important;
-        overflow-wrap: anywhere !important;
+        white-space: nowrap !important;
         justify-content: center !important;
         box-sizing: border-box !important;
+    }
+
+    /* Filtros mobile: mantém a lateral utilizável e legível. */
+    body [data-testid="stSidebar"] {
+        display: block !important;
+        visibility: visible !important;
+    }
+
+    body [data-testid="stSidebar"]:hover,
+    body [data-testid="stSidebar"]:focus-within,
+    body [data-testid="stSidebar"]:has(input:focus),
+    body [data-testid="stSidebar"]:has([role="combobox"][aria-expanded="true"]),
+    body:has([data-baseweb="popover"]) [data-testid="stSidebar"],
+    body:has([role="listbox"]) [data-testid="stSidebar"],
+    body:has([role="menu"]) [data-testid="stSidebar"],
+    body:has([data-baseweb="menu"]) [data-testid="stSidebar"],
+    body:has([data-baseweb="select-menu"]) [data-testid="stSidebar"],
+    body:has([role="combobox"][aria-expanded="true"]) [data-testid="stSidebar"] {
+        min-width: min(340px, calc(100vw - 28px)) !important;
+        width: min(340px, calc(100vw - 28px)) !important;
+        max-width: min(340px, calc(100vw - 28px)) !important;
+        overflow-y: auto !important;
+    }
+
+    body [data-testid="stSidebar"] > div:first-child {
+        min-width: min(340px, calc(100vw - 28px)) !important;
+        width: min(340px, calc(100vw - 28px)) !important;
+        max-width: min(340px, calc(100vw - 28px)) !important;
+        box-sizing: border-box !important;
+    }
+
+    /* Corrige rótulos claros sobre fundo claro no painel de filtros. */
+    body [data-testid="stSidebar"] label,
+    body [data-testid="stSidebar"] label p,
+    body [data-testid="stSidebar"] [data-testid="stWidgetLabel"],
+    body [data-testid="stSidebar"] [data-testid="stWidgetLabel"] p,
+    body [data-testid="stSidebar"] .stMarkdown p,
+    body [data-testid="stSidebar"] h1,
+    body [data-testid="stSidebar"] h2,
+    body [data-testid="stSidebar"] h3,
+    body [data-testid="stSidebar"] h4 {
+        color: #243447 !important;
+        opacity: 1 !important;
+    }
+
+    body [data-testid="stSidebar"] [data-testid="stForm"]
+    [data-testid="stHorizontalBlock"]:has([data-testid="stFormSubmitButton"]) {
+        top: 98px !important;
+        left: 38px !important;
+        width: min(282px, calc(100vw - 76px)) !important;
+        max-width: calc(100vw - 76px) !important;
+        z-index: 100007 !important;
+    }
+
+    body [data-testid="stSidebar"] [data-testid="stFormSubmitButton"] button {
+        min-height: 38px !important;
+        font-size: 12px !important;
     }
 
     /* Colunas do conteúdo: até duas por linha no tablet. */
@@ -164,10 +216,9 @@ _RESPONSIVE_CSS = r"""
     body [data-testid="stMainBlockContainer"] {
         padding-left: 0.65rem !important;
         padding-right: 0.65rem !important;
-        padding-top: 172px !important;
+        padding-top: 102px !important;
     }
 
-    /* Celular vertical: uma coluna real, usando 100% da tela. */
     body [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
         flex: 1 1 100% !important;
         width: 100% !important;
@@ -179,11 +230,39 @@ _RESPONSIVE_CSS = r"""
     body .barra-sistema .marca-sistema { font-size: 11.5px !important; }
     body .barra-sistema .exercicio-sistema { font-size: 9.5px !important; }
 
+    body .st-key-seletor_tela_global {
+        height: 50px !important;
+        padding: 6px !important;
+    }
+
     body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button,
     body .st-key-seletor_tela_global button[data-testid*="segmented_control"] {
         min-height: 34px !important;
-        padding: 4px 6px !important;
+        padding: 4px 10px !important;
         font-size: 10.5px !important;
+    }
+
+    body [data-testid="stSidebar"]:hover,
+    body [data-testid="stSidebar"]:focus-within,
+    body [data-testid="stSidebar"]:has(input:focus),
+    body [data-testid="stSidebar"]:has([role="combobox"][aria-expanded="true"]) {
+        min-width: calc(100vw - 24px) !important;
+        width: calc(100vw - 24px) !important;
+        max-width: calc(100vw - 24px) !important;
+    }
+
+    body [data-testid="stSidebar"] > div:first-child {
+        min-width: calc(100vw - 24px) !important;
+        width: calc(100vw - 24px) !important;
+        max-width: calc(100vw - 24px) !important;
+    }
+
+    body [data-testid="stSidebar"] [data-testid="stForm"]
+    [data-testid="stHorizontalBlock"]:has([data-testid="stFormSubmitButton"]) {
+        top: 96px !important;
+        left: 36px !important;
+        width: calc(100vw - 72px) !important;
+        max-width: calc(100vw - 72px) !important;
     }
 
     body [data-testid="stMain"] [data-testid="stMetricValue"] {
@@ -198,17 +277,14 @@ _RESPONSIVE_CSS = r"""
     }
 }
 
-/* Celular deitado: usa duas colunas quando houver espaço e reduz o cabeçalho. */
 @media (max-height: 500px) and (orientation: landscape) and (max-width: 950px) {
-    body [data-testid="stSidebar"] { display: none !important; }
-
     body [data-testid="stMain"] {
         margin-left: 0 !important;
         width: 100vw !important;
     }
 
     body [data-testid="stMainBlockContainer"] {
-        padding-top: 126px !important;
+        padding-top: 90px !important;
         padding-left: 0.8rem !important;
         padding-right: 0.8rem !important;
     }
@@ -220,22 +296,25 @@ _RESPONSIVE_CSS = r"""
 
     body .st-key-seletor_tela_global {
         top: 36px !important;
-        padding: 5px 8px 6px !important;
+        height: 46px !important;
+        padding: 5px 8px !important;
     }
 
     body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] [role="radiogroup"],
     body .st-key-seletor_tela_global [data-baseweb="button-group"] {
-        display: grid !important;
-        grid-template-columns: repeat(3, minmax(0, 1fr)) !important;
+        display: flex !important;
+        flex-wrap: nowrap !important;
+        width: max-content !important;
+        min-width: max-content !important;
         gap: 5px !important;
     }
 
     body .st-key-seletor_tela_global [data-testid="stSegmentedControl"] button,
     body .st-key-seletor_tela_global button[data-testid*="segmented_control"] {
         min-height: 30px !important;
-        padding: 3px 6px !important;
+        padding: 3px 9px !important;
         font-size: 10px !important;
-        white-space: normal !important;
+        white-space: nowrap !important;
     }
 
     body [data-testid="stMain"] [data-testid="stHorizontalBlock"] > [data-testid="stColumn"] {
