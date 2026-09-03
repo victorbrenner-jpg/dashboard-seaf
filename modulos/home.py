@@ -29,13 +29,19 @@ def _line_com_estatistica_mensal(*args, **kwargs):
         and {"Mês de Referência", "Total_Liq"}.issubset(data_frame.columns)
     ):
         valores = pd.to_numeric(data_frame["Total_Liq"], errors="coerce")
-        valores_validos = valores[valores > 0].dropna()
+        meses = pd.to_datetime(data_frame["Mês de Referência"], errors="coerce", dayfirst=True)
+        hoje = pd.Timestamp.now()
+        mes_atual = hoje.to_period("M")
+        mascara_mes_em_andamento = meses.dt.to_period("M").eq(mes_atual)
+        valores_validos = valores[(valores > 0) & ~mascara_mes_em_andamento].dropna()
+        mes_em_andamento_excluido = bool(mascara_mes_em_andamento.any())
 
         if not valores_validos.empty:
             media = float(valores_validos.mean())
             desvio = float(valores_validos.std(ddof=0)) if len(valores_validos) > 1 else 0.0
             limite_inferior = max(0.0, media - desvio)
             limite_superior = media + desvio
+            observacao = " · mês atual excluído" if mes_em_andamento_excluido else ""
 
             st.markdown(
                 f"""
@@ -69,7 +75,7 @@ def _line_com_estatistica_mensal(*args, **kwargs):
                 line_width=1.5,
                 line_dash="dash",
                 line_color="#64748b",
-                annotation_text=f"Média {_formatar_milhoes(media)}",
+                annotation_text=f"Média {_formatar_milhoes(media)}{observacao}",
                 annotation_position="top left",
                 annotation_font=dict(size=10, color="#475569"),
             )
