@@ -65,7 +65,7 @@ def _line_com_estatistica_mensal(*args, **kwargs):
         hoje = pd.Timestamp.now()
         mascara_mes_em_andamento = data_frame["Mês de Referência"].apply(
             lambda rotulo: _eh_mes_atual(rotulo, hoje)
-        )
+        ).astype(bool)
         valores_validos = valores[(valores > 0) & ~mascara_mes_em_andamento].dropna()
         mes_em_andamento_excluido = bool(mascara_mes_em_andamento.any())
 
