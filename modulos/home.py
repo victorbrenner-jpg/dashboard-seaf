@@ -63,9 +63,18 @@ def _line_com_estatistica_mensal(*args, **kwargs):
     ):
         valores = pd.to_numeric(data_frame["Total_Liq"], errors="coerce")
         hoje = pd.Timestamp.now()
-        mascara_mes_em_andamento = data_frame["Mês de Referência"].apply(
-            lambda rotulo: _eh_mes_atual(rotulo, hoje)
-        ).astype(bool)
+        # O agrupamento pode devolver "Mês de Referência" como Categorical.
+        # Uma Series categórica não aceita o operador ``~``, mesmo quando suas
+        # categorias são True/False. Construímos uma Series booleana nativa
+        # para que filtros sem registros e com meses categóricos sejam seguros.
+        mascara_mes_em_andamento = pd.Series(
+            [
+                _eh_mes_atual(rotulo, hoje)
+                for rotulo in data_frame["Mês de Referência"].astype("object")
+            ],
+            index=data_frame.index,
+            dtype=bool,
+        )
         valores_validos = valores[(valores > 0) & ~mascara_mes_em_andamento].dropna()
         mes_em_andamento_excluido = bool(mascara_mes_em_andamento.any())
 
