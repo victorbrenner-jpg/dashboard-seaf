@@ -1,0 +1,2 @@
+Forca redeploy da homologacao apos inclusao do campo Marcador Fonte na BASE em 2026-09-14.
+Nao altera regras de negocio nem outras telas.
