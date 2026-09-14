@@ -1525,6 +1525,102 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
     # ------------------------------------------------------------------
     # 6) Montagem visual do XLSX no mesmo padrão do modelo enviado.
     # ------------------------------------------------------------------
+    total_mensal = resumo_mes[["CORRENTE", "RP", "DEA"]].sum() if not resumo_mes.empty else pd.Series({"CORRENTE": 0.0, "RP": 0.0, "DEA": 0.0})
+    total_marcador = resumo_marcador[["CORRENTE", "RP", "DEA"]].sum() if not resumo_marcador.empty else pd.Series({"CORRENTE": 0.0, "RP": 0.0, "DEA": 0.0})
+    total_docs = int(resumo_diario["Qtd. Docs"].sum()) if not resumo_diario.empty else 0
+    total_pago = float(resumo_diario["Total Pago"].sum()) if not resumo_diario.empty else 0.0
+    total_corrente = float(resumo_diario["CORRENTE"].sum()) if not resumo_diario.empty else 0.0
+    total_rp_diario = float(resumo_diario["RP"].sum()) if not resumo_diario.empty else 0.0
+    total_dea = float(resumo_diario["DEA"].sum()) if not resumo_diario.empty else 0.0
+
+    # Preenche o modelo oficial, em vez de criar um arquivo com layout paralelo.
+    # Isso mantém as abas, estilos, filtros e estrutura já utilizados pela chefia.
+    from copy import copy
+    from openpyxl import load_workbook
+
+    caminho_modelo = Path(__file__).resolve().parent / "modelos" / "modelo_relatorio_ob.xlsx"
+    if not caminho_modelo.exists():
+        raise FileNotFoundError("Modelo oficial de OB não encontrado em modelos/modelo_relatorio_ob.xlsx.")
+
+    modelo = load_workbook(caminho_modelo)
+    painel_modelo = modelo["Painel"]
+    diario_modelo = modelo["Resumo Diário"]
+
+    def limpar_intervalo(aba, primeira_linha, ultima_linha, primeira_coluna, ultima_coluna):
+        for linha_planilha in aba.iter_rows(
+            min_row=primeira_linha, max_row=ultima_linha,
+            min_col=primeira_coluna, max_col=ultima_coluna,
+        ):
+            for celula in linha_planilha:
+                # Células mescladas secundárias não aceitam atribuição.
+                if celula.__class__.__name__ != "MergedCell":
+                    celula.value = None
+
+    def copiar_estilo_linha(aba, origem, destino, ultima_coluna):
+        for coluna in range(1, ultima_coluna + 1):
+            aba.cell(destino, coluna)._style = copy(aba.cell(origem, coluna)._style)
+            aba.cell(destino, coluna).number_format = aba.cell(origem, coluna).number_format
+
+    # Painel mensal e por marcador: posições oficiais do modelo.
+    limpar_intervalo(painel_modelo, 4, 50, 1, 4)
+    for indice, mes in enumerate(meses_relatorio, start=4):
+        copiar_estilo_linha(painel_modelo, 4 if indice % 2 == 0 else 5, indice, 4)
+        valores = resumo_mes.loc[mes] if mes in resumo_mes.index else pd.Series(dtype=float)
+        painel_modelo.cell(indice, 1).value = rotulos_mes.get(mes, str(mes).split("/")[0].lower())
+        for coluna, chave in enumerate(["CORRENTE", "RP", "DEA"], start=2):
+            painel_modelo.cell(indice, coluna).value = float(valores.get(chave, 0.0))
+    linha_total_mes = 4 + len(meses_relatorio)
+    for coluna, chave in enumerate(["CORRENTE", "RP", "DEA"], start=2):
+        painel_modelo.cell(linha_total_mes, coluna).value = float(total_mensal.get(chave, 0.0))
+    painel_modelo.cell(linha_total_mes, 1).value = "Total Geral"
+
+    linha_marcador = max(16, linha_total_mes + 3)
+    painel_modelo.cell(linha_marcador, 1).value = "Marcador"
+    for coluna, titulo in enumerate(["Corrente", "Restos a Pagar (RP)", "DEA"], start=2):
+        painel_modelo.cell(linha_marcador, coluna).value = titulo
+    for deslocamento, marcador in enumerate(ordem_marcadores, start=1):
+        linha_destino = linha_marcador + deslocamento
+        copiar_estilo_linha(painel_modelo, 17 if deslocamento % 2 else 18, linha_destino, 4)
+        valores = resumo_marcador.loc[marcador]
+        painel_modelo.cell(linha_destino, 1).value = str(marcador)
+        for coluna, chave in enumerate(["CORRENTE", "RP", "DEA"], start=2):
+            painel_modelo.cell(linha_destino, coluna).value = float(valores.get(chave, 0.0))
+    linha_total_marcador = linha_marcador + len(ordem_marcadores) + 1
+    painel_modelo.cell(linha_total_marcador, 1).value = "Total Geral"
+    for coluna, chave in enumerate(["CORRENTE", "RP", "DEA"], start=2):
+        painel_modelo.cell(linha_total_marcador, coluna).value = float(total_marcador.get(chave, 0.0))
+
+    linha_status = linha_total_marcador + 2
+    painel_modelo.cell(linha_status, 1).value = "Status"
+    painel_modelo.cell(linha_status, 2).value = "Valor"
+    painel_modelo.cell(linha_status + 1, 1).value = "Restos a Pagar(RP)"
+    painel_modelo.cell(linha_status + 1, 2).value = valor_rp
+    painel_modelo.cell(linha_status + 2, 1).value = "Restos Não Processados(RPNP)"
+    painel_modelo.cell(linha_status + 2, 2).value = valor_rpnp
+    painel_modelo.cell(linha_status + 3, 1).value = "Total Geral"
+    painel_modelo.cell(linha_status + 3, 2).value = valor_rp + valor_rpnp
+
+    # Resumo diário, conservando cabeçalho e estilos da planilha oficial.
+    limpar_intervalo(diario_modelo, 4, max(diario_modelo.max_row, len(resumo_diario) + 4), 1, 6)
+    for indice, (_, registro) in enumerate(resumo_diario.iterrows(), start=4):
+        copiar_estilo_linha(diario_modelo, 4, indice, 6)
+        diario_modelo.cell(indice, 1).value = registro["__Data_Resumo_OB"].to_pydatetime()
+        diario_modelo.cell(indice, 2).value = int(registro["Qtd. Docs"])
+        diario_modelo.cell(indice, 3).value = float(registro["Total Pago"])
+        diario_modelo.cell(indice, 4).value = float(registro.get("CORRENTE", 0.0))
+        diario_modelo.cell(indice, 5).value = float(registro.get("RP", 0.0))
+        diario_modelo.cell(indice, 6).value = float(registro.get("DEA", 0.0))
+    linha_total_diario = len(resumo_diario) + 4
+    copiar_estilo_linha(diario_modelo, 103, linha_total_diario, 6)
+    for coluna, valor in enumerate(["TOTAL GERAL", total_docs, total_pago, total_corrente, total_rp_diario, total_dea], start=1):
+        diario_modelo.cell(linha_total_diario, coluna).value = valor
+    diario_modelo.auto_filter.ref = f"A3:F{max(3, linha_total_diario - 1)}"
+
+    arquivo = io.BytesIO()
+    modelo.save(arquivo)
+    arquivo.seek(0)
+    return arquivo.getvalue()
+
     arquivo = io.BytesIO()
     with pd.ExcelWriter(arquivo, engine="xlsxwriter", datetime_format="dd/mm/yyyy") as writer:
         workbook = writer.book
