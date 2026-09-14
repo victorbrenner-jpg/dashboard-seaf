@@ -1,0 +1,2 @@
+Forca novo deploy apos restauracao da classificacao Tipo de NL na Base_de_dados_NL_SIAFIM em 2026-09-14.
+Nao altera regras de negocio.
