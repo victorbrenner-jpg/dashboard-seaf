@@ -1303,124 +1303,410 @@ def gerar_relatorio_pd_excel(df_filtrado):
     arquivo_saida.seek(0)
     return arquivo_saida.getvalue()
 
-def gerar_resumo_gerencial_ob_excel(df_ob, credores_selecionados=None):
-    """Gera o resumo diário dos pagamentos e identifica os credores filtrados."""
+def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
+    """Gera o relatório executivo de OB no modelo Painel + Resumo Diário.
 
-    dados_resumo = df_ob.copy()
-    dados_resumo["Data de Referência"] = pd.to_datetime(
-        dados_resumo["Data Emissão"], format="mixed", dayfirst=True, errors="coerce"
-    ).dt.normalize()
+    O dataframe recebido deve ser o MESMO ``df_filtrado`` usado nos cards e
+    tabelas da tela de OB. Assim o Excel respeita exatamente os filtros que já
+    foram aplicados no painel (período, despesa, grupo, tipo item, marcador,
+    fonte, objeto e credor).
+    """
+    if df_ob is None or df_ob.empty:
+        raise ValueError("Não há pagamentos para gerar o relatório com os filtros atuais.")
 
-    resumo_diario = (
-        dados_resumo.dropna(subset=["Data de Referência"])
-        .groupby("Data de Referência", observed=False)
-        .agg(**{"Qtd. Docs": ("Valor_Limpo", "count"), "Total Pago": ("Valor_Limpo", "sum")})
-        .reset_index()
-        .sort_values("Data de Referência")
+    base = df_ob.copy()
+
+    # ------------------------------------------------------------------
+    # 1) Garante as colunas tratadas usadas em todos os resumos.
+    # ------------------------------------------------------------------
+    if "Valor_Limpo" not in base.columns:
+        if "Valor" not in base.columns:
+            raise ValueError("A base de OB não possui a coluna Valor.")
+        base["Valor_Limpo"] = converter_valor_monetario(base["Valor"])
+    else:
+        base["Valor_Limpo"] = pd.to_numeric(base["Valor_Limpo"], errors="coerce").fillna(0.0)
+
+    if "Despesa_Tratada" not in base.columns:
+        if "Despesa" not in base.columns:
+            base["Despesa_Tratada"] = "CORRENTE"
+        else:
+            def _classificar_despesa_relatorio(valor):
+                texto = "" if pd.isna(valor) else str(valor).strip().upper()
+                if any(chave in texto for chave in ["DEA", "EXERC", "ANTERIOR", "RECONHECIMENTO"]):
+                    return "DEA"
+                if any(chave in texto for chave in ["RP", "RESTO", "PAGAR"]):
+                    return "RP"
+                return "CORRENTE"
+            base["Despesa_Tratada"] = base["Despesa"].apply(_classificar_despesa_relatorio)
+
+    coluna_data = "Data Emissão" if "Data Emissão" in base.columns else None
+    if coluna_data is None:
+        for candidata in ["Data Emissao", "Data", "Data_Emissao"]:
+            if candidata in base.columns:
+                coluna_data = candidata
+                break
+    if coluna_data is None:
+        raise ValueError("A base de OB não possui a coluna Data Emissão.")
+
+    datas = pd.to_datetime(
+        base[coluna_data], format="mixed", dayfirst=True, errors="coerce"
     )
+    base["__Data_Resumo_OB"] = datas.dt.normalize()
 
-    valores_por_tipo = dados_resumo.dropna(subset=["Data de Referência"]).pivot_table(
-        index="Data de Referência",
+    if "Mes_Extenso" not in base.columns:
+        mapa_meses_relatorio = {
+            1: "Jan/2026", 2: "Fev/2026", 3: "Mar/2026", 4: "Abr/2026",
+            5: "Mai/2026", 6: "Jun/2026", 7: "Jul/2026", 8: "Ago/2026",
+            9: "Set/2026", 10: "Out/2026", 11: "Nov/2026", 12: "Dez/2026",
+        }
+        base["Mes_Extenso"] = datas.dt.month.map(mapa_meses_relatorio).fillna("Não Identificado")
+
+    # ------------------------------------------------------------------
+    # 2) Resumo por mês - primeiro quadro da aba Painel.
+    # ------------------------------------------------------------------
+    meses_relatorio = list(meses_ordem or [])
+    if not meses_relatorio:
+        ordem_padrao = [
+            "Jan/2026", "Fev/2026", "Mar/2026", "Abr/2026", "Mai/2026", "Jun/2026",
+            "Jul/2026", "Ago/2026", "Set/2026", "Out/2026", "Nov/2026", "Dez/2026",
+        ]
+        presentes = set(base["Mes_Extenso"].dropna().astype(str))
+        meses_relatorio = [mes for mes in ordem_padrao if mes in presentes]
+
+    resumo_mes = base.pivot_table(
+        index="Mes_Extenso",
         columns="Despesa_Tratada",
         values="Valor_Limpo",
         aggfunc="sum",
         fill_value=0.0,
         observed=False,
-    ).reindex(resumo_diario["Data de Referência"], fill_value=0.0)
+    ).reindex(meses_relatorio, fill_value=0.0)
 
-    tipos_colunas = [
-        ("CORRENTE", "Corrente"),
-        ("RP", "Restos a Pagar (RP)"),
-        ("DEA", "Exercícios Anteriores (DEA)"),
+    for coluna in ["CORRENTE", "RP", "DEA"]:
+        if coluna not in resumo_mes.columns:
+            resumo_mes[coluna] = 0.0
+    resumo_mes = resumo_mes[["CORRENTE", "RP", "DEA"]]
+
+    rotulos_mes = {
+        "Jan/2026": "jan", "Fev/2026": "fev", "Mar/2026": "mar",
+        "Abr/2026": "abr", "Mai/2026": "mai", "Jun/2026": "jun",
+        "Jul/2026": "jul", "Ago/2026": "ago", "Set/2026": "set",
+        "Out/2026": "out", "Nov/2026": "nov", "Dez/2026": "dez",
+    }
+
+    # ------------------------------------------------------------------
+    # 3) Resumo por Marcador Fonte - segundo quadro da aba Painel.
+    #    A BASE já possui a coluna criada no tratamento. O relatório aceita
+    #    variações de grafia para não quebrar quando o cabeçalho for ajustado.
+    # ------------------------------------------------------------------
+    def _normalizar_cabecalho_relatorio(valor):
+        texto = unicodedata.normalize("NFKD", str(valor or ""))
+        texto = "".join(c for c in texto if not unicodedata.combining(c))
+        return re.sub(r"[^A-Z0-9]+", "", texto.upper())
+
+    mapa_colunas = {
+        _normalizar_cabecalho_relatorio(coluna): coluna
+        for coluna in base.columns
+    }
+    aliases_marcador = [
+        "Marcador Fonte", "Marcador de Fonte", "Marcador_Fonte",
+        "MarcadorFonte", "Marcador Fonte Tratado", "Marcador",
     ]
-    for tipo_origem, titulo_coluna in tipos_colunas:
-        resumo_diario[titulo_coluna] = (
-            valores_por_tipo[tipo_origem].to_numpy()
-            if tipo_origem in valores_por_tipo.columns
-            else 0.0
+    coluna_marcador = next(
+        (mapa_colunas.get(_normalizar_cabecalho_relatorio(alias))
+         for alias in aliases_marcador
+         if mapa_colunas.get(_normalizar_cabecalho_relatorio(alias)) is not None),
+        None,
+    )
+    if coluna_marcador is None:
+        coluna_marcador = next(
+            (coluna for coluna in base.columns
+             if "MARCADOR" in _normalizar_cabecalho_relatorio(coluna)
+             and "FONTE" in _normalizar_cabecalho_relatorio(coluna)),
+            None,
+        )
+    if coluna_marcador is None:
+        raise ValueError(
+            "A coluna 'Marcador Fonte' não foi encontrada na BASE. "
+            "Atualize a BASE antes de gerar o relatório."
         )
 
-    credores = [
-        str(credor).strip()
-        for credor in (credores_selecionados or [])
-        if str(credor).strip()
+    def _extrair_codigo_marcador(valor):
+        texto = "" if pd.isna(valor) else str(valor).strip()
+        achado = re.search(r"(?<!\d)(\d{4})(?!\d)", texto)
+        if achado:
+            return achado.group(1)
+        if not texto:
+            return "0000"
+        # Fallback para uma classificação futura que ainda não use 4 dígitos.
+        return texto.upper()
+
+    base["__Marcador_Resumo_OB"] = base[coluna_marcador].apply(_extrair_codigo_marcador)
+    resumo_marcador = base.pivot_table(
+        index="__Marcador_Resumo_OB",
+        columns="Despesa_Tratada",
+        values="Valor_Limpo",
+        aggfunc="sum",
+        fill_value=0.0,
+        observed=False,
+    )
+    for coluna in ["CORRENTE", "RP", "DEA"]:
+        if coluna not in resumo_marcador.columns:
+            resumo_marcador[coluna] = 0.0
+    resumo_marcador = resumo_marcador[["CORRENTE", "RP", "DEA"]]
+
+    # O modelo executivo trabalha com 0000 e 1001. Se futuramente surgir outro
+    # marcador, ele entra logo abaixo sem ser descartado.
+    marcadores_presentes = [str(x) for x in resumo_marcador.index.tolist()]
+    ordem_marcadores = [m for m in ["0000", "1001"] if m in marcadores_presentes]
+    ordem_marcadores += sorted(m for m in marcadores_presentes if m not in ordem_marcadores)
+    # Mantém as duas linhas oficiais mesmo quando um filtro elimina uma delas.
+    for marcador_oficial in ["0000", "1001"]:
+        if marcador_oficial not in ordem_marcadores:
+            ordem_marcadores.append(marcador_oficial)
+    resumo_marcador = resumo_marcador.reindex(ordem_marcadores, fill_value=0.0)
+
+    # ------------------------------------------------------------------
+    # 4) Quadro RP x RPNP.
+    #    RPNP é identificado por Status / Tipo de OB / Despesa / Tipo Item.
+    #    Todo RP restante é consolidado em "Restos a Pagar(RP)". Dessa forma,
+    #    as duas linhas sempre fecham com o total de RP do primeiro quadro.
+    # ------------------------------------------------------------------
+    def _normalizar_texto_relatorio(valor):
+        texto = unicodedata.normalize("NFKD", "" if pd.isna(valor) else str(valor))
+        texto = "".join(c for c in texto if not unicodedata.combining(c))
+        return re.sub(r"\s+", " ", texto.upper()).strip()
+
+    colunas_indicadoras_status = [
+        coluna for coluna in ["Status", "Tipo de OB", "Despesa", "Tipo Item"]
+        if coluna in base.columns
     ]
-    if len(credores) == 1:
-        identificacao_credor = credores[0]
-    elif credores:
-        identificacao_credor = "Credores: " + "; ".join(credores)
-    else:
-        identificacao_credor = "Todos os credores"
+    texto_status = pd.Series("", index=base.index, dtype="object")
+    for coluna in colunas_indicadoras_status:
+        texto_status = (
+            texto_status + " " + base[coluna].apply(_normalizar_texto_relatorio)
+        ).str.strip()
 
+    mascara_rp = base["Despesa_Tratada"].astype(str).str.upper().eq("RP")
+    mascara_rpnp = mascara_rp & texto_status.str.contains(
+        r"RPNP|RESTOS? NAO PROCESSAD|NAO PROCESSAD", regex=True, na=False
+    )
+    mascara_rp_processado = mascara_rp & ~mascara_rpnp
+
+    valor_rp = float(base.loc[mascara_rp_processado, "Valor_Limpo"].sum())
+    valor_rpnp = float(base.loc[mascara_rpnp, "Valor_Limpo"].sum())
+
+    # ------------------------------------------------------------------
+    # 5) Resumo diário - segunda aba do arquivo.
+    # ------------------------------------------------------------------
+    base_diaria = base.dropna(subset=["__Data_Resumo_OB"]).copy()
+    resumo_diario = (
+        base_diaria.groupby("__Data_Resumo_OB", as_index=False)
+        .agg(**{
+            "Qtd. Docs": ("Valor_Limpo", "count"),
+            "Total Pago": ("Valor_Limpo", "sum"),
+        })
+        .sort_values("__Data_Resumo_OB")
+    )
+    tipos_diarios = base_diaria.pivot_table(
+        index="__Data_Resumo_OB",
+        columns="Despesa_Tratada",
+        values="Valor_Limpo",
+        aggfunc="sum",
+        fill_value=0.0,
+        observed=False,
+    )
+    for coluna in ["CORRENTE", "RP", "DEA"]:
+        if coluna not in tipos_diarios.columns:
+            tipos_diarios[coluna] = 0.0
+    tipos_diarios = tipos_diarios[["CORRENTE", "RP", "DEA"]].reset_index()
+    resumo_diario = resumo_diario.merge(tipos_diarios, on="__Data_Resumo_OB", how="left")
+
+    # ------------------------------------------------------------------
+    # 6) Montagem visual do XLSX no mesmo padrão do modelo enviado.
+    # ------------------------------------------------------------------
     arquivo = io.BytesIO()
-    with pd.ExcelWriter(
-        arquivo,
-        engine="xlsxwriter",
-        date_format="dd/mm/yyyy",
-        datetime_format="dd/mm/yyyy",
-    ) as writer:
-        resumo_diario.to_excel(writer, sheet_name="Resumo Diário", startrow=2, index=False)
-
+    with pd.ExcelWriter(arquivo, engine="xlsxwriter", datetime_format="dd/mm/yyyy") as writer:
         workbook = writer.book
+
+        azul_titulo = "#003452"
+        azul_cabecalho = "#D9E5F2"
+        azul_borda = "#7FA6CC"
+        azul_texto = "#0F3557"
+        branco = "#FFFFFF"
+
         formato_titulo = workbook.add_format({
-            "bold": True, "font_color": "#FFFFFF", "bg_color": "#002B49",
+            "bold": True, "font_color": branco, "bg_color": azul_titulo,
             "font_size": 14, "align": "center", "valign": "vcenter",
+        })
+        formato_cabecalho = workbook.add_format({
+            "bold": True, "font_color": azul_texto, "bg_color": azul_cabecalho,
+            "align": "center", "valign": "vcenter",
+            "bottom": 1, "bottom_color": azul_borda,
+        })
+        formato_texto = workbook.add_format({
+            "font_color": "#111827", "align": "center", "valign": "vcenter",
+        })
+        formato_texto_esquerda = workbook.add_format({
+            "font_color": "#111827", "align": "left", "valign": "vcenter",
+        })
+        formato_codigo = workbook.add_format({
+            "font_color": "#111827", "align": "center", "valign": "vcenter",
+            "num_format": "@",
+        })
+        formato_moeda = workbook.add_format({
+            "num_format": 'R$ #,##0.00', "align": "right", "valign": "vcenter",
+        })
+        formato_inteiro = workbook.add_format({
+            "num_format": "#,##0", "align": "center", "valign": "vcenter",
+        })
+        formato_data = workbook.add_format({
+            "num_format": "dd/mm/yyyy", "align": "center", "valign": "vcenter",
+        })
+        formato_total_texto = workbook.add_format({
+            "bold": True, "font_color": azul_texto, "bg_color": azul_cabecalho,
+            "align": "left", "valign": "vcenter",
+            "top": 1, "top_color": azul_borda,
+        })
+        formato_total_centro = workbook.add_format({
+            "bold": True, "font_color": azul_texto, "bg_color": azul_cabecalho,
+            "align": "center", "valign": "vcenter",
+            "top": 1, "top_color": azul_borda,
+        })
+        formato_total_moeda = workbook.add_format({
+            "bold": True, "font_color": azul_texto, "bg_color": azul_cabecalho,
+            "num_format": 'R$ #,##0.00', "align": "right", "valign": "vcenter",
+            "top": 1, "top_color": azul_borda,
         })
         formato_subtitulo = workbook.add_format({
             "italic": True, "font_color": "#475569", "font_size": 10,
-            "align": "left", "valign": "vcenter", "text_wrap": True,
-        })
-        formato_cabecalho = workbook.add_format({
-            "bold": True, "font_color": "#FFFFFF", "bg_color": "#315B85",
-            "border": 0, "align": "center", "valign": "vcenter",
-        })
-        formato_qtd = workbook.add_format({"num_format": "#,##0", "border": 0, "align": "center"})
-        formato_moeda = workbook.add_format({"num_format": 'R$ #,##0.00', "border": 0, "align": "right"})
-        formato_total_texto = workbook.add_format({
-            "bold": True, "bg_color": "#F1F5F9", "top": 2, "top_color": "#002B49",
-        })
-        formato_total_qtd = workbook.add_format({
-            "bold": True, "bg_color": "#F1F5F9", "top": 2, "top_color": "#002B49",
-            "num_format": "#,##0", "align": "center",
-        })
-        formato_total_moeda = workbook.add_format({
-            "bold": True, "bg_color": "#F1F5F9", "top": 2, "top_color": "#002B49",
-            "num_format": 'R$ #,##0.00', "align": "right",
         })
 
-        aba = writer.sheets["Resumo Diário"]
-        ultima_coluna = len(resumo_diario.columns) - 1
-        aba.hide_gridlines(2)
-        aba.merge_range(0, 0, 0, ultima_coluna, "Resumo Gerencial por Dia", formato_titulo)
-        aba.merge_range(1, 0, 1, ultima_coluna, identificacao_credor, formato_subtitulo)
-        aba.set_row(0, 24)
-        aba.set_row(1, 24)
-        aba.set_row(2, 22)
-        aba.set_column(0, 0, 20)
-        aba.set_column(1, 1, 14, formato_qtd)
-        aba.set_column(2, ultima_coluna, 24, formato_moeda)
+        # -------------------------- ABA PAINEL --------------------------
+        painel = workbook.add_worksheet("Painel")
+        writer.sheets["Painel"] = painel
+        painel.hide_gridlines(2)
+        painel.set_tab_color(azul_titulo)
+        painel.set_column("A:A", 25)
+        painel.set_column("B:D", 24)
+        painel.set_row(0, 24)
+        painel.merge_range("A1:D1", "Resumo Gerencial", formato_titulo)
 
-        for coluna, titulo_coluna in enumerate(resumo_diario.columns):
-            aba.write(2, coluna, titulo_coluna, formato_cabecalho)
+        linha = 2  # Excel: linha 3
+        cabecalhos_painel = ["Mês", "Corrente", "Restos a Pagar (RP)", "DEA"]
+        for coluna, titulo in enumerate(cabecalhos_painel):
+            painel.write(linha, coluna, titulo, formato_cabecalho)
 
-        linha_total = len(resumo_diario) + 3
-        aba.write(linha_total, 0, "TOTAL GERAL", formato_total_texto)
-        aba.write_formula(linha_total, 1, f"=SUM(B4:B{linha_total})", formato_total_qtd)
-        for coluna in range(2, ultima_coluna + 1):
-            letra_coluna = chr(65 + coluna)
-            aba.write_formula(
-                linha_total,
-                coluna,
-                f"=SUM({letra_coluna}4:{letra_coluna}{linha_total})",
-                formato_total_moeda,
-            )
-        aba.autofilter(2, 0, len(resumo_diario) + 2, ultima_coluna)
-        aba.freeze_panes(3, 0)
+        linha += 1
+        inicio_meses = linha
+        for mes in meses_relatorio:
+            valores = resumo_mes.loc[mes] if mes in resumo_mes.index else pd.Series({"CORRENTE": 0, "RP": 0, "DEA": 0})
+            painel.write(linha, 0, rotulos_mes.get(mes, str(mes).split("/")[0].lower()), formato_texto)
+            painel.write_number(linha, 1, float(valores.get("CORRENTE", 0.0)), formato_moeda)
+            painel.write_number(linha, 2, float(valores.get("RP", 0.0)), formato_moeda)
+            painel.write_number(linha, 3, float(valores.get("DEA", 0.0)), formato_moeda)
+            linha += 1
+
+        total_mensal = resumo_mes[["CORRENTE", "RP", "DEA"]].sum() if not resumo_mes.empty else pd.Series({"CORRENTE": 0, "RP": 0, "DEA": 0})
+        painel.write(linha, 0, "Total Geral", formato_total_texto)
+        painel.write_number(linha, 1, float(total_mensal.get("CORRENTE", 0.0)), formato_total_moeda)
+        painel.write_number(linha, 2, float(total_mensal.get("RP", 0.0)), formato_total_moeda)
+        painel.write_number(linha, 3, float(total_mensal.get("DEA", 0.0)), formato_total_moeda)
+        linha_total_mes = linha
+
+        # No modelo original, este quadro começa na linha 16. Se mais meses forem
+        # adicionados no ano, ele desce automaticamente para não sobrepor dados.
+        linha_marcador = max(15, linha_total_mes + 3)
+        for coluna, titulo in enumerate(["Marcador", "Corrente", "Restos a Pagar (RP)", "DEA"]):
+            painel.write(linha_marcador, coluna, titulo, formato_cabecalho)
+
+        linha = linha_marcador + 1
+        for marcador in ordem_marcadores:
+            valores = resumo_marcador.loc[marcador] if marcador in resumo_marcador.index else pd.Series({"CORRENTE": 0, "RP": 0, "DEA": 0})
+            painel.write_string(linha, 0, str(marcador), formato_codigo)
+            painel.write_number(linha, 1, float(valores.get("CORRENTE", 0.0)), formato_moeda)
+            painel.write_number(linha, 2, float(valores.get("RP", 0.0)), formato_moeda)
+            painel.write_number(linha, 3, float(valores.get("DEA", 0.0)), formato_moeda)
+            linha += 1
+
+        total_marcador = resumo_marcador[["CORRENTE", "RP", "DEA"]].sum() if not resumo_marcador.empty else pd.Series({"CORRENTE": 0, "RP": 0, "DEA": 0})
+        painel.write(linha, 0, "Total Geral", formato_total_centro)
+        painel.write_number(linha, 1, float(total_marcador.get("CORRENTE", 0.0)), formato_total_moeda)
+        painel.write_number(linha, 2, float(total_marcador.get("RP", 0.0)), formato_total_moeda)
+        painel.write_number(linha, 3, float(total_marcador.get("DEA", 0.0)), formato_total_moeda)
+        linha_total_marcador = linha
+
+        linha_status = linha_total_marcador + 2
+        painel.write(linha_status, 0, "Status", formato_cabecalho)
+        painel.write(linha_status, 1, "Valor", formato_cabecalho)
+        painel.write(linha_status + 1, 0, "Restos a Pagar(RP)", formato_texto_esquerda)
+        painel.write_number(linha_status + 1, 1, valor_rp, formato_moeda)
+        painel.write(linha_status + 2, 0, "Restos Não Processados(RPNP)", formato_texto_esquerda)
+        painel.write_number(linha_status + 2, 1, valor_rpnp, formato_moeda)
+        painel.write(linha_status + 3, 0, "Total Geral", formato_total_centro)
+        painel.write_number(linha_status + 3, 1, valor_rp + valor_rpnp, formato_total_moeda)
+
+        painel.freeze_panes(2, 0)
+        painel.set_portrait()
+        painel.fit_to_pages(1, 1)
+        painel.set_margins(left=0.25, right=0.25, top=0.45, bottom=0.45)
+        painel.print_area(0, 0, linha_status + 3, 3)
+
+        # ----------------------- ABA RESUMO DIÁRIO ----------------------
+        diario = workbook.add_worksheet("Resumo Diário")
+        writer.sheets["Resumo Diário"] = diario
+        diario.hide_gridlines(2)
+        diario.set_column("A:A", 19)
+        diario.set_column("B:B", 12)
+        diario.set_column("C:F", 24)
+        diario.set_row(0, 24)
+        diario.merge_range("A1:F1", "Resumo Gerencial por Dia", formato_titulo)
+        diario.merge_range(
+            "A2:F2", "Conforme os filtros selecionados no painel.", formato_subtitulo
+        )
+
+        cabecalhos_diario = [
+            "Data de Referência", "Qtd. Docs", "Total Pago", "Corrente",
+            "Restos a Pagar (RP)", "Exercícios Anteriores (DEA)",
+        ]
+        for coluna, titulo in enumerate(cabecalhos_diario):
+            diario.write(2, coluna, titulo, formato_cabecalho)
+
+        linha = 3
+        for _, registro in resumo_diario.iterrows():
+            data_ref = registro["__Data_Resumo_OB"]
+            if hasattr(data_ref, "to_pydatetime"):
+                data_ref = data_ref.to_pydatetime()
+            diario.write_datetime(linha, 0, data_ref, formato_data)
+            diario.write_number(linha, 1, int(registro["Qtd. Docs"]), formato_inteiro)
+            diario.write_number(linha, 2, float(registro["Total Pago"]), formato_moeda)
+            diario.write_number(linha, 3, float(registro.get("CORRENTE", 0.0)), formato_moeda)
+            diario.write_number(linha, 4, float(registro.get("RP", 0.0)), formato_moeda)
+            diario.write_number(linha, 5, float(registro.get("DEA", 0.0)), formato_moeda)
+            linha += 1
+
+        total_docs = int(resumo_diario["Qtd. Docs"].sum()) if not resumo_diario.empty else 0
+        total_pago = float(resumo_diario["Total Pago"].sum()) if not resumo_diario.empty else 0.0
+        total_corrente = float(resumo_diario["CORRENTE"].sum()) if not resumo_diario.empty else 0.0
+        total_rp_diario = float(resumo_diario["RP"].sum()) if not resumo_diario.empty else 0.0
+        total_dea = float(resumo_diario["DEA"].sum()) if not resumo_diario.empty else 0.0
+
+        diario.write(linha, 0, "TOTAL GERAL", formato_total_texto)
+        diario.write_number(linha, 1, total_docs, formato_total_centro)
+        diario.write_number(linha, 2, total_pago, formato_total_moeda)
+        diario.write_number(linha, 3, total_corrente, formato_total_moeda)
+        diario.write_number(linha, 4, total_rp_diario, formato_total_moeda)
+        diario.write_number(linha, 5, total_dea, formato_total_moeda)
+
+        diario.autofilter(2, 0, max(2, linha - 1), 5)
+        diario.freeze_panes(3, 0)
+        diario.set_landscape()
+        diario.fit_to_pages(1, 0)
+        diario.set_margins(left=0.25, right=0.25, top=0.45, bottom=0.45)
+        diario.print_area(0, 0, linha, 5)
 
     arquivo.seek(0)
     return arquivo.getvalue()
-
-
 def converter_valor_monetario(serie):
     """Converte valores do CSV e do padrão brasileiro sem inflar decimais."""
     def converter(valor):
@@ -3426,7 +3712,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                     )
                 with acao_resumo:
                     resumo_ob_excel = gerar_resumo_gerencial_ob_excel(
-                        df_filtrado, st.session_state["mem_ob_credores"]
+                        df_filtrado, meses_exibicao
                     )
                     st.download_button(
                         "📥 Exportar por dia .xlsx",
