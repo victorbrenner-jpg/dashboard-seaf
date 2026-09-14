@@ -1584,21 +1584,28 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
         valores = resumo_marcador.loc[marcador]
         painel_modelo.cell(linha_destino, 1).value = str(marcador)
         for coluna, chave in enumerate(["CORRENTE", "RP", "DEA"], start=2):
-            painel_modelo.cell(linha_destino, coluna).value = float(valores.get(chave, 0.0))
+            celula = painel_modelo.cell(linha_destino, coluna)
+            celula.value = float(valores.get(chave, 0.0))
+            celula.number_format = 'R$ #,##0.00'
     linha_total_marcador = linha_marcador + len(ordem_marcadores) + 1
     painel_modelo.cell(linha_total_marcador, 1).value = "Total Geral"
     for coluna, chave in enumerate(["CORRENTE", "RP", "DEA"], start=2):
-        painel_modelo.cell(linha_total_marcador, coluna).value = float(total_marcador.get(chave, 0.0))
+        celula = painel_modelo.cell(linha_total_marcador, coluna)
+        celula.value = float(total_marcador.get(chave, 0.0))
+        celula.number_format = 'R$ #,##0.00'
 
     linha_status = linha_total_marcador + 2
     painel_modelo.cell(linha_status, 1).value = "Status"
     painel_modelo.cell(linha_status, 2).value = "Valor"
     painel_modelo.cell(linha_status + 1, 1).value = "Restos a Pagar(RP)"
     painel_modelo.cell(linha_status + 1, 2).value = valor_rp
+    painel_modelo.cell(linha_status + 1, 2).number_format = 'R$ #,##0.00'
     painel_modelo.cell(linha_status + 2, 1).value = "Restos Não Processados(RPNP)"
     painel_modelo.cell(linha_status + 2, 2).value = valor_rpnp
+    painel_modelo.cell(linha_status + 2, 2).number_format = 'R$ #,##0.00'
     painel_modelo.cell(linha_status + 3, 1).value = "Total Geral"
     painel_modelo.cell(linha_status + 3, 2).value = valor_rp + valor_rpnp
+    painel_modelo.cell(linha_status + 3, 2).number_format = 'R$ #,##0.00'
 
     # Resumo diário, conservando cabeçalho e estilos da planilha oficial.
     limpar_intervalo(diario_modelo, 4, max(diario_modelo.max_row, len(resumo_diario) + 4), 1, 6)
