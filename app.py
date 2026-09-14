@@ -70,6 +70,8 @@ if "mem_ob_credores" not in st.session_state:
     st.session_state["mem_ob_credores"] = []
 if "mem_ob_fontes" not in st.session_state:
     st.session_state["mem_ob_fontes"] = []
+if "mem_ob_marcadores_fonte" not in st.session_state:
+    st.session_state["mem_ob_marcadores_fonte"] = []
 if "mem_ob_objetos" not in st.session_state:
     st.session_state["mem_ob_objetos"] = []
 
@@ -2680,6 +2682,35 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         df["Fonte_Tratada"] = (
             df["Fonte"].fillna("NÃO INFORMADA").astype(str).str.strip()
         )
+
+        # O marcador é uma dimensão própria da fonte e pode chegar com pequenas
+        # variações de cabeçalho conforme a origem da base. Mantemos uma coluna
+        # tratada para que o filtro use a mesma regra dos demais campos.
+        nomes_marcador_fonte = {
+            "MARCADOR DE FONTE",
+            "MARCADOR FONTE",
+            "MARCADOR DA FONTE",
+        }
+        coluna_marcador_fonte = next(
+            (
+                coluna for coluna in df.columns
+                if unicodedata.normalize("NFKD", str(coluna))
+                .encode("ASCII", "ignore")
+                .decode("ASCII")
+                .upper()
+                .strip() in nomes_marcador_fonte
+            ),
+            None,
+        )
+        if coluna_marcador_fonte:
+            df["Marcador_Fonte_Tratado"] = (
+                df[coluna_marcador_fonte]
+                .fillna("NÃO INFORMADO")
+                .astype(str)
+                .str.strip()
+            )
+        else:
+            df["Marcador_Fonte_Tratado"] = "NÃO INFORMADO"
         df["DocumentoGD_Tratado"] = (
             df["DocumentoGD"].fillna("NÃO CONSTA").astype(str).str.strip()
         )
@@ -2715,7 +2746,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA OB ---
     # IMPORTANTE: esta função consulta somente a memória APLICADA. As escolhas
     # feitas no formulário não alteram o painel até o usuário confirmar.
-    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_grp=False, ign_tipo_item=False, ign_cred=False, ign_fnt=False, ign_obj=False):
+    def filtrar_df_ob(df, ign_mes=False, ign_dsp=False, ign_grp=False, ign_tipo_item=False, ign_cred=False, ign_fnt=False, ign_marcador_fonte=False, ign_obj=False):
         d = df.copy()
         if d.empty:
             return d
@@ -2756,6 +2787,14 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         # Filtro Fontes
         if not ign_fnt and st.session_state["mem_ob_fontes"]:
             d = d[d["Fonte_Tratada"].isin(st.session_state["mem_ob_fontes"])]
+
+        # Filtro Marcador de Fonte
+        if not ign_marcador_fonte and st.session_state["mem_ob_marcadores_fonte"]:
+            d = d[
+                d["Marcador_Fonte_Tratado"].isin(
+                    st.session_state["mem_ob_marcadores_fonte"]
+                )
+            ]
 
         # Filtro Objetos
         if not ign_obj and st.session_state["mem_ob_objetos"] and coluna_objeto in d.columns:
@@ -2824,6 +2863,16 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         if not df_para_fontes.empty else []
     )
 
+    df_para_marcadores_fonte = filtrar_df_ob(df_base, ign_marcador_fonte=True)
+    lista_marcadores_fonte = (
+        sorted([
+            str(marcador).strip()
+            for marcador in df_para_marcadores_fonte["Marcador_Fonte_Tratado"].unique()
+            if marcador and str(marcador).strip().upper() not in {"NAN", "NÃO INFORMADO"}
+        ])
+        if not df_para_marcadores_fonte.empty else []
+    )
+
     df_para_objetos = filtrar_df_ob(df_base, ign_obj=True)
     if not df_para_objetos.empty and coluna_objeto in df_para_objetos.columns:
         lista_objetos = sorted([
@@ -2840,6 +2889,11 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     validos_ti_ob = [t for t in st.session_state["mem_ob_tipo_item"] if t in tipos_item_disponiveis]
     validos_c_ob = [c for c in st.session_state["mem_ob_credores"] if c in nomes_disponiveis]
     validos_f_ob = [f for f in st.session_state["mem_ob_fontes"] if f in lista_fontes]
+    validos_mf_ob = [
+        marcador
+        for marcador in st.session_state["mem_ob_marcadores_fonte"]
+        if marcador in lista_marcadores_fonte
+    ]
     validos_o_ob = [o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos]
 
     # Em formulários, o callback é executado antes de os widgets serem
@@ -2854,6 +2908,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_tipo_item"] = []
         st.session_state["mem_ob_credores"] = []
         st.session_state["mem_ob_fontes"] = []
+        st.session_state["mem_ob_marcadores_fonte"] = []
         st.session_state["mem_ob_objetos"] = []
         # Não removemos as chaves: o navegador pode reenviar o último valor do
         # formulário. Ao atribuir os valores vazios, o widget é redesenhado limpo.
@@ -2866,6 +2921,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["w_ob_tipo_item"] = []
         st.session_state["w_ob_credores"] = []
         st.session_state["w_ob_fontes"] = []
+        st.session_state["w_ob_marcadores_fonte"] = []
         st.session_state["w_ob_objetos"] = []
 
     # O período fica fora do formulário para que a troca entre mês e intervalo
@@ -2943,6 +2999,15 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         )
 
         st.divider()
+        marcadores_fonte_selecionados = st.multiselect(
+            "Filtrar por Marcador de Fonte:",
+            options=lista_marcadores_fonte,
+            default=validos_mf_ob,
+            placeholder="Todos os marcadores (Exibe tudo)",
+            key="w_ob_marcadores_fonte",
+        )
+
+        st.divider()
         objeto_selecionado = st.multiselect(
             "Filtrar por Objeto de Despesa:", options=lista_objetos,
             default=validos_o_ob, placeholder="Todos os objetos", key="w_ob_objetos",
@@ -2977,6 +3042,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_tipo_item"] = list(tipos_item_selecionados)
         st.session_state["mem_ob_credores"] = list(nomes_selecionados)
         st.session_state["mem_ob_fontes"] = list(fontes_selecionadas)
+        st.session_state["mem_ob_marcadores_fonte"] = list(marcadores_fonte_selecionados)
         st.session_state["mem_ob_objetos"] = list(objeto_selecionado)
         st.rerun()
 
