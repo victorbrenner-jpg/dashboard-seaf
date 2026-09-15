@@ -1537,6 +1537,7 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
     # Isso mantém as abas, estilos, filtros e estrutura já utilizados pela chefia.
     from copy import copy
     from openpyxl import load_workbook
+    from openpyxl.styles import Alignment
 
     caminho_modelo = Path(__file__).resolve().parent / "modelos" / "modelo_relatorio_ob.xlsx"
     if not caminho_modelo.exists():
@@ -1587,12 +1588,14 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
             celula = painel_modelo.cell(linha_destino, coluna)
             celula.value = float(valores.get(chave, 0.0))
             celula.number_format = 'R$ #,##0.00'
+            celula.alignment = Alignment(horizontal="right", vertical="center")
     linha_total_marcador = linha_marcador + len(ordem_marcadores) + 1
     painel_modelo.cell(linha_total_marcador, 1).value = "Total Geral"
     for coluna, chave in enumerate(["CORRENTE", "RP", "DEA"], start=2):
         celula = painel_modelo.cell(linha_total_marcador, coluna)
         celula.value = float(total_marcador.get(chave, 0.0))
         celula.number_format = 'R$ #,##0.00'
+        celula.alignment = Alignment(horizontal="right", vertical="center")
 
     linha_status = linha_total_marcador + 2
     painel_modelo.cell(linha_status, 1).value = "Status"
@@ -1600,12 +1603,15 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
     painel_modelo.cell(linha_status + 1, 1).value = "Restos a Pagar(RP)"
     painel_modelo.cell(linha_status + 1, 2).value = valor_rp
     painel_modelo.cell(linha_status + 1, 2).number_format = 'R$ #,##0.00'
+    painel_modelo.cell(linha_status + 1, 2).alignment = Alignment(horizontal="right", vertical="center")
     painel_modelo.cell(linha_status + 2, 1).value = "Restos Não Processados(RPNP)"
     painel_modelo.cell(linha_status + 2, 2).value = valor_rpnp
     painel_modelo.cell(linha_status + 2, 2).number_format = 'R$ #,##0.00'
+    painel_modelo.cell(linha_status + 2, 2).alignment = Alignment(horizontal="right", vertical="center")
     painel_modelo.cell(linha_status + 3, 1).value = "Total Geral"
     painel_modelo.cell(linha_status + 3, 2).value = valor_rp + valor_rpnp
     painel_modelo.cell(linha_status + 3, 2).number_format = 'R$ #,##0.00'
+    painel_modelo.cell(linha_status + 3, 2).alignment = Alignment(horizontal="right", vertical="center")
 
     # Resumo diário, conservando cabeçalho e estilos da planilha oficial.
     limpar_intervalo(diario_modelo, 4, max(diario_modelo.max_row, len(resumo_diario) + 4), 1, 6)
@@ -1617,8 +1623,10 @@ def gerar_resumo_gerencial_ob_excel(df_ob, meses_ordem):
         diario_modelo.cell(indice, 4).value = float(registro.get("CORRENTE", 0.0))
         diario_modelo.cell(indice, 5).value = float(registro.get("RP", 0.0))
         diario_modelo.cell(indice, 6).value = float(registro.get("DEA", 0.0))
-    linha_total_diario = len(resumo_diario) + 4
-    copiar_estilo_linha(diario_modelo, 103, linha_total_diario, 6)
+    # O modelo reserva a linha 104 para o total. Só a deslocamos quando a
+    # quantidade de dias realmente ultrapassa essa capacidade.
+    linha_total_diario = max(104, len(resumo_diario) + 4)
+    copiar_estilo_linha(diario_modelo, 104, linha_total_diario, 6)
     for coluna, valor in enumerate(["TOTAL GERAL", total_docs, total_pago, total_corrente, total_rp_diario, total_dea], start=1):
         diario_modelo.cell(linha_total_diario, coluna).value = valor
     diario_modelo.auto_filter.ref = f"A3:F{max(3, linha_total_diario - 1)}"
