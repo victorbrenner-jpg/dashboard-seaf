@@ -585,6 +585,23 @@ st.markdown(
         border-radius: 6px;
         border: 1px solid #e2e8f0;
     }
+    /* Quadro de credores: conserva o painel compacto e permite consultar
+       todos os fornecedores sem limitar a matriz pelos primeiros registros. */
+    .tabela-credores-container {
+        max-height: 680px !important;
+        overflow-y: auto !important;
+        overflow-x: auto !important;
+    }
+    .tabela-credores-container .html-executiva thead th {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 2 !important;
+    }
+    .tabela-credores-container .subtitulo-tabela-html {
+        position: sticky !important;
+        top: 0 !important;
+        z-index: 3 !important;
+    }
     .subtitulo-tabela-html {
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif !important;
         font-size: 14.5px !important;
@@ -3952,7 +3969,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         )
 
         html_credores = (
-            f"<div class='tabela-container' style='max-height: 860px; overflow-y: auto;'>"
+            f"<div class='tabela-container tabela-credores-container'>"
             f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #3a537d 0%, #002b49 100%);'>🏢 Distribuição Mensal de Recursos por Fornecedor / Prestador de Serviço</div>"
             f"<table class='html-executiva'>"
             f"<thead><tr>"
