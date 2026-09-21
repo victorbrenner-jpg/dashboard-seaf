@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home
+from modulos import conferencia, home, relatorio_mde
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
@@ -3456,9 +3456,9 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.sidebar.caption("Aplique filtros que retornem pagamentos para habilitar a extração.")
     else:
         try:
-            resumo_ob_excel = gerar_resumo_gerencial_ob_excel(
+            resumo_ob_excel = relatorio_mde.gerar_relatorio_mde_excel(
                 df_filtrado,
-                [m for m in lista_meses_fixa if m in df_filtrado["Mes_Extenso"].unique()],
+                Path(__file__).resolve().parent / "modelos" / "modelo_relatorio_mde.xlsx",
             )
             st.sidebar.download_button(
                 "📥 Relatório MDE .xlsx",
