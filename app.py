@@ -3448,6 +3448,36 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     # DATAFRAME FINAL: somente filtros que já foram confirmados em Aplicar.
     df_filtrado = filtrar_df_ob(df_base)
 
+    # O relatório usa exatamente o mesmo dataframe dos cards, gráficos e
+    # demonstrativos da tela. Portanto, qualquer filtro aplicado ou pagamento
+    # incorporado à base aparece no Excel extraído sem manutenção paralela.
+    st.sidebar.markdown("### 📥 Relatório MDE")
+    if df_filtrado.empty:
+        st.sidebar.caption("Aplique filtros que retornem pagamentos para habilitar a extração.")
+    else:
+        try:
+            resumo_ob_excel = gerar_resumo_gerencial_ob_excel(
+                df_filtrado,
+                [m for m in lista_meses_fixa if m in df_filtrado["Mes_Extenso"].unique()],
+            )
+            st.sidebar.download_button(
+                "📥 Relatório MDE .xlsx",
+                data=resumo_ob_excel,
+                file_name=(
+                    "Relatorio_MDE_Pagamentos_"
+                    f"{datetime.date.today().strftime('%d-%m-%Y')}.xlsx"
+                ),
+                mime=(
+                    "application/vnd.openxmlformats-officedocument."
+                    "spreadsheetml.sheet"
+                ),
+                key="baixar_relatorio_gerencial_ob_sidebar",
+                use_container_width=True,
+            )
+            st.sidebar.caption("O Relatório MDE considera os filtros aplicados nesta tela.")
+        except Exception as erro_relatorio_ob:
+            st.sidebar.error(f"Não foi possível gerar o relatório: {erro_relatorio_ob}")
+
     st.sidebar.markdown("### 🔄 Atualizar Dados do Painel")
     if st.sidebar.button("🔄 Incorporar Novos Pagamentos do CSV", key="btn_csv_ob"):
         atualizar_banco_via_csv()
