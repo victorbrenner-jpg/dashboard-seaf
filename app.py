@@ -501,6 +501,23 @@ st.markdown(
         background: linear-gradient(135deg, #004a7c 0%, #01757d 100%);
         color: #ffffff;
     }
+    /* Estilo explícito para a exportação por credor, inclusive com wrappers do Streamlit. */
+    .st-key-exportar_relacao_credores_ob button {
+        min-height: 38px;
+        border: 1px solid #007b84 !important;
+        border-radius: 7px;
+        background: linear-gradient(135deg, #005691 0%, #028090 100%) !important;
+        color: #ffffff !important;
+        font-weight: 700;
+        box-shadow: 0 4px 10px rgba(0, 86, 145, 0.22);
+    }
+    .st-key-exportar_relacao_credores_ob button p {
+        color: inherit !important;
+    }
+    .st-key-exportar_relacao_credores_ob button:hover {
+        border-color: #006f78 !important;
+        background: linear-gradient(135deg, #004a7c 0%, #01757d 100%) !important;
+    }
     div.stDownloadButton > button:disabled,
     div.st-key-btn_gerar_relatorio_nl button:disabled,
     div.st-key-btn_gerar_relatorio_pd button:disabled,
