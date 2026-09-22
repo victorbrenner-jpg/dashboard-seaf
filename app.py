@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, relatorio_mde
+from modulos import conferencia, home, relatorio_mde, relatorio_credores
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
@@ -3956,7 +3956,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                 val = float(row[m])
                 totais_meses_credor[m] += val
                 colunas_valores += f"<td>{formatar_brl(val)}</td>"
-            linhas_credor_html += f"<tr><td>{row['Credor_Nome_Tratado']}</td>{colunas_valores}</tr>"
+            linhas_credor_html += f"<tr><td>{html.escape(str(row['Credor_Nome_Tratado']))}</td>{colunas_valores}</tr>"
 
         valores_totais_credor = ""
         for m in lista_meses_fixa + ["Total Geral"]:
@@ -3981,6 +3981,24 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             f"<tr class='linha-total-html'><td>🏢 TOTAL CONSOLIDADO DO FILTRO</td>{valores_totais_credor}</tr>"
             f"</tbody></table></div>"
         )
+        filtros_credores = relatorio_credores.descrever_filtros(st.session_state)
+        coluna_imprimir, coluna_excel = st.columns(2)
+        with coluna_imprimir:
+            components.html(
+                relatorio_credores.gerar_impressao(html_credores, filtros_credores),
+                height=52,
+            )
+        with coluna_excel:
+            st.download_button(
+                "📥 Exportar relação por credor .xlsx",
+                data=relatorio_credores.gerar_excel(
+                    df_matriz_credor, lista_meses_fixa, filtros_credores
+                ),
+                file_name="relacao_pagamentos_por_credor.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="exportar_relacao_credores_ob",
+            )
+        st.caption("Impressão e planilha seguem os filtros aplicados. Para incluir tudo, limpe os filtros.")
         st.markdown(html_credores, unsafe_allow_html=True)
 
 elif st.session_state["tela_atual"] == "Liquidação (NL)":
