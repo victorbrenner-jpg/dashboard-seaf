@@ -3983,19 +3983,14 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         )
         filtros_credores = relatorio_credores.descrever_filtros(st.session_state)
         with st.container(border=True):
-            titulo_credores, coluna_imprimir, coluna_excel = st.columns(
-                [2.4, 1, 1], gap="small", vertical_alignment="center"
+            titulo_credores, coluna_excel = st.columns(
+                [3.4, 1], gap="small", vertical_alignment="center"
             )
             with titulo_credores:
                 st.markdown(
                     "<p style='font-weight:700;color:#002b49;margin:6px 0 12px;"
                     "font-family:sans-serif;'>Distribuição Mensal por Credor</p>",
                     unsafe_allow_html=True,
-                )
-            with coluna_imprimir:
-                components.html(
-                    relatorio_credores.gerar_impressao(html_credores, filtros_credores),
-                    height=46,
                 )
             with coluna_excel:
                 st.download_button(
