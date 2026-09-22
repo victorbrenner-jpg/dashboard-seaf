@@ -49,25 +49,36 @@ def gerar_excel(matriz, meses, filtros):
         aba.set_row(0, 28)
         aba.set_row(1, 28)
         aba.set_row(2, max(32, 16 * (len(filtros) // 130 + 1)))
-        aba.write_row(3, 0, ["RAZÃO SOCIAL / CREDOR"] + [c.upper() for c in colunas], cabecalho)
-        for linha, (_, registro) in enumerate(matriz.iterrows(), 4):
+        aba.write_row(4, 0, ["RAZÃO SOCIAL / CREDOR"] + [c.upper() for c in colunas], cabecalho)
+        for linha, (_, registro) in enumerate(matriz.iterrows(), 5):
             aba.write_string(linha, 0, str(registro["Credor_Nome_Tratado"]), texto)
             aba.set_row(linha, max(38, 15 * (len(str(registro["Credor_Nome_Tratado"])) // 38 + 1)))
             for coluna, nome in enumerate(colunas, 1):
                 aba.write_number(linha, coluna, float(registro[nome]), total if nome == "Total Geral" else moeda)
-        rodape = len(matriz) + 4
-        aba.write_string(rodape, 0, "TOTAL CONSOLIDADO DO FILTRO", total_texto)
-        aba.set_row(rodape, 34)
+        ultima_linha = len(matriz) + 4
+        aba.write_string(3, 0, "TOTAL GERAL — CREDORES VISÍVEIS", total_texto)
+        aba.set_row(3, 34)
+        aba.set_row(4, 28)
         for coluna, nome in enumerate(colunas, 1):
-            aba.write_number(rodape, coluna, float(matriz[nome].sum()), total)
+            letra = xlsxwriter.utility.xl_col_to_name(coluna)
+            # SUBTOTAL 109 soma somente as linhas visíveis após o filtro do Excel.
+            if len(matriz):
+                aba.write_formula(
+                    3, coluna, f"=SUBTOTAL(109,{letra}6:{letra}{ultima_linha + 1})",
+                    total, float(matriz[nome].sum()),
+                )
+            else:
+                aba.write_number(3, coluna, 0, total)
+        aba.autofilter(4, 0, ultima_linha, ultima)
+        livro.set_calc_mode("auto")
         aba.set_column(0, 0, 43)
         aba.set_column(1, ultima, 20)
-        aba.freeze_panes(4, 1)
+        aba.freeze_panes(5, 1)
         aba.set_landscape()
         aba.set_paper(9)
         aba.fit_to_pages(1, 0)
-        aba.repeat_rows(0, 3)
-        aba.print_area(0, 0, rodape, ultima)
+        aba.repeat_rows(0, 4)
+        aba.print_area(0, 0, ultima_linha, ultima)
         aba.set_footer("&CPágina &P de &N")
     return saida.getvalue()
 
