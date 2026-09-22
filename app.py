@@ -3982,24 +3982,39 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             f"</tbody></table></div>"
         )
         filtros_credores = relatorio_credores.descrever_filtros(st.session_state)
-        coluna_imprimir, coluna_excel = st.columns(2)
-        with coluna_imprimir:
-            components.html(
-                relatorio_credores.gerar_impressao(html_credores, filtros_credores),
-                height=52,
+        with st.container(border=True):
+            titulo_credores, coluna_imprimir, coluna_excel = st.columns(
+                [2.4, 1, 1], gap="small", vertical_alignment="center"
             )
-        with coluna_excel:
-            st.download_button(
-                "📥 Exportar relação por credor .xlsx",
-                data=relatorio_credores.gerar_excel(
-                    df_matriz_credor, lista_meses_fixa, filtros_credores
-                ),
-                file_name="relacao_pagamentos_por_credor.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="exportar_relacao_credores_ob",
+            with titulo_credores:
+                st.markdown(
+                    "<p style='font-weight:700;color:#002b49;margin:6px 0 12px;"
+                    "font-family:sans-serif;'>Distribuição Mensal por Credor</p>",
+                    unsafe_allow_html=True,
+                )
+            with coluna_imprimir:
+                components.html(
+                    relatorio_credores.gerar_impressao(html_credores, filtros_credores),
+                    height=46,
+                )
+            with coluna_excel:
+                st.download_button(
+                    "📥 Exportar .xlsx",
+                    data=relatorio_credores.gerar_excel(
+                        df_matriz_credor, lista_meses_fixa, filtros_credores
+                    ),
+                    file_name="relacao_pagamentos_por_credor.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="exportar_relacao_credores_ob",
+                    use_container_width=True,
+                    help="Exporta a relação de credores conforme os filtros aplicados.",
+                )
+            # O título passa para a mesma faixa das ações, como no resumo mensal.
+            tabela_credores_tela = html_credores.replace(
+                "<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #3a537d 0%, #002b49 100%);'>🏢 Distribuição Mensal de Recursos por Fornecedor / Prestador de Serviço</div>",
+                "",
             )
-        st.caption("Impressão e planilha seguem os filtros aplicados. Para incluir tudo, limpe os filtros.")
-        st.markdown(html_credores, unsafe_allow_html=True)
+            st.markdown(tabela_credores_tela, unsafe_allow_html=True)
 
 elif st.session_state["tela_atual"] == "Liquidação (NL)":
     LINK_PLANILHA_1 = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWnQkc7oF-YdXKoVTiYeUPYDHGzaeQaiEGqX6fNmB29mkzcd1kAvZVMujFDf02y7j1X8UJzqglAzTL/pub?gid=1892412645&single=true&output=csv"

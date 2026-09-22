@@ -76,7 +76,12 @@ def gerar_impressao(tabela_html, filtros):
     return """<!doctype html><html lang="pt-BR"><head><meta charset="utf-8">
 <style>
 body {font-family:Arial,sans-serif;color:#002b49;margin:0}
-button {background:#155e85;color:white;border:0;border-radius:6px;padding:12px;cursor:pointer;font-size:14px}
+button {box-sizing:border-box;width:100%;height:38px;margin:0;border:1px solid #007b84;
+border-radius:7px;background:linear-gradient(135deg,#005691 0%,#028090 100%);
+color:#fff;font-family:Arial,sans-serif;font-size:14px;font-weight:700;cursor:pointer;
+box-shadow:0 4px 10px rgba(0,86,145,.22);transition:background .16s ease}
+button:hover {background:linear-gradient(135deg,#004a7c 0%,#01757d 100%)}
+button:focus-visible {outline:2px solid #028090;outline-offset:-3px}
 #relatorio {display:none}
 @page {size:A4 landscape;margin:10mm}
 @media print {
@@ -92,5 +97,5 @@ td:last-child,.linha-total-html {font-weight:bold;background:#f1f5f9}
 thead {display:table-header-group} tr {break-inside:avoid}
 * {print-color-adjust:exact;-webkit-print-color-adjust:exact}
 }
-</style></head><body><button onclick="window.print()">🖨️ Imprimir relação por credor</button>
+</style></head><body><button title="Imprimir relação por credor conforme os filtros aplicados" onclick="window.print()">🖨️ Imprimir relação</button>
 <section id="relatorio"><h1>""" + TITULO + "</h1><p>" + html.escape(filtros) + "</p>" + tabela_html + "</section></body></html>"
