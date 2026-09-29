@@ -265,25 +265,20 @@ st.markdown(
     body [data-testid="stMainBlockContainer"] {
         padding-top: 96px !important;
     }
-    body [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {
-        flex: 0 0 auto !important;
-        min-height: 0 !important;
-        height: auto !important;
-        align-self: flex-start !important;
-    }
-
-    /* A navegação fixa não participa do cálculo de altura do conteúdo. */
+    /* O host da navegação sai completamente do fluxo flex do Streamlit.
+       Os elementos visuais internos continuam fixed, mas o host não reserva
+       altura nem interfere no cálculo vertical das páginas. */
     .st-key-topo_navegacao {
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        right: 0 !important;
+        position: absolute !important;
+        inset: 0 auto auto 0 !important;
+        width: 0 !important;
         height: 0 !important;
+        min-width: 0 !important;
         min-height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
-        z-index: 100001 !important;
         overflow: visible !important;
+        z-index: 100001 !important;
     }
     /* Mantém o cabeçalho técnico invisível, sem eliminar o controle nativo
        que permite reabrir os filtros quando a barra lateral for recolhida. */
