@@ -276,11 +276,17 @@ st.markdown(
         padding: 0 !important;
         overflow: visible !important;
     }
-    .st-key-topo_navegacao > div {
+    /* O Streamlit cria wrappers internos (stVerticalBlock) dentro do
+       container. Eles também precisam ser colapsados; atingir apenas o filho
+       direto deixa um wrapper invisível reservando centenas de pixels. */
+    .st-key-topo_navegacao > div,
+    .st-key-topo_navegacao [data-testid="stVerticalBlock"],
+    .st-key-topo_navegacao [data-testid="stVerticalBlockBorderWrapper"] {
         height: 0 !important;
         min-height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
+        gap: 0 !important;
         overflow: visible !important;
     }
     /* Mantém o cabeçalho técnico invisível, sem eliminar o controle nativo
