@@ -126,6 +126,10 @@ def _painel_resumo(titulo, df, campo, total, limite=6):
 def render():
     st.markdown("""<style>
     .dea-head{display:flex;justify-content:space-between;align-items:center;margin:.1rem 0 .7rem}
+    .dea-cabecalho{padding:18px 0 22px}
+    .dea-cabecalho h1{margin:0 0 22px;color:#1f3655;font-size:2rem;font-weight:800;line-height:1.2}
+    .dea-subtitulo{color:#637387;font-size:1.08rem;line-height:1.75}
+    .dea-divisor{border:0;border-top:1px solid #d9dfe6;margin:8px 0 22px}
     .dea-head h2{margin:0;color:#063b70;font-size:1.72rem}.dea-tag{background:#eef7ff;border:1px solid #cfe3f6;border-radius:9px;padding:8px 12px;color:#28557d;font-size:.78rem}
     .dea-card{background:white;border:1px solid #d7e3ee;border-radius:8px;padding:13px 16px;min-height:96px;box-shadow:0 1px 2px #00000008}
     .dea-card-title{font-size:.78rem;font-weight:700;color:#174d7c}.dea-card-value{font-size:1.32rem;font-weight:800;color:#063b70;margin-top:4px}.dea-card-sub{font-size:.76rem;color:#63788d;margin-top:3px}
@@ -145,7 +149,17 @@ def render():
     .dea-detalhe-tabela tbody tr:last-child td{border-bottom:0}.dea-det-valor{text-align:right;font-weight:700;white-space:nowrap}
     </style>""",unsafe_allow_html=True)
 
-    st.markdown('<div class="dea-head"><h2>▣ Monitoramento de DEA</h2><div class="dea-tag">Planejamento e situação de pagamento dos Despesas de Exercícios Anteriores (DEA)</div></div>',unsafe_allow_html=True)
+    st.markdown(
+        """
+        <div class="dea-cabecalho">
+          <h1>▣ Painel de Controle DEA — Exercício 2026</h1>
+          <div class="dea-subtitulo"><em>Secretaria Executiva de Administração e Finanças (SEAF)</em></div>
+          <div class="dea-subtitulo"><em>Gerência Financeira (GFIN)</em></div>
+        </div>
+        <hr class="dea-divisor">
+        """,
+        unsafe_allow_html=True,
+    )
 
     try:
         dados=_carregar_publicada()
