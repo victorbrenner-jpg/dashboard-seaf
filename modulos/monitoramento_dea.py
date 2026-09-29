@@ -130,13 +130,6 @@ def render():
     .dea-cabecalho h1{margin:0 0 14px;color:#1f3655;font-size:2rem;font-weight:800;line-height:1.2}
     .dea-subtitulo{color:#637387;font-size:1.08rem;line-height:1.75}
     .dea-divisor{border:0;border-top:1px solid #d9dfe6;margin:6px 0 18px}
-    /* O app global reserva um espaço vertical grande para outras telas.
-       Na DEA anulamos esse espaçamento para o conteúdo começar logo abaixo do menu. */
-    /* Usa o mesmo ponto de início das demais telas, logo após a navegação. */
-    body [data-testid="stMainBlockContainer"]{
-      padding-top:1.15rem !important;
-      margin-top:0 !important;
-    }
     .dea-head h2{margin:0;color:#063b70;font-size:1.72rem}.dea-tag{background:#eef7ff;border:1px solid #cfe3f6;border-radius:9px;padding:8px 12px;color:#28557d;font-size:.78rem}
     .dea-card{background:white;border:1px solid #d7e3ee;border-radius:8px;padding:13px 16px;min-height:96px;box-shadow:0 1px 2px #00000008}
     .dea-card-title{font-size:.78rem;font-weight:700;color:#174d7c}.dea-card-value{font-size:1.32rem;font-weight:800;color:#063b70;margin-top:4px}.dea-card-sub{font-size:.76rem;color:#63788d;margin-top:3px}

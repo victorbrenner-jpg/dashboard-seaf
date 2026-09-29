@@ -260,8 +260,10 @@ st.markdown(
         background: linear-gradient(135deg, #004a7c 0%, #01757d 100%) !important;
         color: #ffffff !important;
     }
-    [data-testid="stMainBlockContainer"] {
-        padding-top: 118px !important;
+    /* Todas as telas iniciam logo após a navegação fixa. O espaçamento não
+       pertence a um módulo específico, para evitar diferenças entre telas. */
+    body [data-testid="stMainBlockContainer"] {
+        padding-top: 1.15rem !important;
     }
     /* Mantém o cabeçalho técnico invisível, sem eliminar o controle nativo
        que permite reabrir os filtros quando a barra lateral for recolhida. */
