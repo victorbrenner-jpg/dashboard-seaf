@@ -144,6 +144,11 @@ def render():
     .dea-bar{height:10px;background:#e9f1f7}.dea-bar span{display:block;height:100%;background:#2782c5}.dea-resumo-valor{text-align:right}.dea-resumo-pct{text-align:right;font-weight:700}
     div[data-testid="stDataFrame"]{border:1px solid #d7e3ee;border-radius:0 0 7px 7px}
     .dea-detalhe-card{border:1px solid #cbddeb;border-radius:7px;margin-top:12px;overflow:hidden;background:#fff}
+    .dea-lista-credores [data-testid="stExpander"]{border:0;border-bottom:1px solid #dce7ef;border-radius:0;background:#fff}
+    .dea-lista-credores [data-testid="stExpander"] summary{font-size:.75rem;color:#173e5e;min-height:38px}
+    .dea-lista-credores [data-testid="stExpander"] summary:hover{background:#f4f9fc}
+    .dea-exp-resumo{display:grid;grid-template-columns:.6fr 1.25fr 1.5fr .8fr;gap:10px;background:#073b61;color:#fff;padding:9px 12px;margin-bottom:2px}
+    .dea-exp-resumo small{display:block;font-size:.58rem;font-weight:700;margin-bottom:3px}.dea-exp-resumo strong{font-size:.7rem}
     .dea-detalhe-credor{display:grid;grid-template-columns:1fr 110px 180px;align-items:center;background:#073b61;color:#fff;padding:12px 16px;gap:12px}
     .dea-detalhe-credor small{display:block;font-size:.65rem;font-weight:700;margin-bottom:4px}.dea-detalhe-credor strong{font-size:.82rem}
     .dea-detalhe-meta{text-align:right}.dea-detalhe-tabela{padding:7px 10px 10px;overflow-x:auto}
@@ -230,78 +235,64 @@ def render():
             resumo=filtrado.groupby("Credor",dropna=False).agg(agg).reset_index().sort_values("Valor",ascending=False)
             resumo=resumo.rename(columns={"Processo / SEI":"Processos","Status pagamento":"Status Pagamento","Valor":"Valor total"})
             resumo.insert(0,"#",range(1,len(resumo)+1))
-            evento_credor = st.dataframe(
-                resumo,
-                use_container_width=True,
-                hide_index=True,
-                height=420,
-                column_config={"Valor total":st.column_config.NumberColumn("Valor total",format="R$ %.2f")},
-                on_select="rerun",
-                selection_mode="single-row",
-                key="dea_tabela_credores",
-            )
+            # Lista expansível: cada credor abre seus processos logo abaixo da própria linha.
+            # Mais de um credor pode permanecer aberto ao mesmo tempo.
+            st.markdown('<div class="dea-lista-credores">', unsafe_allow_html=True)
+            for _, linha in resumo.iterrows():
+                nome_credor = linha["Credor"]
+                qtd = int(linha.get("Processos", 0) or 0)
+                valor_total = float(linha.get("Valor total", 0) or 0)
+                sipr = linha.get("SIPR 2026", "Não")
+                status_cpf = linha.get("Status CPF", "") or "—"
+                status_pag = linha.get("Status Pagamento", "") or "—"
+                rotulo = f'{int(linha["#"])}  |  {nome_credor}  |  {_moeda(valor_total)}  |  {qtd} processo(s)'
 
-            # Ao selecionar um credor, exibe abaixo todos os processos que compõem o agrupamento.
-            linhas_selecionadas = evento_credor.selection.rows if evento_credor else []
-            if linhas_selecionadas:
-                idx = linhas_selecionadas[0]
-                if 0 <= idx < len(resumo):
-                    credor_selecionado = resumo.iloc[idx]["Credor"]
-                    processos = filtrado[filtrado["Credor"].eq(credor_selecionado)].copy()
+                with st.expander(rotulo, expanded=False):
+                    st.markdown(
+                        f"""
+                        <div class="dea-exp-resumo">
+                          <div><small>SIPR 2026</small><strong>{sipr}</strong></div>
+                          <div><small>STATUS CPF</small><strong>{status_cpf}</strong></div>
+                          <div><small>STATUS PAGAMENTO</small><strong>{status_pag}</strong></div>
+                          <div><small>VALOR TOTAL</small><strong>{_moeda(valor_total)}</strong></div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
-                    # Detalhe no mesmo padrão visual da tela de Liquidação:
-                    # cabeçalho do credor e processos incorporados ao cartão, sem abrir outra planilha.
+                    processos = filtrado[filtrado["Credor"].eq(nome_credor)].copy()
                     processos = processos.sort_values(
                         ["Processo / SEI"] if "Processo / SEI" in processos.columns else ["Valor"]
                     )
-                    total_credor = float(processos["Valor"].sum()) if "Valor" in processos.columns else 0.0
-                    qtd_processos = (
-                        processos["Processo / SEI"].nunique()
-                        if "Processo / SEI" in processos.columns else len(processos)
-                    )
-
                     linhas_html = []
                     for _, proc in processos.iterrows():
                         sei = proc.get("Processo / SEI", "") or "—"
                         objeto = proc.get("Objeto", "") or "—"
                         ano = proc.get("Ano DEA", "") or "—"
-                        sipr = proc.get("SIPR 2026", "") or "—"
-                        status_cpf = proc.get("Status CPF", "") or "—"
-                        status_pag = proc.get("Status pagamento", "") or "—"
+                        sipr_proc = proc.get("SIPR 2026", "") or "—"
+                        status_cpf_proc = proc.get("Status CPF", "") or "—"
+                        status_pag_proc = proc.get("Status pagamento", "") or "—"
                         valor_proc = _moeda(proc.get("Valor", 0))
                         linhas_html.append(
                             f"""<tr>
-                                <td><b>{sei}</b></td>
-                                <td>{objeto}</td>
-                                <td>{ano}</td>
-                                <td>{sipr}</td>
-                                <td>{status_cpf}</td>
-                                <td>{status_pag}</td>
-                                <td class="dea-det-valor">{valor_proc}</td>
+                                <td><b>{sei}</b></td><td>{objeto}</td><td>{ano}</td>
+                                <td>{sipr_proc}</td><td>{status_cpf_proc}</td>
+                                <td>{status_pag_proc}</td><td class="dea-det-valor">{valor_proc}</td>
                             </tr>"""
                         )
-
                     st.markdown(
                         f"""
-                        <div class="dea-detalhe-card">
-                          <div class="dea-detalhe-credor">
-                            <div><small>CREDOR</small><strong>{credor_selecionado}</strong></div>
-                            <div class="dea-detalhe-meta"><small>PROCESSOS</small><strong>{qtd_processos}</strong></div>
-                            <div class="dea-detalhe-meta"><small>VALOR TOTAL</small><strong>{_moeda(total_credor)}</strong></div>
-                          </div>
-                          <div class="dea-detalhe-tabela">
-                            <table>
-                              <thead><tr>
-                                <th>PROCESSO / SEI</th><th>OBJETO</th><th>ANO DEA</th>
-                                <th>SIPR 2026</th><th>STATUS CPF</th><th>STATUS PAGAMENTO</th><th>VALOR</th>
-                              </tr></thead>
-                              <tbody>{"".join(linhas_html)}</tbody>
-                            </table>
-                          </div>
+                        <div class="dea-detalhe-tabela">
+                          <table>
+                            <thead><tr><th>PROCESSO / SEI</th><th>OBJETO</th><th>ANO DEA</th>
+                            <th>SIPR 2026</th><th>STATUS CPF</th><th>STATUS PAGAMENTO</th><th>VALOR</th></tr></thead>
+                            <tbody>{"".join(linhas_html)}</tbody>
+                          </table>
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
+            st.markdown('</div>', unsafe_allow_html=True)
 
     with lateral:
         _painel_resumo("◉  Status do pagamento",filtrado,"Status pagamento",total,4)
