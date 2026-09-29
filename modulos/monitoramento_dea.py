@@ -148,6 +148,12 @@ def render():
     .dea-lista-credores [data-testid="stExpander"] summary{font-size:.74rem;font-weight:700;color:#073b61;min-height:44px;letter-spacing:.01em}
     .dea-lista-credores [data-testid="stExpander"] summary p{width:100%;white-space:normal;line-height:1.35}
     .dea-lista-credores [data-testid="stExpander"] summary:hover{background:#f4f9fc}
+    .dea-lista-credores [data-testid="stExpander"] summary p{font-weight:800;color:#073b61}
+    .dea-exp-resumo-colunas{display:grid;grid-template-columns:.75fr 1fr 1.35fr;gap:0;border:1px solid #d8e4ed;border-bottom:0;background:#f7fafc}
+    .dea-exp-resumo-colunas>div{padding:8px 12px;border-right:1px solid #d8e4ed}
+    .dea-exp-resumo-colunas>div:last-child{border-right:0}
+    .dea-exp-resumo-colunas small{display:block;font-size:.58rem;font-weight:800;color:#60788d;margin-bottom:3px}
+    .dea-exp-resumo-colunas strong{font-size:.7rem;color:#073b61}
     .dea-detalhe-credor{display:grid;grid-template-columns:1fr 110px 180px;align-items:center;background:#073b61;color:#fff;padding:12px 16px;gap:12px}
     .dea-detalhe-credor small{display:block;font-size:.65rem;font-weight:700;margin-bottom:4px}.dea-detalhe-credor strong{font-size:.82rem}
     .dea-detalhe-meta{text-align:right}.dea-detalhe-tabela{padding:7px 10px 10px;overflow-x:auto}
@@ -244,15 +250,21 @@ def render():
                 sipr = linha.get("SIPR 2026", "Não")
                 status_cpf = linha.get("Status CPF", "") or "—"
                 status_pag = linha.get("Status Pagamento", "") or "—"
-                # Cabeçalho fechado mais limpo, no padrão visual da Liquidação.
-                rotulo = (
-                    f'{nome_credor:<52}   '
-                    f'VALOR: {_moeda(valor_total)}   |   '
-                    f'CPF: {status_cpf}   |   '
-                    f'PAGAMENTO: {status_pag}'
-                )
+                # A linha do expander mostra só o credor; o resumo gerencial fica
+                # organizado em colunas logo no início da expansão.
+                rotulo = nome_credor
 
                 with st.expander(rotulo, expanded=False):
+                    st.markdown(
+                        f"""
+                        <div class="dea-exp-resumo-colunas">
+                          <div><small>VALOR TOTAL</small><strong>{_moeda(valor_total)}</strong></div>
+                          <div><small>STATUS CPF</small><strong>{status_cpf}</strong></div>
+                          <div><small>STATUS PAGAMENTO</small><strong>{status_pag}</strong></div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
+                    )
 
                     processos = filtrado[filtrado["Credor"].eq(nome_credor)].copy()
                     processos = processos.sort_values(
