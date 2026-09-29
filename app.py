@@ -260,10 +260,28 @@ st.markdown(
         background: linear-gradient(135deg, #004a7c 0%, #01757d 100%) !important;
         color: #ffffff !important;
     }
-    /* Todas as telas iniciam logo após a navegação fixa. O espaçamento não
-       pertence a um módulo específico, para evitar diferenças entre telas. */
+    /* A barra SEAF e a navegação são fixas. O container nativo do Streamlit
+       não deve reservar altura extra para elas; o conteúdo começa logo abaixo
+       do conjunto fixo por meio de um deslocamento único e previsível. */
     body [data-testid="stMainBlockContainer"] {
-        padding-top: 1.15rem !important;
+        padding-top: 96px !important;
+    }
+    /* O container que hospeda apenas a barra fixa continua ocupando espaço no
+       fluxo do Streamlit mesmo com os filhos em position:fixed. Colapsá-lo
+       elimina o grande vazio que empurrava todas as telas para baixo. */
+    .st-key-topo_navegacao {
+        height: 0 !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
+    }
+    .st-key-topo_navegacao > div {
+        height: 0 !important;
+        min-height: 0 !important;
+        margin: 0 !important;
+        padding: 0 !important;
+        overflow: visible !important;
     }
     /* Mantém o cabeçalho técnico invisível, sem eliminar o controle nativo
        que permite reabrir os filtros quando a barra lateral for recolhida. */
