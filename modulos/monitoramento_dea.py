@@ -47,16 +47,30 @@ def _preparar(dados):
         if c!="Valor": dados[c]=dados[c].fillna("").astype(str).str.strip()
     # A publicação CSV do Google Sheets traz os valores monetários no padrão
     # brasileiro (ex.: 1.234.567,89). pd.to_numeric direto transforma tudo em NaN.
-    valor = (
-        dados["Valor"]
-        .astype(str)
-        .str.replace("R$", "", regex=False)
-        .str.replace("\\xa0", "", regex=False)
-        .str.replace(" ", "", regex=False)
-        .str.replace(".", "", regex=False)
-        .str.replace(",", ".", regex=False)
-    )
-    dados["Valor"] = pd.to_numeric(valor, errors="coerce").fillna(0.0)
+    bruto = dados["Valor"].copy()
+
+    def _valor_numero(v):
+        if pd.isna(v) or str(v).strip() == "":
+            return 0.0
+        # Se o CSV já entregou número, não altera separadores.
+        if isinstance(v, (int, float)) and not isinstance(v, bool):
+            return float(v)
+        s = str(v).strip()
+        # Remove R$, espaços comuns e espaços não separáveis do Google Sheets.
+        s = s.replace("R$", "").replace("\u00a0", "").replace(" ", "").strip()
+        negativo = s.startswith("(") and s.endswith(")")
+        s = s.strip("()")
+        # Formato brasileiro: 1.234.567,89
+        if "," in s:
+            s = s.replace(".", "").replace(",", ".")
+        # Formato internacional/numérico: 1234567.89 permanece como está.
+        try:
+            n = float(s)
+            return -n if negativo else n
+        except (TypeError, ValueError):
+            return 0.0
+
+    dados["Valor"] = bruto.map(_valor_numero)
     return dados
 
 @st.cache_data(ttl=300, show_spinner=False)
