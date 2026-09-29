@@ -218,12 +218,6 @@ def render():
                         },
                     )
 
-        st.markdown('<div class="dea-box-title">▧ &nbsp; Objetos de despesa com maior valor</div>',unsafe_allow_html=True)
-        if "Objeto" in filtrado and not filtrado.empty:
-            obj=filtrado.groupby("Objeto",dropna=False)["Valor"].sum().sort_values(ascending=False).head(8).reset_index()
-            obj["%"]=obj["Valor"].map(lambda x:_pct(x,total))
-            obj.insert(0,"#",range(1,len(obj)+1))
-            st.dataframe(obj,use_container_width=True,hide_index=True,height=275,column_config={"Valor":st.column_config.NumberColumn("Valor total",format="R$ %.2f"),"%":st.column_config.NumberColumn("%",format="%.1f%%")})
     with lateral:
         _painel_resumo("◉  Status do pagamento",filtrado,"Status pagamento",total,4)
         _painel_resumo("★  Status CPF",filtrado,"Status CPF",total,4)
