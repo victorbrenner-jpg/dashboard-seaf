@@ -9,6 +9,13 @@ import pandas as pd
 import streamlit as st
 
 
+COLUNAS_VISAO = [
+    "Credor", "Processo / SEI", "NE", "Valor", "Ano DEA", "Executiva",
+    "Grupo de despesa", "Objeto", "Status pagamento", "Status CPF",
+    "SIPR 2025", "SIPR 2026", "PD / OB", "Prioritário",
+]
+
+
 def _normalizar(texto: object) -> str:
     texto = unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode()
     return " ".join(texto.upper().replace("/", " ").split())
@@ -94,30 +101,29 @@ def render() -> None:
             help="Envie a planilha com a aba BASE para atualizar a consulta desta sessão.",
         )
 
-    if arquivo is None:
-        st.info("Envie a planilha DEA na lateral para iniciar o monitoramento em homologação.")
-        return
-
-    try:
-        dados = _carregar_base(arquivo)
-    except Exception as erro:
-        st.error(f"Não foi possível ler a planilha DEA: {erro}")
-        return
+    dados = pd.DataFrame(columns=COLUNAS_VISAO)
+    base_carregada = arquivo is not None
+    if arquivo is not None:
+        try:
+            dados = _carregar_base(arquivo)
+        except Exception as erro:
+            st.error(f"Não foi possível ler a planilha DEA: {erro}")
+            base_carregada = False
 
     with st.sidebar:
         st.markdown("---")
         st.markdown("### Filtros DEA")
-        anos = st.multiselect("Ano do DEA", _opcoes(dados, "Ano DEA"), key="dea_anos")
-        status_cpf = st.multiselect("Status CPF", _opcoes(dados, "Status CPF"), key="dea_status_cpf")
+        anos = st.multiselect("Ano do DEA", _opcoes(dados, "Ano DEA"), key="dea_anos", disabled=not base_carregada)
+        status_cpf = st.multiselect("Status CPF", _opcoes(dados, "Status CPF"), key="dea_status_cpf", disabled=not base_carregada)
         status_pagamento = st.multiselect(
-            "Status do pagamento", _opcoes(dados, "Status pagamento"), key="dea_status_pagamento"
+            "Status do pagamento", _opcoes(dados, "Status pagamento"), key="dea_status_pagamento", disabled=not base_carregada
         )
         grupos = st.multiselect(
-            "Grupo de despesa", _opcoes(dados, "Grupo de despesa"), key="dea_grupos"
+            "Grupo de despesa", _opcoes(dados, "Grupo de despesa"), key="dea_grupos", disabled=not base_carregada
         )
-        executivas = st.multiselect("Executiva", _opcoes(dados, "Executiva"), key="dea_executivas")
-        prioritarios = st.multiselect("Prioritário", _opcoes(dados, "Prioritário"), key="dea_prioritarios")
-        termo_credor = st.text_input("Credor (buscar por nome)", key="dea_credor")
+        executivas = st.multiselect("Executiva", _opcoes(dados, "Executiva"), key="dea_executivas", disabled=not base_carregada)
+        prioritarios = st.multiselect("Prioritário", _opcoes(dados, "Prioritário"), key="dea_prioritarios", disabled=not base_carregada)
+        termo_credor = st.text_input("Credor (buscar por nome)", key="dea_credor", disabled=not base_carregada)
 
     filtrado = dados.copy()
     for coluna, valores in (
@@ -138,6 +144,9 @@ def render() -> None:
     col2.metric("AGUARDANDO CPF", _moeda(float(aguardando_cpf["Valor"].sum())), f"{len(aguardando_cpf):,} registros".replace(",", "."))
     col3.metric("PAGOS", _moeda(float(pagos["Valor"].sum())), f"{len(pagos):,} registros".replace(",", "."))
     col4.metric("PRIORITÁRIOS", _moeda(float(prioritarios_dados["Valor"].sum())), f"{len(prioritarios_dados):,} registros".replace(",", "."))
+
+    if not base_carregada:
+        st.info("A estrutura do monitoramento está pronta. Use **Upload** na lateral para carregar a base DEA e preencher os cards, filtros e tabelas.")
 
     st.markdown("### 📋 Planejamento DEA por Credor")
     agrupamento = {
