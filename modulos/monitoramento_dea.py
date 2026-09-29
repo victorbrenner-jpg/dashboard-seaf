@@ -135,6 +135,14 @@ def render():
     .dea-resumo-row{display:grid;grid-template-columns:1.25fr .8fr 1.05fr .35fr;gap:7px;align-items:center;font-size:.72rem;padding:5px 0;border-bottom:1px solid #edf2f6}
     .dea-bar{height:10px;background:#e9f1f7}.dea-bar span{display:block;height:100%;background:#2782c5}.dea-resumo-valor{text-align:right}.dea-resumo-pct{text-align:right;font-weight:700}
     div[data-testid="stDataFrame"]{border:1px solid #d7e3ee;border-radius:0 0 7px 7px}
+    .dea-detalhe-card{border:1px solid #cbddeb;border-radius:7px;margin-top:12px;overflow:hidden;background:#fff}
+    .dea-detalhe-credor{display:grid;grid-template-columns:1fr 110px 180px;align-items:center;background:#073b61;color:#fff;padding:12px 16px;gap:12px}
+    .dea-detalhe-credor small{display:block;font-size:.65rem;font-weight:700;margin-bottom:4px}.dea-detalhe-credor strong{font-size:.82rem}
+    .dea-detalhe-meta{text-align:right}.dea-detalhe-tabela{padding:7px 10px 10px;overflow-x:auto}
+    .dea-detalhe-tabela table{width:100%;border-collapse:collapse;font-size:.72rem;color:#163b5b}
+    .dea-detalhe-tabela th{background:#edf4f8;padding:8px 9px;font-size:.63rem;text-align:left;white-space:nowrap}
+    .dea-detalhe-tabela td{padding:8px 9px;border-bottom:1px solid #dce7ef;vertical-align:top}
+    .dea-detalhe-tabela tbody tr:last-child td{border-bottom:0}.dea-det-valor{text-align:right;font-weight:700;white-space:nowrap}
     </style>""",unsafe_allow_html=True)
 
     st.markdown('<div class="dea-head"><h2>▣ Monitoramento de DEA</h2><div class="dea-tag">Planejamento e situação de pagamento dos Despesas de Exercícios Anteriores (DEA)</div></div>',unsafe_allow_html=True)
@@ -223,28 +231,58 @@ def render():
                     credor_selecionado = resumo.iloc[idx]["Credor"]
                     processos = filtrado[filtrado["Credor"].eq(credor_selecionado)].copy()
 
-                    st.markdown(
-                        f'<div class="dea-box-title">▣ &nbsp; Processos — {credor_selecionado}</div>',
-                        unsafe_allow_html=True,
+                    # Detalhe no mesmo padrão visual da tela de Liquidação:
+                    # cabeçalho do credor e processos incorporados ao cartão, sem abrir outra planilha.
+                    processos = processos.sort_values(
+                        ["Processo / SEI"] if "Processo / SEI" in processos.columns else ["Valor"]
                     )
-                    colunas_detalhe = [
-                        "Processo / SEI", "Objeto", "Ano DEA", "Valor",
-                        "SIPR 2026", "Status CPF", "Status pagamento",
-                        "Executiva", "Grupo de despesa", "Prioritário",
-                    ]
-                    colunas_detalhe = [col for col in colunas_detalhe if col in processos.columns]
-                    processos = processos[colunas_detalhe].copy()
-                    if "Valor" in processos.columns:
-                        processos = processos.sort_values(["Processo / SEI"] if "Processo / SEI" in processos.columns else ["Valor"])
-                    st.dataframe(
-                        processos,
-                        use_container_width=True,
-                        hide_index=True,
-                        height=min(360, 38 + 35 * max(len(processos), 1)),
-                        column_config={
-                            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                            "Status pagamento": "Status Pagamento",
-                        },
+                    total_credor = float(processos["Valor"].sum()) if "Valor" in processos.columns else 0.0
+                    qtd_processos = (
+                        processos["Processo / SEI"].nunique()
+                        if "Processo / SEI" in processos.columns else len(processos)
+                    )
+
+                    linhas_html = []
+                    for _, proc in processos.iterrows():
+                        sei = proc.get("Processo / SEI", "") or "—"
+                        objeto = proc.get("Objeto", "") or "—"
+                        ano = proc.get("Ano DEA", "") or "—"
+                        sipr = proc.get("SIPR 2026", "") or "—"
+                        status_cpf = proc.get("Status CPF", "") or "—"
+                        status_pag = proc.get("Status pagamento", "") or "—"
+                        valor_proc = _moeda(proc.get("Valor", 0))
+                        linhas_html.append(
+                            f"""<tr>
+                                <td><b>{sei}</b></td>
+                                <td>{objeto}</td>
+                                <td>{ano}</td>
+                                <td>{sipr}</td>
+                                <td>{status_cpf}</td>
+                                <td>{status_pag}</td>
+                                <td class="dea-det-valor">{valor_proc}</td>
+                            </tr>"""
+                        )
+
+                    st.markdown(
+                        f"""
+                        <div class="dea-detalhe-card">
+                          <div class="dea-detalhe-credor">
+                            <div><small>CREDOR</small><strong>{credor_selecionado}</strong></div>
+                            <div class="dea-detalhe-meta"><small>PROCESSOS</small><strong>{qtd_processos}</strong></div>
+                            <div class="dea-detalhe-meta"><small>VALOR TOTAL</small><strong>{_moeda(total_credor)}</strong></div>
+                          </div>
+                          <div class="dea-detalhe-tabela">
+                            <table>
+                              <thead><tr>
+                                <th>PROCESSO / SEI</th><th>OBJETO</th><th>ANO DEA</th>
+                                <th>SIPR 2026</th><th>STATUS CPF</th><th>STATUS PAGAMENTO</th><th>VALOR</th>
+                              </tr></thead>
+                              <tbody>{"".join(linhas_html)}</tbody>
+                            </table>
+                          </div>
+                        </div>
+                        """,
+                        unsafe_allow_html=True,
                     )
 
     with lateral:
