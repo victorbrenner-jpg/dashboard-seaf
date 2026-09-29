@@ -145,7 +145,8 @@ def render():
     div[data-testid="stDataFrame"]{border:1px solid #d7e3ee;border-radius:0 0 7px 7px}
     .dea-detalhe-card{border:1px solid #cbddeb;border-radius:7px;margin-top:12px;overflow:hidden;background:#fff}
     .dea-lista-credores [data-testid="stExpander"]{border:0;border-bottom:1px solid #dce7ef;border-radius:0;background:#fff}
-    .dea-lista-credores [data-testid="stExpander"] summary{font-size:.76rem;font-weight:700;color:#073b61;min-height:42px}
+    .dea-lista-credores [data-testid="stExpander"] summary{font-size:.74rem;font-weight:700;color:#073b61;min-height:44px;letter-spacing:.01em}
+    .dea-lista-credores [data-testid="stExpander"] summary p{width:100%;white-space:normal;line-height:1.35}
     .dea-lista-credores [data-testid="stExpander"] summary:hover{background:#f4f9fc}
     .dea-detalhe-credor{display:grid;grid-template-columns:1fr 110px 180px;align-items:center;background:#073b61;color:#fff;padding:12px 16px;gap:12px}
     .dea-detalhe-credor small{display:block;font-size:.65rem;font-weight:700;margin-bottom:4px}.dea-detalhe-credor strong{font-size:.82rem}
@@ -243,9 +244,12 @@ def render():
                 sipr = linha.get("SIPR 2026", "Não")
                 status_cpf = linha.get("Status CPF", "") or "—"
                 status_pag = linha.get("Status Pagamento", "") or "—"
+                # Cabeçalho fechado mais limpo, no padrão visual da Liquidação.
                 rotulo = (
-                    f'{nome_credor}   •   {_moeda(valor_total)}   •   '
-                    f'CPF: {status_cpf}   •   PAGAMENTO: {status_pag}'
+                    f'{nome_credor:<52}   '
+                    f'VALOR: {_moeda(valor_total)}   |   '
+                    f'CPF: {status_cpf}   |   '
+                    f'PAGAMENTO: {status_pag}'
                 )
 
                 with st.expander(rotulo, expanded=False):
