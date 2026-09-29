@@ -145,10 +145,8 @@ def render():
     div[data-testid="stDataFrame"]{border:1px solid #d7e3ee;border-radius:0 0 7px 7px}
     .dea-detalhe-card{border:1px solid #cbddeb;border-radius:7px;margin-top:12px;overflow:hidden;background:#fff}
     .dea-lista-credores [data-testid="stExpander"]{border:0;border-bottom:1px solid #dce7ef;border-radius:0;background:#fff}
-    .dea-lista-credores [data-testid="stExpander"] summary{font-size:.75rem;color:#173e5e;min-height:38px}
+    .dea-lista-credores [data-testid="stExpander"] summary{font-size:.76rem;font-weight:700;color:#073b61;min-height:42px}
     .dea-lista-credores [data-testid="stExpander"] summary:hover{background:#f4f9fc}
-    .dea-exp-resumo{display:grid;grid-template-columns:.6fr 1.25fr 1.5fr .8fr;gap:10px;background:#073b61;color:#fff;padding:9px 12px;margin-bottom:2px}
-    .dea-exp-resumo small{display:block;font-size:.58rem;font-weight:700;margin-bottom:3px}.dea-exp-resumo strong{font-size:.7rem}
     .dea-detalhe-credor{display:grid;grid-template-columns:1fr 110px 180px;align-items:center;background:#073b61;color:#fff;padding:12px 16px;gap:12px}
     .dea-detalhe-credor small{display:block;font-size:.65rem;font-weight:700;margin-bottom:4px}.dea-detalhe-credor strong{font-size:.82rem}
     .dea-detalhe-meta{text-align:right}.dea-detalhe-tabela{padding:7px 10px 10px;overflow-x:auto}
@@ -245,20 +243,12 @@ def render():
                 sipr = linha.get("SIPR 2026", "Não")
                 status_cpf = linha.get("Status CPF", "") or "—"
                 status_pag = linha.get("Status Pagamento", "") or "—"
-                rotulo = f'{int(linha["#"])}  |  {nome_credor}  |  {_moeda(valor_total)}  |  {qtd} processo(s)'
+                rotulo = (
+                    f'{nome_credor}   •   {_moeda(valor_total)}   •   '
+                    f'CPF: {status_cpf}   •   PAGAMENTO: {status_pag}'
+                )
 
                 with st.expander(rotulo, expanded=False):
-                    st.markdown(
-                        f"""
-                        <div class="dea-exp-resumo">
-                          <div><small>SIPR 2026</small><strong>{sipr}</strong></div>
-                          <div><small>STATUS CPF</small><strong>{status_cpf}</strong></div>
-                          <div><small>STATUS PAGAMENTO</small><strong>{status_pag}</strong></div>
-                          <div><small>VALOR TOTAL</small><strong>{_moeda(valor_total)}</strong></div>
-                        </div>
-                        """,
-                        unsafe_allow_html=True,
-                    )
 
                     processos = filtrado[filtrado["Credor"].eq(nome_credor)].copy()
                     processos = processos.sort_values(
