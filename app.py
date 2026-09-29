@@ -157,7 +157,7 @@ if "mem_plan_mes_programacao" not in st.session_state:
     st.session_state["mem_plan_mes_programacao"] = datetime.date.today().strftime("%m/%Y")
 
 # Estilização CSS
-st.markdown(
+st.html(
     """
     <style>
     .titulo-pagina {
