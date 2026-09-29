@@ -273,6 +273,16 @@ st.markdown(
     body [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"]:empty {
         display: none !important;
     }
+    /* Em versões atuais do Streamlit, muitos containers tecnicamente não são
+       :empty porque recebem comentários/nós internos, embora tenham altura 0.
+       :has() identifica esses placeholders sem conteúdo visual e os retira do
+       fluxo, evitando que o gap de 1rem seja aplicado dezenas de vezes. */
+    body [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"]:not(:has(*)) {
+        display: none !important;
+    }
+    body [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"][style*="height: 0"] {
+        display: none !important;
+    }
     /* Navegação no fluxo normal do Streamlit: evita qualquer espaço fantasma
        entre o menu global e o conteúdo das páginas. */
     .st-key-topo_navegacao {
