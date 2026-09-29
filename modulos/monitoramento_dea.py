@@ -1,176 +1,188 @@
-"""Tela de homologação para consulta e acompanhamento dos DEA."""
+"""Monitoramento gerencial de DEA integrado ao Painel SEAF."""
 
 from __future__ import annotations
 
 import io
 import unicodedata
-
 import pandas as pd
 import streamlit as st
 
+URL_BASE_DEA = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRFcspPcERcq_Eu2bFM5uHRa6thMKvCKf5zs_87QzokzZe3W5QYZFsWoK2m4seEkA/pubhtml?gid=1881579019&single=true"
 
-COLUNAS_VISAO = [
-    "Credor", "Processo / SEI", "NE", "Valor", "Ano DEA", "Executiva",
-    "Grupo de despesa", "Objeto", "Status pagamento", "Status CPF",
-    "SIPR 2025", "SIPR 2026", "PD / OB", "Prioritário",
-]
+def _normalizar(v):
+    return " ".join(unicodedata.normalize("NFKD", str(v)).encode("ASCII","ignore").decode().upper().replace("/"," ").split())
 
-
-def _normalizar(texto: object) -> str:
-    texto = unicodedata.normalize("NFKD", str(texto)).encode("ASCII", "ignore").decode()
-    return " ".join(texto.upper().replace("/", " ").split())
-
-
-def _encontrar_coluna(colunas, *nomes: str) -> str | None:
-    mapa = {_normalizar(coluna): coluna for coluna in colunas}
-    for nome in nomes:
-        encontrada = mapa.get(_normalizar(nome))
-        if encontrada:
-            return encontrada
+def _col(cols, *nomes):
+    mapa={_normalizar(c):c for c in cols}
+    for n in nomes:
+        if _normalizar(n) in mapa: return mapa[_normalizar(n)]
     return None
 
+def _moeda(v):
+    return f"R$ {float(v):,.2f}".replace(",","X").replace(".",",").replace("X",".")
 
-def _moeda(valor: float) -> str:
-    return f"R$ {valor:,.2f}".replace(",", "X").replace(".", ",").replace("X", ".")
+def _pct(v,total):
+    return 0 if not total else (float(v)/float(total))*100
 
-
-def _carregar_base(arquivo) -> pd.DataFrame:
-    """Lê a aba BASE, cuja linha 3 contém os cabeçalhos da planilha DEA."""
-    conteudo = arquivo.getvalue()
-    planilha = pd.ExcelFile(io.BytesIO(conteudo))
-    aba = "BASE" if "BASE" in planilha.sheet_names else planilha.sheet_names[0]
-    dados = pd.read_excel(planilha, sheet_name=aba, header=2)
-    dados = dados.dropna(how="all").copy()
-    dados.columns = [str(coluna).strip() for coluna in dados.columns]
-
-    renomear = {}
-    campos = {
-        "Credor": ("CREDOR",),
-        "Processo / SEI": ("SEI", "PROCESSO", "PROCESSO SEI"),
-        "NE": ("NE",),
-        "Valor": ("VALOR",),
-        "Ano DEA": ("ANO DO DEA", "ANO DO DEA2"),
-        "Executiva": ("EXECUTIVA",),
-        "Grupo de despesa": ("GRUPO DE DESPESA",),
-        "Objeto": ("OBJETO",),
-        "Status pagamento": ("STATUS PAGAMENTO",),
-        "Status CPF": ("STATUS CPF",),
-        "SIPR 2025": ("Nº SIPR 2025", "N SIPR 2025"),
-        "SIPR 2026": ("Nº SIPR 2026", "N SIPR 2026"),
-        "PD / OB": ("OB PD", "OB / PD"),
-        "Prioritário": ("PRIORITÁRIO", "PRIORITARIO"),
+def _preparar(dados):
+    dados=dados.dropna(how="all").copy()
+    dados.columns=[str(c).strip() for c in dados.columns]
+    campos={
+        "Credor":("CREDOR",),"Processo / SEI":("SEI","PROCESSO","PROCESSO SEI"),
+        "Valor":("VALOR",),"Ano DEA":("ANO DO DEA","ANO DO DEA2"),
+        "Executiva":("EXECUTIVA",),"Grupo de despesa":("GRUPO DE DESPESA",),
+        "Objeto":("OBJETO","DESCRIÇÃO DO OBJETO"),"Status pagamento":("STATUS PAGAMENTO",),
+        "Status CPF":("STATUS CPF",),"SIPR 2026":("Nº SIPR 2026","N SIPR 2026"),
+        "Prioritário":("PRIORITÁRIO","PRIORITARIO"),
     }
-    for destino, opcoes in campos.items():
-        origem = _encontrar_coluna(dados.columns, *opcoes)
-        if origem:
-            renomear[origem] = destino
-    dados = dados.rename(columns=renomear)
-
-    obrigatorias = {"Credor", "Valor", "Status pagamento", "Status CPF"}
-    faltantes = obrigatorias - set(dados.columns)
-    if faltantes:
-        raise ValueError("A aba BASE não possui as colunas necessárias: " + ", ".join(sorted(faltantes)))
-
-    for coluna in dados.columns:
-        if coluna != "Valor":
-            dados[coluna] = dados[coluna].fillna("").astype(str).str.strip()
-    dados["Valor"] = pd.to_numeric(dados["Valor"], errors="coerce").fillna(0.0)
+    ren={}
+    for destino, nomes in campos.items():
+        origem=_col(dados.columns,*nomes)
+        if origem: ren[origem]=destino
+    dados=dados.rename(columns=ren)
+    obrig={"Credor","Valor","Status pagamento","Status CPF"}
+    if obrig-set(dados.columns):
+        raise ValueError("Colunas obrigatórias não encontradas: "+", ".join(sorted(obrig-set(dados.columns))))
+    for c in dados.columns:
+        if c!="Valor": dados[c]=dados[c].fillna("").astype(str).str.strip()
+    dados["Valor"]=pd.to_numeric(dados["Valor"],errors="coerce").fillna(0.0)
     return dados
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _carregar_publicada():
+    tabelas=pd.read_html(URL_BASE_DEA, decimal=",", thousands=".")
+    for t in tabelas:
+        if any(_normalizar(c)=="CREDOR" for c in t.columns):
+            return _preparar(t)
+    raise ValueError("A tabela BASE não foi localizada na publicação.")
 
-def _opcoes(dados: pd.DataFrame, coluna: str) -> list[str]:
-    if coluna not in dados.columns:
-        return []
-    return sorted(valor for valor in dados[coluna].dropna().astype(str).unique() if valor)
+def _carregar_upload(arq):
+    xls=pd.ExcelFile(io.BytesIO(arq.getvalue()))
+    aba="BASE" if "BASE" in xls.sheet_names else xls.sheet_names[0]
+    # A base oficial possui cabeçalho após as linhas de apresentação.
+    for header in (2,0,1,3):
+        d=pd.read_excel(xls,sheet_name=aba,header=header)
+        if any(_normalizar(c)=="CREDOR" for c in d.columns):
+            return _preparar(d)
+    raise ValueError("Cabeçalho da BASE não localizado.")
 
+def _opts(df,c):
+    if c not in df: return []
+    return sorted([x for x in df[c].astype(str).unique() if x and x.lower()!="nan"])
 
-def _aplicar_multifiltro(dados: pd.DataFrame, coluna: str, valores: list[str]) -> pd.DataFrame:
-    if valores and coluna in dados.columns:
-        return dados[dados[coluna].isin(valores)]
-    return dados
+def _filtrar(df, filtros):
+    out=df.copy()
+    for c, vals in filtros.items():
+        if vals and c in out: out=out[out[c].isin(vals)]
+    return out
 
+def _card(titulo, valor, subtitulo, classe="azul"):
+    st.markdown(f"""<div class="dea-card {classe}">
+      <div class="dea-card-title">{titulo}</div><div class="dea-card-value">{valor}</div>
+      <div class="dea-card-sub">{subtitulo}</div></div>""",unsafe_allow_html=True)
 
-def render() -> None:
-    st.markdown("<h2 class='titulo-pagina'>📋 Monitoramento de DEA</h2>", unsafe_allow_html=True)
-    st.caption("Acompanhe solicitações, aprovação do CPF e a situação de pagamento dos DEA.")
+def _painel_resumo(titulo, df, campo, total, limite=6):
+    st.markdown(f'<div class="dea-box-title">{titulo}</div>',unsafe_allow_html=True)
+    if campo not in df or df.empty:
+        st.caption("Sem dados")
+        return
+    g=df.groupby(campo,dropna=False)["Valor"].sum().sort_values(ascending=False).head(limite)
+    linhas=[]
+    for nome,v in g.items():
+        p=_pct(v,total)
+        linhas.append(f"""<div class="dea-resumo-row"><div class="dea-resumo-label">{nome or "Não informado"}</div>
+        <div class="dea-bar"><span style="width:{min(p,100):.1f}%"></span></div>
+        <div class="dea-resumo-valor">{_moeda(v)}</div><div class="dea-resumo-pct">{p:.1f}%</div></div>""")
+    st.markdown('<div class="dea-resumo">'+"".join(linhas)+'</div>',unsafe_allow_html=True)
 
+def render():
+    st.markdown("""<style>
+    .dea-head{display:flex;justify-content:space-between;align-items:center;margin:.1rem 0 .7rem}
+    .dea-head h2{margin:0;color:#063b70;font-size:1.72rem}.dea-tag{background:#eef7ff;border:1px solid #cfe3f6;border-radius:9px;padding:8px 12px;color:#28557d;font-size:.78rem}
+    .dea-card{background:white;border:1px solid #d7e3ee;border-radius:8px;padding:13px 16px;min-height:96px;box-shadow:0 1px 2px #00000008}
+    .dea-card-title{font-size:.78rem;font-weight:700;color:#174d7c}.dea-card-value{font-size:1.32rem;font-weight:800;color:#063b70;margin-top:4px}.dea-card-sub{font-size:.76rem;color:#63788d;margin-top:3px}
+    .dea-card.verde .dea-card-value{color:#16865b}.dea-card.amarelo .dea-card-value{color:#c37a00}.dea-card.dourado .dea-card-value{color:#a96d00}
+    .dea-box-title{background:linear-gradient(90deg,#075b88,#08749a);color:white;font-weight:700;padding:7px 10px;border-radius:7px 7px 0 0;margin-top:5px}
+    .dea-resumo{border:1px solid #d7e3ee;border-top:0;padding:4px 8px 8px;border-radius:0 0 7px 7px;background:#fff}
+    .dea-resumo-row{display:grid;grid-template-columns:1.25fr .8fr 1.05fr .35fr;gap:7px;align-items:center;font-size:.72rem;padding:5px 0;border-bottom:1px solid #edf2f6}
+    .dea-bar{height:10px;background:#e9f1f7}.dea-bar span{display:block;height:100%;background:#2782c5}.dea-resumo-valor{text-align:right}.dea-resumo-pct{text-align:right;font-weight:700}
+    div[data-testid="stDataFrame"]{border:1px solid #d7e3ee;border-radius:0 0 7px 7px}
+    </style>""",unsafe_allow_html=True)
+
+    st.markdown('<div class="dea-head"><h2>▣ Monitoramento de DEA</h2><div class="dea-tag">Planejamento e situação de pagamento dos Despesas de Exercícios Anteriores (DEA)</div></div>',unsafe_allow_html=True)
+
+    try:
+        dados=_carregar_publicada()
+        origem="Base DEA publicada"
+    except Exception:
+        with st.sidebar:
+            arq=st.file_uploader("Base DEA (.xlsx)",type=["xlsx"],key="dea_fallback")
+        if not arq:
+            st.warning("Não foi possível acessar a base publicada. Envie a planilha DEA na lateral.")
+            return
+        dados=_carregar_upload(arq); origem="Arquivo enviado"
+
+    # Filtros só alteram o painel quando Aplicar filtros é acionado.
     with st.sidebar:
-        st.markdown("### Base de acompanhamento DEA")
-        arquivo = st.file_uploader(
-            "Planilha DEA (.xlsx)", type=["xlsx"], key="arquivo_monitoramento_dea",
-            help="Envie a planilha com a aba BASE para atualizar a consulta desta sessão.",
-        )
+        st.markdown("## ⚱ Filtros")
+        if "dea_filtros_aplicados" not in st.session_state: st.session_state.dea_filtros_aplicados={}
+        with st.form("form_filtros_dea"):
+            ano=st.multiselect("Ano do DEA",_opts(dados,"Ano DEA"),default=st.session_state.dea_filtros_aplicados.get("Ano DEA",[]))
+            cpf=st.multiselect("Status CPF",_opts(dados,"Status CPF"),default=st.session_state.dea_filtros_aplicados.get("Status CPF",[]))
+            pag=st.multiselect("Status do Pagamento",_opts(dados,"Status pagamento"),default=st.session_state.dea_filtros_aplicados.get("Status pagamento",[]))
+            grupo=st.multiselect("Grupo de Despesa",_opts(dados,"Grupo de despesa"),default=st.session_state.dea_filtros_aplicados.get("Grupo de despesa",[]))
+            exe=st.multiselect("Executiva",_opts(dados,"Executiva"),default=st.session_state.dea_filtros_aplicados.get("Executiva",[]))
+            pri=st.multiselect("Prioritário",_opts(dados,"Prioritário"),default=st.session_state.dea_filtros_aplicados.get("Prioritário",[]))
+            credor=st.text_input("Credor (buscar por nome)",value=st.session_state.get("dea_credor_aplicado",""))
+            aplicar=st.form_submit_button("🔎 Aplicar filtros",use_container_width=True,type="primary")
+        limpar=st.button("↻ Limpar filtros",use_container_width=True)
+        st.caption(origem)
+    if limpar:
+        st.session_state.dea_filtros_aplicados={}; st.session_state.dea_credor_aplicado=""; st.rerun()
+    if aplicar:
+        st.session_state.dea_filtros_aplicados={"Ano DEA":ano,"Status CPF":cpf,"Status pagamento":pag,"Grupo de despesa":grupo,"Executiva":exe,"Prioritário":pri}
+        st.session_state.dea_credor_aplicado=credor.strip(); st.rerun()
 
-    dados = pd.DataFrame(columns=COLUNAS_VISAO)
-    base_carregada = arquivo is not None
-    if arquivo is not None:
-        try:
-            dados = _carregar_base(arquivo)
-        except Exception as erro:
-            st.error(f"Não foi possível ler a planilha DEA: {erro}")
-            base_carregada = False
+    filtrado=_filtrar(dados,st.session_state.dea_filtros_aplicados)
+    termo=st.session_state.get("dea_credor_aplicado","")
+    if termo: filtrado=filtrado[filtrado["Credor"].str.contains(termo,case=False,na=False)]
 
-    with st.sidebar:
-        st.markdown("---")
-        st.markdown("### Filtros DEA")
-        anos = st.multiselect("Ano do DEA", _opcoes(dados, "Ano DEA"), key="dea_anos", disabled=not base_carregada)
-        status_cpf = st.multiselect("Status CPF", _opcoes(dados, "Status CPF"), key="dea_status_cpf", disabled=not base_carregada)
-        status_pagamento = st.multiselect(
-            "Status do pagamento", _opcoes(dados, "Status pagamento"), key="dea_status_pagamento", disabled=not base_carregada
-        )
-        grupos = st.multiselect(
-            "Grupo de despesa", _opcoes(dados, "Grupo de despesa"), key="dea_grupos", disabled=not base_carregada
-        )
-        executivas = st.multiselect("Executiva", _opcoes(dados, "Executiva"), key="dea_executivas", disabled=not base_carregada)
-        prioritarios = st.multiselect("Prioritário", _opcoes(dados, "Prioritário"), key="dea_prioritarios", disabled=not base_carregada)
-        termo_credor = st.text_input("Credor (buscar por nome)", key="dea_credor", disabled=not base_carregada)
+    total=filtrado["Valor"].sum()
+    aguarda=filtrado[filtrado["Status CPF"].str.contains("AGUARD",case=False,na=False)]["Valor"].sum()
+    pago_mask=filtrado["Status pagamento"].str.upper().eq("PAGO")
+    pagos=filtrado.loc[pago_mask,"Valor"].sum()
+    prio=filtrado.loc[filtrado.get("Prioritário",pd.Series("",index=filtrado.index)).str.upper().eq("SIM"),"Valor"].sum()
 
-    filtrado = dados.copy()
-    for coluna, valores in (
-        ("Ano DEA", anos), ("Status CPF", status_cpf), ("Status pagamento", status_pagamento),
-        ("Grupo de despesa", grupos), ("Executiva", executivas), ("Prioritário", prioritarios),
-    ):
-        filtrado = _aplicar_multifiltro(filtrado, coluna, valores)
-    if termo_credor:
-        filtrado = filtrado[filtrado["Credor"].str.contains(termo_credor, case=False, na=False)]
+    c1,c2,c3,c4=st.columns(4)
+    with c1:_card("◉  Valor total monitorado",_moeda(total),f"{len(filtrado):,} registros".replace(",","."),"azul")
+    with c2:_card("◷  Aguardando CPF",_moeda(aguarda),f"{_pct(aguarda,total):.1f}% do total","amarelo")
+    with c3:_card("✓  Pagos",_moeda(pagos),f"{_pct(pagos,total):.1f}% do total","verde")
+    with c4:_card("★  Prioritários",_moeda(prio),f"{_pct(prio,total):.1f}% do total","dourado")
 
-    total = float(filtrado["Valor"].sum())
-    aguardando_cpf = filtrado[filtrado["Status CPF"].str.contains("AGUARD", case=False, na=False)]
-    pagos = filtrado[filtrado["Status pagamento"].str.contains("PAGO", case=False, na=False) & ~filtrado["Status pagamento"].str.contains("NÃO PAGO|NAO PAGO", case=False, na=False)]
-    prioritarios_dados = filtrado[filtrado.get("Prioritário", pd.Series("", index=filtrado.index)).str.upper().eq("SIM")]
+    principal,lateral=st.columns([3.15,1.0],gap="small")
+    with principal:
+        st.markdown('<div class="dea-box-title">▣ &nbsp; Planejamento DEA por Credor</div>',unsafe_allow_html=True)
+        if filtrado.empty:
+            st.info("Nenhum registro encontrado para os filtros aplicados.")
+        else:
+            agg={"Valor":"sum"}
+            if "Processo / SEI" in filtrado: agg["Processo / SEI"]="nunique"
+            if "SIPR 2026" in filtrado: agg["SIPR 2026"]=lambda s:"Sim" if s.replace("",pd.NA).notna().any() else "Não"
+            if "Status CPF" in filtrado: agg["Status CPF"]=lambda s:", ".join(sorted(set(x for x in s if x)))
+            if "Status pagamento" in filtrado: agg["Status pagamento"]=lambda s:", ".join(sorted(set(x for x in s if x)))
+            resumo=filtrado.groupby("Credor",dropna=False).agg(agg).reset_index().sort_values("Valor",ascending=False)
+            resumo=resumo.rename(columns={"Processo / SEI":"Processos","Status pagamento":"Status Pagamento","Valor":"Valor total"})
+            resumo.insert(0,"#",range(1,len(resumo)+1))
+            st.dataframe(resumo,use_container_width=True,hide_index=True,height=420,column_config={"Valor total":st.column_config.NumberColumn("Valor total",format="R$ %.2f")})
 
-    col1, col2, col3, col4 = st.columns(4)
-    col1.metric("VALOR TOTAL MONITORADO", _moeda(total), f"{len(filtrado):,} registros".replace(",", "."))
-    col2.metric("AGUARDANDO CPF", _moeda(float(aguardando_cpf["Valor"].sum())), f"{len(aguardando_cpf):,} registros".replace(",", "."))
-    col3.metric("PAGOS", _moeda(float(pagos["Valor"].sum())), f"{len(pagos):,} registros".replace(",", "."))
-    col4.metric("PRIORITÁRIOS", _moeda(float(prioritarios_dados["Valor"].sum())), f"{len(prioritarios_dados):,} registros".replace(",", "."))
-
-    if not base_carregada:
-        st.info("A estrutura do monitoramento está pronta. Use **Upload** na lateral para carregar a base DEA e preencher os cards, filtros e tabelas.")
-
-    st.markdown("### 📋 Planejamento DEA por Credor")
-    agrupamento = {
-        "Processo / SEI": "nunique", "SIPR 2026": lambda serie: "Sim" if serie.astype(bool).any() else "Não",
-        "Status CPF": lambda serie: ", ".join(sorted(valor for valor in serie.unique() if valor)),
-        "Status pagamento": lambda serie: ", ".join(sorted(valor for valor in serie.unique() if valor)),
-        "Valor": "sum",
-    }
-    agrupamento = {coluna: regra for coluna, regra in agrupamento.items() if coluna in filtrado.columns}
-    resumo = filtrado.groupby("Credor", dropna=False).agg(agrupamento).reset_index().sort_values("Valor", ascending=False)
-    resumo = resumo.rename(columns={"Processo / SEI": "Processos", "Status pagamento": "Status Pagamento", "Status CPF": "Status CPF", "Valor": "Valor total"})
-    if "Valor total" in resumo:
-        resumo["Valor total"] = resumo["Valor total"].map(_moeda)
-    st.dataframe(resumo, use_container_width=True, hide_index=True, height=430)
-
-    esquerda, direita = st.columns([1.25, 0.75])
-    with esquerda:
-        st.markdown("### Objetos de despesa com maior valor")
-        if "Objeto" in filtrado.columns:
-            objetos = filtrado.groupby("Objeto", dropna=False)["Valor"].sum().sort_values(ascending=False).head(12).reset_index()
-            objetos["Valor"] = objetos["Valor"].map(_moeda)
-            st.dataframe(objetos.rename(columns={"Valor": "Valor total"}), use_container_width=True, hide_index=True)
-    with direita:
-        st.markdown("### Resumo por status")
-        por_status = filtrado.groupby("Status pagamento", dropna=False)["Valor"].sum().sort_values(ascending=False).reset_index()
-        por_status["Valor"] = por_status["Valor"].map(_moeda)
-        st.dataframe(por_status.rename(columns={"Status pagamento": "Situação", "Valor": "Valor total"}), use_container_width=True, hide_index=True)
+        st.markdown('<div class="dea-box-title">▧ &nbsp; Objetos de despesa com maior valor</div>',unsafe_allow_html=True)
+        if "Objeto" in filtrado and not filtrado.empty:
+            obj=filtrado.groupby("Objeto",dropna=False)["Valor"].sum().sort_values(ascending=False).head(8).reset_index()
+            obj["%"]=obj["Valor"].map(lambda x:_pct(x,total))
+            obj.insert(0,"#",range(1,len(obj)+1))
+            st.dataframe(obj,use_container_width=True,hide_index=True,height=275,column_config={"Valor":st.column_config.NumberColumn("Valor total",format="R$ %.2f"),"%":st.column_config.NumberColumn("%",format="%.1f%%")})
+    with lateral:
+        _painel_resumo("◉  Status do pagamento",filtrado,"Status pagamento",total,4)
+        _painel_resumo("★  Status CPF",filtrado,"Status CPF",total,4)
+        _painel_resumo("◫  Grupo de despesa",filtrado,"Grupo de despesa",total,6)
+        _painel_resumo("▣  Por Executiva",filtrado,"Executiva",total,6)
