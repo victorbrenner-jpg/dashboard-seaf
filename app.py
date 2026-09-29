@@ -283,6 +283,15 @@ st.markdown(
     body [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"][style*="height: 0"] {
         display: none !important;
     }
+    /* Padrão visual global: placeholders sem conteúdo não podem consumir o
+       gap do stVerticalBlock. Mantemos o gap normal somente entre elementos
+       reais, reproduzindo o espaçamento aprovado na tela de Liquidação. */
+    body [data-testid="stMainBlockContainer"] [data-testid="stVerticalBlock"] {
+        row-gap: 1rem;
+    }
+    body [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"]:not(:has(> *)) {
+        display: none !important;
+    }
     /* Navegação no fluxo normal do Streamlit: evita qualquer espaço fantasma
        entre o menu global e o conteúdo das páginas. */
     .st-key-topo_navegacao {
