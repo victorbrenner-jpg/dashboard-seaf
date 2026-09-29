@@ -148,12 +148,10 @@ def render() -> None:
         <style>
           .home-shell {
             width: min(1420px, calc(100vw - 4rem));
-            height: calc(100vh - 138px);
-            max-height: calc(100vh - 138px);
             margin: 0 auto;
-            padding: 1.35rem 0 0;
+            padding: 1.5rem 0 2rem;
             box-sizing: border-box;
-            overflow: hidden;
+            min-height: 0;
           }
           .home-title {margin: 0; color: #1d344d; font: 600 2.15rem/1.15 'Segoe UI', Arial, sans-serif; letter-spacing: -.035em;}
           .home-grid {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-top: 2.4rem;}
