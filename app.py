@@ -263,22 +263,19 @@ st.markdown(
     /* A barra SEAF e a navegação são fixas. O conteúdo começa logo abaixo
        delas sem permitir que o wrapper flex principal seja esticado. */
     body [data-testid="stMainBlockContainer"] {
-        padding-top: 96px !important;
+        padding-top: 0.75rem !important;
     }
-    /* O host da navegação sai completamente do fluxo flex do Streamlit.
-       Os elementos visuais internos continuam fixed, mas o host não reserva
-       altura nem interfere no cálculo vertical das páginas. */
+    /* Navegação no fluxo normal do Streamlit: evita qualquer espaço fantasma
+       entre o menu global e o conteúdo das páginas. */
     .st-key-topo_navegacao {
-        position: absolute !important;
-        inset: 0 auto auto 0 !important;
-        width: 0 !important;
-        height: 0 !important;
-        min-width: 0 !important;
+        position: relative !important;
+        width: 100% !important;
+        height: auto !important;
         min-height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
         overflow: visible !important;
-        z-index: 100001 !important;
+        z-index: 10 !important;
     }
     /* Mantém o cabeçalho técnico invisível, sem eliminar o controle nativo
        que permite reabrir os filtros quando a barra lateral for recolhida. */
