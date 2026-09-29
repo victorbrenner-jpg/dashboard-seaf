@@ -7,7 +7,7 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
-URL_BASE_DEA = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRFcspPcERcq_Eu2bFM5uHRa6thMKvCKf5zs_87QzokzZe3W5QYZFsWoK2m4seEkA/pubhtml?gid=1881579019&single=true"
+URL_BASE_DEA = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRFcspPcERcq_Eu2bFM5uHRa6thMKvCKf5zs_87QzokzZe3W5QYZFsWoK2m4seEkA/pub?gid=1881579019&single=true&output=csv"
 
 def _normalizar(v):
     return " ".join(unicodedata.normalize("NFKD", str(v)).encode("ASCII","ignore").decode().upper().replace("/"," ").split())
@@ -50,11 +50,13 @@ def _preparar(dados):
 
 @st.cache_data(ttl=300, show_spinner=False)
 def _carregar_publicada():
-    tabelas=pd.read_html(URL_BASE_DEA, decimal=",", thousands=".")
-    for t in tabelas:
-        if any(_normalizar(c)=="CREDOR" for c in t.columns):
+    # Publicação CSV é mais estável e leve que a página HTML.
+    # A BASE oficial possui linhas de apresentação antes do cabeçalho.
+    for header in (2, 0, 1, 3):
+        t = pd.read_csv(URL_BASE_DEA, header=header)
+        if any(_normalizar(c) == "CREDOR" for c in t.columns):
             return _preparar(t)
-    raise ValueError("A tabela BASE não foi localizada na publicação.")
+    raise ValueError("O cabeçalho da BASE não foi localizado na publicação CSV.")
 
 def _carregar_upload(arq):
     xls=pd.ExcelFile(io.BytesIO(arq.getvalue()))
@@ -114,13 +116,13 @@ def render():
     try:
         dados=_carregar_publicada()
         origem="Base DEA publicada"
-    except Exception:
-        with st.sidebar:
-            arq=st.file_uploader("Base DEA (.xlsx)",type=["xlsx"],key="dea_fallback")
-        if not arq:
-            st.warning("Não foi possível acessar a base publicada. Envie a planilha DEA na lateral.")
-            return
-        dados=_carregar_upload(arq); origem="Arquivo enviado"
+    except Exception as erro:
+        st.error("Não foi possível atualizar a Base DEA conectada ao Google Sheets.")
+        st.caption(f"Detalhe técnico: {erro}")
+        if st.button("↻ Tentar atualizar a base", key="dea_retry"):
+            _carregar_publicada.clear()
+            st.rerun()
+        return
 
     # Filtros só alteram o painel quando Aplicar filtros é acionado.
     with st.sidebar:
