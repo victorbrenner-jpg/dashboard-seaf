@@ -45,7 +45,18 @@ def _preparar(dados):
         raise ValueError("Colunas obrigatórias não encontradas: "+", ".join(sorted(obrig-set(dados.columns))))
     for c in dados.columns:
         if c!="Valor": dados[c]=dados[c].fillna("").astype(str).str.strip()
-    dados["Valor"]=pd.to_numeric(dados["Valor"],errors="coerce").fillna(0.0)
+    # A publicação CSV do Google Sheets traz os valores monetários no padrão
+    # brasileiro (ex.: 1.234.567,89). pd.to_numeric direto transforma tudo em NaN.
+    valor = (
+        dados["Valor"]
+        .astype(str)
+        .str.replace("R$", "", regex=False)
+        .str.replace("\\xa0", "", regex=False)
+        .str.replace(" ", "", regex=False)
+        .str.replace(".", "", regex=False)
+        .str.replace(",", ".", regex=False)
+    )
+    dados["Valor"] = pd.to_numeric(valor, errors="coerce").fillna(0.0)
     return dados
 
 @st.cache_data(ttl=300, show_spinner=False)
