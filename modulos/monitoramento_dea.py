@@ -163,7 +163,7 @@ def render():
 
     principal,lateral=st.columns([3.15,1.0],gap="small")
     with principal:
-        st.markdown('<div class="dea-box-title">▣ &nbsp; Planejamento DEA por Credor</div>',unsafe_allow_html=True)
+        st.markdown('<div class="dea-box-title">▣ &nbsp; Credor</div>',unsafe_allow_html=True)
         if filtrado.empty:
             st.info("Nenhum registro encontrado para os filtros aplicados.")
         else:
@@ -175,7 +175,48 @@ def render():
             resumo=filtrado.groupby("Credor",dropna=False).agg(agg).reset_index().sort_values("Valor",ascending=False)
             resumo=resumo.rename(columns={"Processo / SEI":"Processos","Status pagamento":"Status Pagamento","Valor":"Valor total"})
             resumo.insert(0,"#",range(1,len(resumo)+1))
-            st.dataframe(resumo,use_container_width=True,hide_index=True,height=420,column_config={"Valor total":st.column_config.NumberColumn("Valor total",format="R$ %.2f")})
+            evento_credor = st.dataframe(
+                resumo,
+                use_container_width=True,
+                hide_index=True,
+                height=420,
+                column_config={"Valor total":st.column_config.NumberColumn("Valor total",format="R$ %.2f")},
+                on_select="rerun",
+                selection_mode="single-row",
+                key="dea_tabela_credores",
+            )
+
+            # Ao selecionar um credor, exibe abaixo todos os processos que compõem o agrupamento.
+            linhas_selecionadas = evento_credor.selection.rows if evento_credor else []
+            if linhas_selecionadas:
+                idx = linhas_selecionadas[0]
+                if 0 <= idx < len(resumo):
+                    credor_selecionado = resumo.iloc[idx]["Credor"]
+                    processos = filtrado[filtrado["Credor"].eq(credor_selecionado)].copy()
+
+                    st.markdown(
+                        f'<div class="dea-box-title">▣ &nbsp; Processos — {credor_selecionado}</div>',
+                        unsafe_allow_html=True,
+                    )
+                    colunas_detalhe = [
+                        "Processo / SEI", "Objeto", "Ano DEA", "Valor",
+                        "SIPR 2026", "Status CPF", "Status pagamento",
+                        "Executiva", "Grupo de despesa", "Prioritário",
+                    ]
+                    colunas_detalhe = [col for col in colunas_detalhe if col in processos.columns]
+                    processos = processos[colunas_detalhe].copy()
+                    if "Valor" in processos.columns:
+                        processos = processos.sort_values(["Processo / SEI"] if "Processo / SEI" in processos.columns else ["Valor"])
+                    st.dataframe(
+                        processos,
+                        use_container_width=True,
+                        hide_index=True,
+                        height=min(360, 38 + 35 * max(len(processos), 1)),
+                        column_config={
+                            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                            "Status pagamento": "Status Pagamento",
+                        },
+                    )
 
         st.markdown('<div class="dea-box-title">▧ &nbsp; Objetos de despesa com maior valor</div>',unsafe_allow_html=True)
         if "Objeto" in filtrado and not filtrado.empty:
