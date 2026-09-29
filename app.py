@@ -260,15 +260,19 @@ st.markdown(
         background: linear-gradient(135deg, #004a7c 0%, #01757d 100%) !important;
         color: #ffffff !important;
     }
-    /* A barra SEAF e a navegação são fixas. O container nativo do Streamlit
-       não deve reservar altura extra para elas; o conteúdo começa logo abaixo
-       do conjunto fixo por meio de um deslocamento único e previsível. */
+    /* A barra SEAF e a navegação são fixas. O conteúdo começa logo abaixo
+       delas sem permitir que o wrapper flex principal seja esticado. */
     body [data-testid="stMainBlockContainer"] {
         padding-top: 96px !important;
     }
-    /* Remove o container da navegação do fluxo normal. Colapsar apenas altura
-       não basta porque o wrapper flex do Streamlit pode continuar calculando
-       o tamanho intrínseco dos filhos fixed. */
+    body [data-testid="stMainBlockContainer"] > [data-testid="stVerticalBlock"] {
+        flex: 0 0 auto !important;
+        min-height: 0 !important;
+        height: auto !important;
+        align-self: flex-start !important;
+    }
+
+    /* A navegação fixa não participa do cálculo de altura do conteúdo. */
     .st-key-topo_navegacao {
         position: fixed !important;
         top: 0 !important;
@@ -279,16 +283,6 @@ st.markdown(
         margin: 0 !important;
         padding: 0 !important;
         z-index: 100001 !important;
-        overflow: visible !important;
-    }
-    .st-key-topo_navegacao > div,
-    .st-key-topo_navegacao [data-testid="stVerticalBlock"],
-    .st-key-topo_navegacao [data-testid="stVerticalBlockBorderWrapper"] {
-        height: 0 !important;
-        min-height: 0 !important;
-        margin: 0 !important;
-        padding: 0 !important;
-        gap: 0 !important;
         overflow: visible !important;
     }
     /* Mantém o cabeçalho técnico invisível, sem eliminar o controle nativo
