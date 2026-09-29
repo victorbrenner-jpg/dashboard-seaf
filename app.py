@@ -266,19 +266,21 @@ st.markdown(
     body [data-testid="stMainBlockContainer"] {
         padding-top: 96px !important;
     }
-    /* O container que hospeda apenas a barra fixa continua ocupando espaço no
-       fluxo do Streamlit mesmo com os filhos em position:fixed. Colapsá-lo
-       elimina o grande vazio que empurrava todas as telas para baixo. */
+    /* Remove o container da navegação do fluxo normal. Colapsar apenas altura
+       não basta porque o wrapper flex do Streamlit pode continuar calculando
+       o tamanho intrínseco dos filhos fixed. */
     .st-key-topo_navegacao {
+        position: fixed !important;
+        top: 0 !important;
+        left: 0 !important;
+        right: 0 !important;
         height: 0 !important;
         min-height: 0 !important;
         margin: 0 !important;
         padding: 0 !important;
+        z-index: 100001 !important;
         overflow: visible !important;
     }
-    /* O Streamlit cria wrappers internos (stVerticalBlock) dentro do
-       container. Eles também precisam ser colapsados; atingir apenas o filho
-       direto deixa um wrapper invisível reservando centenas de pixels. */
     .st-key-topo_navegacao > div,
     .st-key-topo_navegacao [data-testid="stVerticalBlock"],
     .st-key-topo_navegacao [data-testid="stVerticalBlockBorderWrapper"] {
