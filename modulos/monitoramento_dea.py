@@ -245,7 +245,22 @@ def render():
                 sipr = linha.get("SIPR 2026", "Não")
                 status_cpf = linha.get("Status CPF", "") or "—"
                 status_pag = linha.get("Status Pagamento", "") or "—"
-                rotulo = f'{int(linha["#"])}  |  {nome_credor}  |  {_moeda(valor_total)}  |  {qtd} processo(s)'
+                processos_credor = filtrado[filtrado["Credor"].eq(nome_credor)].copy()
+                mascara_aguardando = processos_credor["Status CPF"].str.contains(
+                    "AGUARD", case=False, na=False
+                )
+                valor_aguardando = float(processos_credor.loc[mascara_aguardando, "Valor"].sum())
+                possui_pendencia = valor_aguardando > 0
+
+                # A lista principal é de cobrança: somente quem ainda aguarda
+                # aprovação recebe alerta e valor. Credores já aprovados ficam
+                # limpos, sem valor destacado, para leitura rápida do gestor.
+                rotulo = f'{int(linha["#"])}  |  {nome_credor}'
+                if possui_pendencia:
+                    rotulo = (
+                        f'{int(linha["#"])}  |  **🟠 {nome_credor}**'
+                        f'  |  **AGUARDANDO APROVAÇÃO: {_moeda(valor_aguardando)}**'
+                    )
 
                 with st.expander(rotulo, expanded=False):
                     st.markdown(
@@ -254,13 +269,13 @@ def render():
                           <div><small>SIPR 2026</small><strong>{sipr}</strong></div>
                           <div><small>STATUS CPF</small><strong>{status_cpf}</strong></div>
                           <div><small>STATUS PAGAMENTO</small><strong>{status_pag}</strong></div>
-                          <div><small>VALOR TOTAL</small><strong>{_moeda(valor_total)}</strong></div>
+                          <div><small>{"VALOR AGUARDANDO" if possui_pendencia else "SITUAÇÃO"}</small><strong>{_moeda(valor_aguardando) if possui_pendencia else "APROVADO"}</strong></div>
                         </div>
                         """,
                         unsafe_allow_html=True,
                     )
 
-                    processos = filtrado[filtrado["Credor"].eq(nome_credor)].copy()
+                    processos = processos_credor
                     processos = processos.sort_values(
                         ["Processo / SEI"] if "Processo / SEI" in processos.columns else ["Valor"]
                     )
