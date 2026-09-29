@@ -148,10 +148,16 @@ def render() -> None:
         <style>
           .home-shell {
             width: min(1420px, calc(100vw - 4rem));
+            position: fixed;
+            inset: 118px 0 0;
             margin: 0 auto;
-            padding: 1.5rem 0 2rem;
+            padding: 0 0 4rem;
             box-sizing: border-box;
             min-height: 0;
+            display: flex;
+            flex-direction: column;
+            justify-content: center;
+            overflow: hidden;
           }
           .home-title {margin: 0; color: #1d344d; font: 600 2.15rem/1.15 'Segoe UI', Arial, sans-serif; letter-spacing: -.035em;}
           .home-grid {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-top: 2.4rem;}
@@ -168,7 +174,7 @@ def render() -> None:
           .home-icon {width:43px; height:43px; border-radius:50%; display:flex; align-items:center; justify-content:center; font-size:1.22rem; background:#eef6f8; border:1px solid #d7e9ec;}
           .home-name {text-align:center; font:650 .94rem/1.25 'Segoe UI', Arial, sans-serif;}
           @media (max-width: 950px) {
-            .home-shell {height:auto; max-height:none; padding:1.5rem 0 2rem; overflow:visible;}
+            .home-shell {position:static; height:auto; max-height:none; padding:1.5rem 0 2rem; overflow:visible; display:block;}
             .home-grid {grid-template-columns: repeat(3, minmax(0, 1fr)); margin-top:2rem;}
           }
           @media (max-width: 640px) {
