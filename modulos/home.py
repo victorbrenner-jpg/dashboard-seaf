@@ -134,7 +134,10 @@ MODULOS = [
     ("📑", "Liquidação (NL)"),
     ("📅", "Programa de Desembolso (PD)"),
     ("💳", "Pagamentos (OB)"),
-    ("🎯", "Planejar Priorização"),
+    # Priorização permanece implementada, mas está temporariamente desativada
+    # na entrada do sistema a pedido da área usuária.
+    # ("🎯", "Planejar Priorização"),
+    ("📋", "Monitoramento DEA"),
     ("📊", "Relatório 009717"),
 ]
 

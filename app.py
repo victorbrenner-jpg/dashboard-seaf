@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, relatorio_mde, relatorio_credores
+from modulos import conferencia, home, monitoramento_dea, relatorio_mde, relatorio_credores
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
@@ -2691,20 +2691,20 @@ def chamar_api_relatorio_009717(url_api, acao="status", timeout=120):
 
     return conteudo
 
-
 # -------------------------------------------------------------------------
 # NAVEGAÇÃO PRINCIPAL ENTRE AS TELAS
 # -------------------------------------------------------------------------
 # Mantém a tela selecionada durante a atualização do nome exibido no menu.
-if st.session_state.get("tela_atual") == "Planejamento NL":
-    st.session_state["tela_atual"] = "Planejar Priorização"
+if st.session_state.get("tela_atual") in {"Planejamento NL", "Planejar Priorização"}:
+    st.session_state["tela_atual"] = "Monitoramento DEA"
 
 opcoes_tela = [
     "Início",
     "Liquidação (NL)",
     "Programa de Desembolso (PD)",
     "Pagamentos (OB)",
-    "Planejar Priorização",
+    # "Planejar Priorização",  # Temporariamente desativada na homologação.
+    "Monitoramento DEA",
     "Relatório 009717",
 ]
 
@@ -2755,7 +2755,7 @@ with st.container(key="topo_navegacao"):
                 "Pagamentos (OB)": "💳 Pagamentos (OB)",
                 "Liquidação (NL)": "📑 Liquidação (NL)",
                 "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
-                "Planejar Priorização": "🎯 Planejar Priorização",
+                "Monitoramento DEA": "📋 Monitoramento DEA",
                 "Relatório 009717": "📊 Relatório 009717",
             }[opcao],
             selection_mode="single",
@@ -5360,6 +5360,9 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
     else:
         st.warning("Aguardando carregamento e relacionamento das planilhas...")
+
+elif st.session_state["tela_atual"] == "Monitoramento DEA":
+    monitoramento_dea.render()
 
 elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
     # ---------------------------------------------------------------------
