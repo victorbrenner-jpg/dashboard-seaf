@@ -265,6 +265,14 @@ st.markdown(
     body [data-testid="stMainBlockContainer"] {
         padding-top: 0.75rem !important;
     }
+    /* O Streamlit mantém no bloco principal vários stElementContainer vazios
+       (altura 0). Como o stVerticalBlock aplica gap de 1rem entre filhos, cada
+       container vazio ainda criava 1rem de espaço e a soma empurrava o título
+       centenas de pixels para baixo. Elementos realmente vazios não precisam
+       participar do layout. */
+    body [data-testid="stMainBlockContainer"] [data-testid="stElementContainer"]:empty {
+        display: none !important;
+    }
     /* Navegação no fluxo normal do Streamlit: evita qualquer espaço fantasma
        entre o menu global e o conteúdo das páginas. */
     .st-key-topo_navegacao {
