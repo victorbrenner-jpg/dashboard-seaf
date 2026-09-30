@@ -184,24 +184,6 @@ def render() -> None:
     with c4:
         _card("Saldo a executar", saldo, "Meta anual ainda disponível", "laranja")
 
-    st.markdown('<div class="fnde-box-title">Execução por cooperativa</div>', unsafe_allow_html=True)
-    por_credor = filtrado.groupby("Cooperativa")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
-    qtde_pagamentos = filtrado.groupby("Cooperativa").size() if not filtrado.empty else pd.Series(dtype=int)
-    linhas_resumo = []
-    for cooperativa in COOPERATIVAS:
-        valor = float(por_credor.get(cooperativa, 0.0))
-        quantidade = int(qtde_pagamentos.get(cooperativa, 0))
-        linhas_resumo.append(
-            f"<tr><td class='fnde-credor'>{cooperativa}</td><td>{quantidade}</td>"
-            f"<td class='fnde-valor'>{_moeda(valor)}</td><td>{valor / META_COOPERATIVAS * 100:.1f}%</td></tr>"
-        )
-    st.markdown(
-        "<div class='fnde-tabela'><table><thead><tr><th>CREDOR</th><th>PAGAMENTOS</th>"
-        "<th>EXECUTADO</th><th>% DA META FNDE</th></tr></thead><tbody>"
-        + "".join(linhas_resumo) + "</tbody></table></div>",
-        unsafe_allow_html=True,
-    )
-
     st.markdown('<div class="fnde-box-title">Distribuição mensal de recursos por cooperativa</div>', unsafe_allow_html=True)
     matriz = pd.pivot_table(
         filtrado,
@@ -258,18 +240,22 @@ def render() -> None:
             figura.add_scatter(name="Executado", x=grafico["Mês"], y=grafico["Executado no mês"], mode="lines+markers+text", text=[_moeda(valor) if valor else "" for valor in grafico["Executado no mês"]], textposition="top center", textfont=dict(size=9, color="#61758a"), line=dict(color="#00879a", width=3), marker=dict(color="#f39b16", size=9))
             figura.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), showlegend=False, yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", plot_bgcolor="#fff", paper_bgcolor="#fff")
             figura.update_xaxes(showgrid=False, tickangle=-28)
-            figura.update_yaxes(gridcolor="#e8eff4", zerolinecolor="#e8eff4")
-            st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
+        figura.update_yaxes(gridcolor="#e8eff4", zerolinecolor="#e8eff4")
+        st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
         with direita:
-            st.markdown('<div class="fnde-subtitulo-grafico">Resumo gerencial por mês</div>', unsafe_allow_html=True)
-            linhas_mes = "".join(
-                f"<tr><td>{linha['Mês']}</td><td>{linha['Pagamentos']}</td><td class='fnde-valor'>{_moeda(linha['Executado no mês'])}</td></tr>"
-                for _, linha in grafico.iterrows()
+            st.markdown('<div class="fnde-subtitulo-grafico">Execução por cooperativa</div>', unsafe_allow_html=True)
+            por_credor = filtrado.groupby("Cooperativa")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
+            qtde_pagamentos = filtrado.groupby("Cooperativa").size() if not filtrado.empty else pd.Series(dtype=int)
+            linhas_resumo = "".join(
+                f"<tr><td>{cooperativa}</td><td>{int(qtde_pagamentos.get(cooperativa, 0))}</td>"
+                f"<td class='fnde-valor'>{_moeda(float(por_credor.get(cooperativa, 0.0)))}</td>"
+                f"<td>{float(por_credor.get(cooperativa, 0.0)) / META_COOPERATIVAS * 100:.1f}%</td></tr>"
+                for cooperativa in COOPERATIVAS
             )
             st.markdown(
-                "<div class='fnde-resumo-mes'><table><thead><tr><th>MÊS DE REFERÊNCIA</th><th>QTD. PAGAMENTOS</th><th>TOTAL EXECUTADO</th></tr></thead><tbody>"
-                + linhas_mes
-                + f"<tr><td class='fnde-total'>TOTAL GERAL</td><td class='fnde-total'>{int(grafico['Pagamentos'].sum())}</td><td class='fnde-total'>{_moeda(float(grafico['Executado no mês'].sum()))}</td></tr>"
+                "<div class='fnde-resumo-mes'><table><thead><tr><th>CREDOR</th><th>PAGAMENTOS</th><th>EXECUTADO</th><th>% DA META FNDE</th></tr></thead><tbody>"
+                + linhas_resumo
+                + f"<tr><td class='fnde-total'>TOTAL GERAL</td><td class='fnde-total'>{int(qtde_pagamentos.sum())}</td><td class='fnde-total'>{_moeda(float(por_credor.sum()))}</td><td class='fnde-total'>{percentual_executado:.1f}%</td></tr>"
                 + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
