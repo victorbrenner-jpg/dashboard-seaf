@@ -113,7 +113,8 @@ def render() -> None:
         .fnde-box-title{background:linear-gradient(90deg,#075b88,#08749a);color:#fff;font-weight:700;padding:8px 11px;border-radius:7px 7px 0 0;margin-top:22px}
         .fnde-tabela{border:1px solid #d7e3ee;border-top:0;border-radius:0 0 7px 7px;overflow:auto;background:#fff;margin-bottom:6px}.fnde-tabela table{width:max-content;min-width:100%;border-collapse:collapse;font-size:.76rem;color:#163b5b}
         .fnde-tabela th{background:#edf4f8;padding:10px 12px;text-align:left;font-size:.67rem;white-space:nowrap;border-right:1px solid #dce7ef}.fnde-tabela td{padding:11px 12px;border-top:1px solid #e1eaf1;border-right:1px solid #edf2f6;white-space:nowrap}.fnde-tabela td:not(:first-child):not(:last-child),.fnde-tabela th:not(:first-child):not(:last-child){text-align:center}.fnde-tabela td:last-child,.fnde-tabela th:last-child{text-align:right}.fnde-tabela td:not(:first-child){font-weight:700;color:#063b70}.fnde-tabela .fnde-credor{font-weight:750;white-space:normal;min-width:290px}.fnde-tabela .fnde-valor{font-weight:800;color:#16865b}.fnde-tabela .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
-        .fnde-analise{border:1px solid #d7e3ee;border-radius:8px;padding:14px 16px 12px;margin-top:14px;background:#fff}.fnde-analise-titulo{font-size:1.25rem;font-weight:800;color:#1f3655;margin:28px 0 14px;padding:11px 14px;border:1px solid #d5e5ed;border-left:5px solid #07879b;border-radius:7px;background:#f7fbfd}
+        .fnde-analise{border:1px solid #d7e3ee;border-radius:8px;padding:14px 16px 12px;margin-top:14px;background:#fff}.fnde-analise-titulo{font-size:1.25rem;font-weight:800;color:#1f3655;margin:28px 0 0;padding:11px 14px;border:1px solid #d5e5ed;border-left:5px solid #07879b;border-radius:7px 7px 0 0;background:#f7fbfd}
+        .st-key-analise_fnde{margin-top:-1rem!important;border-radius:0 0 8px 8px!important}
         .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 13px}
         .fnde-resumo-mes{border:1px solid #d7e3ee;border-radius:7px;overflow:hidden;background:#fff}.fnde-resumo-mes table{width:100%;border-collapse:collapse;font-size:.75rem;color:#163b5b}.fnde-resumo-mes th{background:#edf4f8;padding:9px;text-align:left;font-size:.64rem}.fnde-resumo-mes td{padding:9px;border-top:1px solid #e1eaf1}.fnde-resumo-mes td:not(:first-child),.fnde-resumo-mes th:not(:first-child){text-align:center}.fnde-resumo-mes td:not(:first-child){font-weight:700;color:#063b70}.fnde-resumo-mes .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
         </style>""",
@@ -219,7 +220,7 @@ def render() -> None:
     grafico = pd.DataFrame({"Mês": MESES, "Executado no mês": [float(mensal.get(mes, 0.0)) for mes in MESES]})
     grafico["Pagamentos"] = [int(quantidade_mensal.get(mes, 0)) for mes in MESES]
     st.markdown('<div class="fnde-analise-titulo">Análise temporal e execução mensal</div>', unsafe_allow_html=True)
-    with st.container(border=True):
+    with st.container(key="analise_fnde", border=True):
         esquerda, direita = st.columns([1.18, .92], gap="large")
         with esquerda:
             st.markdown('<div class="fnde-subtitulo-grafico">Curva de execução mensal das cooperativas</div>', unsafe_allow_html=True)
