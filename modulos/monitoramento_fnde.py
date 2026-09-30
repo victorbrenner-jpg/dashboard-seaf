@@ -111,8 +111,11 @@ def render() -> None:
         .fnde-card-title{font-size:.78rem;font-weight:800;color:#174d7c;text-transform:uppercase}.fnde-card-value{font-size:1.38rem;font-weight:800;color:#063b70;margin-top:6px}.fnde-card-detail{font-size:.76rem;color:#63788d;margin-top:5px}
         .fnde-card.verde .fnde-card-value{color:#16865b}.fnde-card.laranja .fnde-card-value{color:#c97800}
         .fnde-box-title{background:linear-gradient(90deg,#075b88,#08749a);color:#fff;font-weight:700;padding:8px 11px;border-radius:7px 7px 0 0;margin-top:5px}
-        .fnde-tabela{border:1px solid #d7e3ee;border-top:0;border-radius:0 0 7px 7px;overflow:auto;background:#fff}.fnde-tabela table{width:100%;border-collapse:collapse;font-size:.78rem;color:#163b5b}
-        .fnde-tabela th{background:#edf4f8;padding:9px 10px;text-align:left;font-size:.67rem;white-space:nowrap}.fnde-tabela td{padding:10px;border-top:1px solid #e1eaf1}.fnde-tabela td:not(:first-child),.fnde-tabela th:not(:first-child){text-align:right}.fnde-tabela .fnde-credor{font-weight:750}.fnde-tabela .fnde-valor{font-weight:800;color:#16865b}.fnde-tabela .fnde-saldo{font-weight:800;color:#c97800}
+        .fnde-tabela{border:1px solid #d7e3ee;border-top:0;border-radius:0 0 7px 7px;overflow:auto;background:#fff}.fnde-tabela table{width:max-content;min-width:100%;border-collapse:collapse;font-size:.76rem;color:#163b5b}
+        .fnde-tabela th{background:#edf4f8;padding:10px 12px;text-align:left;font-size:.67rem;white-space:nowrap;border-right:1px solid #dce7ef}.fnde-tabela td{padding:11px 12px;border-top:1px solid #e1eaf1;border-right:1px solid #edf2f6;white-space:nowrap}.fnde-tabela td:not(:first-child),.fnde-tabela th:not(:first-child){text-align:right}.fnde-tabela .fnde-credor{font-weight:750;white-space:normal;min-width:290px}.fnde-tabela .fnde-valor{font-weight:800;color:#16865b}.fnde-tabela .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
+        .fnde-analise{border:1px solid #d7e3ee;border-radius:8px;padding:14px 16px 12px;margin-top:14px;background:#fff}.fnde-analise-titulo{font-size:1.25rem;font-weight:800;color:#1f3655;margin:0 0 14px}
+        .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 9px}.fnde-mini-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 8px}.fnde-mini-card{border:1px solid #dbe5ee;border-radius:8px;padding:8px 10px;background:#f8fbfd}.fnde-mini-label{font-size:.58rem;color:#64748b;font-weight:800;letter-spacing:.04em}.fnde-mini-value{font-size:.92rem;color:#075b88;font-weight:800;margin-top:3px}
+        .fnde-resumo-mes{border:1px solid #d7e3ee;border-radius:7px;overflow:hidden;background:#fff}.fnde-resumo-mes table{width:100%;border-collapse:collapse;font-size:.75rem;color:#163b5b}.fnde-resumo-mes th{background:#edf4f8;padding:9px;text-align:left;font-size:.64rem}.fnde-resumo-mes td{padding:9px;border-top:1px solid #e1eaf1}.fnde-resumo-mes td:not(:first-child),.fnde-resumo-mes th:not(:first-child){text-align:right}.fnde-resumo-mes .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
         </style>""",
         unsafe_allow_html=True,
     )
@@ -132,7 +135,41 @@ def render() -> None:
             st.rerun()
         return
 
-    executado = float(pagamentos["Valor executado"].sum()) if not pagamentos.empty else 0.0
+    if "fnde_filtros_aplicados" not in st.session_state:
+        st.session_state.fnde_filtros_aplicados = {"meses": [], "credores": []}
+
+    with st.sidebar:
+        st.markdown("#### Filtros — Monitoramento FNDE")
+        with st.form("form_filtros_fnde"):
+            meses = st.multiselect(
+                "Mês de pagamento",
+                MESES,
+                default=st.session_state.fnde_filtros_aplicados["meses"],
+            )
+            credores = st.multiselect(
+                "Cooperativa",
+                list(COOPERATIVAS),
+                default=st.session_state.fnde_filtros_aplicados["credores"],
+            )
+            aplicar = st.form_submit_button("Aplicar filtros", use_container_width=True, type="primary")
+        limpar = st.button("Limpar filtros", use_container_width=True, key="limpar_filtros_fnde")
+        st.caption("Fonte fixa: 552")
+
+    if aplicar:
+        st.session_state.fnde_filtros_aplicados = {"meses": meses, "credores": credores}
+        st.rerun()
+    if limpar:
+        st.session_state.fnde_filtros_aplicados = {"meses": [], "credores": []}
+        st.rerun()
+
+    filtros = st.session_state.fnde_filtros_aplicados
+    filtrado = pagamentos.copy()
+    if filtros["meses"]:
+        filtrado = filtrado[filtrado["Mês"].isin(filtros["meses"])]
+    if filtros["credores"]:
+        filtrado = filtrado[filtrado["Cooperativa"].isin(filtros["credores"])]
+
+    executado = float(filtrado["Valor executado"].sum()) if not filtrado.empty else 0.0
     saldo = max(META_COOPERATIVAS - executado, 0.0)
     percentual_executado = (executado / META_COOPERATIVAS * 100) if META_COOPERATIVAS else 0.0
     meta_mensal = META_COOPERATIVAS / 12
@@ -147,34 +184,94 @@ def render() -> None:
     with c4:
         _card("Saldo a executar", saldo, "Meta anual ainda disponível", "laranja")
 
-    esquerda, direita = st.columns([1.42, 1], gap="small")
-    with esquerda:
-        st.markdown('<div class="fnde-box-title">Execução por cooperativa</div>', unsafe_allow_html=True)
-        por_credor = pagamentos.groupby("Cooperativa")["Valor executado"].sum() if not pagamentos.empty else pd.Series(dtype=float)
-        qtde_pagamentos = pagamentos.groupby("Cooperativa").size() if not pagamentos.empty else pd.Series(dtype=int)
-        linhas = []
-        for cooperativa in COOPERATIVAS:
-            valor = float(por_credor.get(cooperativa, 0.0))
-            quantidade = int(qtde_pagamentos.get(cooperativa, 0))
-            linhas.append(f"<tr><td class='fnde-credor'>{cooperativa}</td><td>{quantidade}</td><td class='fnde-valor'>{_moeda(valor)}</td><td>{valor / META_COOPERATIVAS * 100:.1f}%</td></tr>")
-        st.markdown(
-            "<div class='fnde-tabela'><table><thead><tr><th>CREDOR</th><th>PAGAMENTOS</th><th>EXECUTADO</th><th>% DA META FNDE</th></tr></thead><tbody>"
-            + "".join(linhas) + "</tbody></table></div>",
-            unsafe_allow_html=True,
+    st.markdown('<div class="fnde-box-title">Execução por cooperativa</div>', unsafe_allow_html=True)
+    por_credor = filtrado.groupby("Cooperativa")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
+    qtde_pagamentos = filtrado.groupby("Cooperativa").size() if not filtrado.empty else pd.Series(dtype=int)
+    linhas_resumo = []
+    for cooperativa in COOPERATIVAS:
+        valor = float(por_credor.get(cooperativa, 0.0))
+        quantidade = int(qtde_pagamentos.get(cooperativa, 0))
+        linhas_resumo.append(
+            f"<tr><td class='fnde-credor'>{cooperativa}</td><td>{quantidade}</td>"
+            f"<td class='fnde-valor'>{_moeda(valor)}</td><td>{valor / META_COOPERATIVAS * 100:.1f}%</td></tr>"
         )
+    st.markdown(
+        "<div class='fnde-tabela'><table><thead><tr><th>CREDOR</th><th>PAGAMENTOS</th>"
+        "<th>EXECUTADO</th><th>% DA META FNDE</th></tr></thead><tbody>"
+        + "".join(linhas_resumo) + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
 
-    with direita:
-        mensal = pagamentos.groupby("Mês")["Valor executado"].sum() if not pagamentos.empty else pd.Series(dtype=float)
-        grafico = pd.DataFrame({"Mês": MESES, "Executado no mês": [float(mensal.get(mes, 0.0)) for mes in MESES]})
-        grafico["Executado acumulado"] = grafico["Executado no mês"].cumsum()
-        grafico["Planejado acumulado"] = [(indice + 1) * meta_mensal for indice in range(len(grafico))]
-        grafico["Saldo a executar"] = (META_COOPERATIVAS - grafico["Executado acumulado"]).clip(lower=0)
-        figura = go.Figure()
-        figura.add_bar(name="Executado no mês", x=grafico["Mês"], y=grafico["Executado no mês"], marker_color="#1aa36f")
-        figura.add_scatter(name="Planejado acumulado", x=grafico["Mês"], y=grafico["Planejado acumulado"], mode="lines+markers", line=dict(color="#287cc0", dash="dash"))
-        figura.add_scatter(name="Saldo a executar", x=grafico["Mês"], y=grafico["Saldo a executar"], mode="lines+markers", line=dict(color="#e29113", width=3))
-        figura.update_layout(title="Execução mensal da meta FNDE", height=350, margin=dict(l=10, r=10, t=48, b=10), legend=dict(orientation="h", y=1.12), yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", plot_bgcolor="#fff", paper_bgcolor="#fff")
-        figura.update_yaxes(gridcolor="#e8eff4", zerolinecolor="#e8eff4")
-        st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
+    st.markdown('<div class="fnde-box-title">Distribuição mensal de recursos por cooperativa</div>', unsafe_allow_html=True)
+    matriz = pd.pivot_table(
+        filtrado,
+        index="Cooperativa",
+        columns="Mês",
+        values="Valor executado",
+        aggfunc="sum",
+        fill_value=0.0,
+    ) if not filtrado.empty else pd.DataFrame()
+    matriz = matriz.reindex(index=list(COOPERATIVAS), columns=MESES, fill_value=0.0)
+    linhas = []
+    for cooperativa, valores in matriz.iterrows():
+        total_credor = float(valores.sum())
+        celulas = "".join(f"<td>{_moeda(valor)}</td>" for valor in valores)
+        linhas.append(f"<tr><td class='fnde-credor'>{cooperativa}</td>{celulas}<td class='fnde-total'>{_moeda(total_credor)}</td></tr>")
+    totais_mes = matriz.sum(axis=0)
+    total_geral = float(totais_mes.sum())
+    rodape = "".join(f"<td class='fnde-total'>{_moeda(valor)}</td>" for valor in totais_mes)
+    st.markdown(
+        "<div class='fnde-tabela'><table><thead><tr><th>RAZÃO SOCIAL / CREDOR</th>"
+        + "".join(f"<th>{mes.upper()}</th>" for mes in MESES)
+        + "<th>TOTAL GERAL</th></tr></thead><tbody>" + "".join(linhas)
+        + f"<tr><td class='fnde-total'>TOTAL CONSOLIDADO DO FILTRO</td>{rodape}<td class='fnde-total'>{_moeda(total_geral)}</td></tr>"
+        + "</tbody></table></div>",
+        unsafe_allow_html=True,
+    )
+
+    mensal = filtrado.groupby("Mês")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
+    quantidade_mensal = filtrado.groupby("Mês").size() if not filtrado.empty else pd.Series(dtype=int)
+    grafico = pd.DataFrame({"Mês": MESES, "Executado no mês": [float(mensal.get(mes, 0.0)) for mes in MESES]})
+    grafico["Pagamentos"] = [int(quantidade_mensal.get(mes, 0)) for mes in MESES]
+    meses_com_execucao = grafico.loc[grafico["Executado no mês"] > 0, "Executado no mês"]
+    media_mensal = float(meses_com_execucao.mean()) if not meses_com_execucao.empty else 0.0
+    desvio_mensal = float(meses_com_execucao.std(ddof=0)) if len(meses_com_execucao) > 1 else 0.0
+    faixa_inferior = max(0.0, meta_mensal * 0.8)
+    faixa_superior = meta_mensal * 1.2
+
+    st.markdown('<div class="fnde-analise-titulo">Análise temporal e execução mensal</div>', unsafe_allow_html=True)
+    with st.container():
+        esquerda, direita = st.columns([1.18, .92], gap="large")
+        with esquerda:
+            st.markdown('<div class="fnde-subtitulo-grafico">Curva de execução mensal das cooperativas</div>', unsafe_allow_html=True)
+            st.markdown(
+                f"""<div class="fnde-mini-cards">
+                <div class="fnde-mini-card"><div class="fnde-mini-label">META MENSAL</div><div class="fnde-mini-value">{_moeda(meta_mensal)}</div></div>
+                <div class="fnde-mini-card"><div class="fnde-mini-label">MÉDIA EXECUTADA</div><div class="fnde-mini-value">{_moeda(media_mensal)}</div></div>
+                <div class="fnde-mini-card"><div class="fnde-mini-label">FAIXA DE REFERÊNCIA</div><div class="fnde-mini-value">80% – 120% da meta</div></div>
+                </div>""",
+                unsafe_allow_html=True,
+            )
+            figura = go.Figure()
+            figura.add_hrect(y0=faixa_inferior, y1=faixa_superior, fillcolor="rgba(2, 128, 144, .10)", line_width=0, layer="below")
+            figura.add_hline(y=meta_mensal, line_width=1.5, line_dash="dash", line_color="#64748b", annotation_text="Meta mensal", annotation_position="top left", annotation_font=dict(size=10, color="#475569"))
+            figura.add_scatter(name="Executado", x=grafico["Mês"], y=grafico["Executado no mês"], mode="lines+markers+text", text=[_moeda(valor) if valor else "" for valor in grafico["Executado no mês"]], textposition="top center", textfont=dict(size=9, color="#61758a"), line=dict(color="#00879a", width=3), marker=dict(color="#f39b16", size=9))
+            figura.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), showlegend=False, yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", plot_bgcolor="#fff", paper_bgcolor="#fff")
+            figura.update_xaxes(showgrid=False, tickangle=-28)
+            figura.update_yaxes(gridcolor="#e8eff4", zerolinecolor="#e8eff4")
+            st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
+        with direita:
+            st.markdown('<div class="fnde-subtitulo-grafico">Resumo gerencial por mês</div>', unsafe_allow_html=True)
+            linhas_mes = "".join(
+                f"<tr><td>{linha['Mês']}</td><td>{linha['Pagamentos']}</td><td class='fnde-valor'>{_moeda(linha['Executado no mês'])}</td></tr>"
+                for _, linha in grafico.iterrows()
+            )
+            st.markdown(
+                "<div class='fnde-resumo-mes'><table><thead><tr><th>MÊS DE REFERÊNCIA</th><th>QTD. PAGAMENTOS</th><th>TOTAL EXECUTADO</th></tr></thead><tbody>"
+                + linhas_mes
+                + f"<tr><td class='fnde-total'>TOTAL GERAL</td><td class='fnde-total'>{int(grafico['Pagamentos'].sum())}</td><td class='fnde-total'>{_moeda(float(grafico['Executado no mês'].sum()))}</td></tr>"
+                + "</tbody></table></div>",
+                unsafe_allow_html=True,
+            )
 
     st.caption("Base de cálculo: fonte 552, cooperativas cadastradas e pagamentos emitidos em 2026. Atualize a base de Pagamentos (OB) para refletir novas execuções.")
