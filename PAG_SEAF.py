@@ -3318,6 +3318,104 @@ def chamar_api_relatorio_009717(url_api, acao="status", timeout=120):
     return conteudo
 
 
+
+# -------------------------------------------------------------------------
+# MONITORAMENTO FNDE — PRODUTOS × PAGAMENTOS
+# -------------------------------------------------------------------------
+LINK_BASE_FNDE_PRODUTOS = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
+    "pub?gid=1786485134&single=true&output=csv"
+)
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def carregar_monitoramento_fnde():
+    """Concilia produto (NL/PD) com pagamento (PD/OB) e data da OB."""
+    try:
+        produtos = ler_csv_url(LINK_BASE_FNDE_PRODUTOS)
+    except Exception:
+        return pd.DataFrame()
+
+    if produtos.empty:
+        return pd.DataFrame()
+
+    produtos = produtos.loc[:, ~produtos.columns.duplicated()].copy()
+    produtos.columns = [str(col).strip() for col in produtos.columns]
+    obrigatorias = [
+        "Fonte", "Credor", "LIQUIDAÇÃO", "PAGAMENTO", "Material",
+        "DocumentoNE", "DocumentoNL", "DocumentoPD", "DocumentoOB",
+    ]
+    if not set(obrigatorias).issubset(produtos.columns):
+        return pd.DataFrame()
+
+    produtos["Valor_Liquidado"] = converter_valor_monetario(produtos["LIQUIDAÇÃO"]).fillna(0.0)
+    produtos["Valor_Pago"] = converter_valor_monetario(produtos["PAGAMENTO"]).fillna(0.0)
+    for col in ["Fonte", "Credor", "Material", "DocumentoNE", "DocumentoNL", "DocumentoPD", "DocumentoOB"]:
+        produtos[col] = produtos[col].fillna("").astype(str).str.strip()
+
+    # A linha 2 do Qlik é apenas o total consolidado e não representa documento.
+    produtos = produtos[
+        produtos[["DocumentoNE", "DocumentoNL", "DocumentoPD", "DocumentoOB"]]
+        .ne("").any(axis=1)
+    ].copy()
+
+    # Pagamentos: o PD é a ponte entre a liquidação do produto e a OB efetivamente paga.
+    pagamentos = produtos[
+        (produtos["Valor_Pago"] > 0)
+        & produtos["DocumentoPD"].ne("")
+        & ~produtos["DocumentoOB"].isin(["", "-"])
+    ][["DocumentoPD", "DocumentoOB", "Valor_Pago"]].copy()
+    pagamentos = pagamentos.drop_duplicates(subset=["DocumentoPD"], keep="last")
+
+    # Produtos: somente linhas com material identificado e valor liquidado.
+    detalhe = produtos[
+        (produtos["Valor_Liquidado"] > 0)
+        & ~produtos["Material"].isin(["", "-"])
+    ].copy()
+    detalhe = detalhe.merge(
+        pagamentos[["DocumentoPD", "DocumentoOB", "Valor_Pago"]],
+        on="DocumentoPD",
+        how="left",
+        suffixes=("", "_Pagamento"),
+    )
+    detalhe["DocumentoOB"] = detalhe["DocumentoOB_Pagamento"].fillna(detalhe["DocumentoOB"])
+    detalhe.drop(columns=["DocumentoOB_Pagamento"], inplace=True, errors="ignore")
+
+    # Usa a base consolidada de OB para obter a data real do pagamento e,
+    # consequentemente, o mês em que o produto foi executado.
+    base_ob = carregar_base_ob_para_conferencia()
+    if not base_ob.empty and {"Número", "Data_Conferencia"}.issubset(base_ob.columns):
+        mapa_ob = (
+            base_ob[["Número", "Data_Conferencia"]]
+            .dropna(subset=["Número"])
+            .assign(Número=lambda x: x["Número"].astype(str).str.strip())
+            .drop_duplicates(subset=["Número"], keep="last")
+            .rename(columns={"Número": "DocumentoOB", "Data_Conferencia": "Data_Pagamento"})
+        )
+        detalhe = detalhe.merge(mapa_ob, on="DocumentoOB", how="left")
+    else:
+        detalhe["Data_Pagamento"] = pd.NaT
+
+    detalhe["Data_Pagamento"] = pd.to_datetime(detalhe["Data_Pagamento"], errors="coerce")
+    detalhe["Mês"] = detalhe["Data_Pagamento"].dt.strftime("%m/%Y").fillna("Pendente")
+    detalhe["Produto"] = detalhe["Material"].str.replace(r"^\d+\s*-\s*", "", regex=True).str.strip()
+    detalhe["Produto"] = detalhe["Produto"].replace("", "Produto não informado")
+    detalhe["Status"] = np.where(
+        detalhe["DocumentoOB"].fillna("").isin(["", "-"]),
+        "⏳ Aguardando pagamento",
+        np.where(
+            detalhe["Data_Pagamento"].notna(),
+            "✅ Pago",
+            "⚠️ OB sem data conciliada",
+        ),
+    )
+    detalhe["Valor_Executado"] = np.where(
+        detalhe["Status"].eq("✅ Pago"), detalhe["Valor_Liquidado"], 0.0
+    )
+    return detalhe
+
+
 # -------------------------------------------------------------------------
 # NAVEGAÇÃO PRINCIPAL ENTRE AS TELAS
 # -------------------------------------------------------------------------
@@ -3331,6 +3429,7 @@ opcoes_tela = [
     "Pagamentos (OB)",
     "Planejar Priorização",
     "Relatório 009717",
+    "Monitoramento FNDE",
 ]
 if (
     "seletor_tela_global" not in st.session_state
@@ -3357,6 +3456,7 @@ with st.container(key="topo_navegacao"):
             "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
             "Planejar Priorização": "🎯 Planejar Priorização",
             "Relatório 009717": "📊 Relatório 009717",
+            "Monitoramento FNDE": "🥖 Monitoramento FNDE",
         }[opcao],
         selection_mode="single",
         key="seletor_tela_global",
@@ -7390,6 +7490,150 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
                 "Ainda não há dados do relatório para exibir. "
                 "Clique em 'Atualizar Relatório'."
             )
+
+
+elif st.session_state["tela_atual"] == "Monitoramento FNDE":
+    st.markdown(
+        "<h2 class='titulo-pagina'>🥖 Monitoramento FNDE — Execução por Produto</h2>",
+        unsafe_allow_html=True,
+    )
+    st.caption(
+        "Conciliação auditável por produto: NL identifica a liquidação, PD faz a ponte e OB confirma o pagamento."
+    )
+
+    df_fnde = carregar_monitoramento_fnde()
+    if df_fnde.empty:
+        st.warning(
+            "A base de produtos do FNDE não pôde ser carregada ou está sem as colunas esperadas."
+        )
+    else:
+        with st.form("form_filtros_fnde"):
+            f1, f2, f3, f4 = st.columns(4)
+            meses_fnde = sorted(
+                df_fnde["Mês"].dropna().astype(str).unique(),
+                key=lambda x: (x == "Pendente", x),
+            )
+            with f1:
+                filtro_mes_fnde = st.multiselect("Mês", meses_fnde, key="fnde_mes")
+            with f2:
+                filtro_credor_fnde = st.multiselect(
+                    "Cooperativa",
+                    sorted(df_fnde["Credor"].dropna().astype(str).unique()),
+                    key="fnde_credor",
+                )
+            with f3:
+                filtro_produto_fnde = st.multiselect(
+                    "Produto",
+                    sorted(df_fnde["Produto"].dropna().astype(str).unique()),
+                    key="fnde_produto",
+                )
+            with f4:
+                filtro_fonte_fnde = st.multiselect(
+                    "Fonte",
+                    sorted(df_fnde["Fonte"].dropna().astype(str).unique()),
+                    key="fnde_fonte",
+                )
+            aplicar_fnde = st.form_submit_button("Aplicar Filtros", type="primary")
+
+        visao_fnde = df_fnde.copy()
+        if filtro_mes_fnde:
+            visao_fnde = visao_fnde[visao_fnde["Mês"].isin(filtro_mes_fnde)]
+        if filtro_credor_fnde:
+            visao_fnde = visao_fnde[visao_fnde["Credor"].isin(filtro_credor_fnde)]
+        if filtro_produto_fnde:
+            visao_fnde = visao_fnde[visao_fnde["Produto"].isin(filtro_produto_fnde)]
+        if filtro_fonte_fnde:
+            visao_fnde = visao_fnde[visao_fnde["Fonte"].isin(filtro_fonte_fnde)]
+
+        total_liquidado_fnde = float(visao_fnde["Valor_Liquidado"].sum())
+        total_executado_fnde = float(visao_fnde["Valor_Executado"].sum())
+        aguardando_fnde = float(
+            visao_fnde.loc[visao_fnde["Status"] != "✅ Pago", "Valor_Liquidado"].sum()
+        )
+        percentual_fnde = (
+            total_executado_fnde / total_liquidado_fnde * 100
+            if total_liquidado_fnde else 0.0
+        )
+
+        c1, c2, c3, c4 = st.columns(4)
+        c1.metric("TOTAL LIQUIDADO", formatar_brl(total_liquidado_fnde))
+        c2.metric("TOTAL PAGO / EXECUTADO", formatar_brl(total_executado_fnde))
+        c3.metric("AGUARDANDO CONCILIAÇÃO", formatar_brl(aguardando_fnde))
+        c4.metric("% EXECUTADO", f"{percentual_fnde:.1f}%".replace(".", ","))
+
+        esquerda_fnde, direita_fnde = st.columns([1.35, 0.65])
+        with esquerda_fnde:
+            st.markdown("#### Execução por produto")
+            resumo_produto_fnde = (
+                visao_fnde.groupby("Produto", as_index=False)
+                .agg(
+                    Liquidado=("Valor_Liquidado", "sum"),
+                    Executado=("Valor_Executado", "sum"),
+                )
+                .sort_values("Liquidado", ascending=False)
+            )
+            grafico_fnde = px.bar(
+                resumo_produto_fnde.melt(
+                    id_vars="Produto",
+                    value_vars=["Liquidado", "Executado"],
+                    var_name="Indicador",
+                    value_name="Valor",
+                ),
+                x="Produto",
+                y="Valor",
+                color="Indicador",
+                barmode="group",
+                color_discrete_map={"Liquidado": "#f77f00", "Executado": "#028090"},
+                text_auto=".3s",
+            )
+            grafico_fnde.update_layout(
+                yaxis_tickprefix="R$ ",
+                legend_title_text="",
+                margin=dict(l=10, r=10, t=20, b=10),
+            )
+            st.plotly_chart(grafico_fnde, use_container_width=True)
+
+        with direita_fnde:
+            st.markdown("#### Situação dos produtos")
+            situacao_fnde = (
+                visao_fnde.groupby("Status", as_index=False)
+                .agg(Valor=("Valor_Liquidado", "sum"), Itens=("DocumentoNL", "count"))
+                .sort_values("Valor", ascending=False)
+            )
+            st.dataframe(
+                situacao_fnde,
+                column_config={
+                    "Valor": st.column_config.NumberColumn(format="R$ %.2f"),
+                    "Itens": st.column_config.NumberColumn(format="%d"),
+                },
+                hide_index=True,
+                use_container_width=True,
+            )
+
+        st.markdown("#### Rastreabilidade da execução")
+        tabela_fnde = visao_fnde[
+            [
+                "Mês", "Credor", "Produto", "DocumentoNE", "DocumentoNL",
+                "DocumentoPD", "DocumentoOB", "Valor_Liquidado", "Status",
+            ]
+        ].copy()
+        tabela_fnde = tabela_fnde.rename(
+            columns={
+                "Credor": "Cooperativa",
+                "DocumentoNE": "NE",
+                "DocumentoNL": "NL",
+                "DocumentoPD": "PD",
+                "DocumentoOB": "OB",
+                "Valor_Liquidado": "Valor",
+            }
+        )
+        st.dataframe(
+            tabela_fnde,
+            column_config={"Valor": st.column_config.NumberColumn(format="R$ %.2f")},
+            hide_index=True,
+            use_container_width=True,
+            height=460,
+        )
 
 elif st.session_state["tela_atual"] == "Planejar Priorização":
     st.markdown(
