@@ -340,9 +340,9 @@ def render() -> None:
             )
 
     # ------------------------------------------------------------------
-    # DETALHAMENTO POR PRODUTO — conciliado por PD -> OB -> data da OB
+    # PRODUTOS POR COOPERATIVA — visão gerencial + rastreabilidade
     # ------------------------------------------------------------------
-    st.markdown('<div class="fnde-analise-titulo">Execução por produto</div>', unsafe_allow_html=True)
+    st.markdown('<div class="fnde-analise-titulo">Produtos fornecidos por cooperativa</div>', unsafe_allow_html=True)
     try:
         produtos = _carregar_produtos(pagamentos)
         if filtros["meses"]:
@@ -350,67 +350,83 @@ def render() -> None:
         if filtros["credores"]:
             produtos = produtos[produtos["Cooperativa"].isin(filtros["credores"])]
 
-        produtos_pagos = produtos[produtos["Status"].eq("Pago")].copy()
-        resumo_produtos = (
-            produtos.groupby("Produto", as_index=False)
-            .agg(
-                Liquidado=("Valor liquidado", "sum"),
-                Executado=("Valor executado produto", "sum"),
-                Itens=("DocumentoNL", "count"),
-            )
-            .sort_values("Liquidado", ascending=False)
-        )
+        if produtos.empty:
+            st.info("Nenhum produto encontrado para os filtros aplicados.")
+        else:
+            for cooperativa in [nome for nome in COOPERATIVAS if nome in set(produtos["Cooperativa"].dropna())]:
+                base_credor = produtos[produtos["Cooperativa"].eq(cooperativa)].copy()
+                total_liquidado = float(base_credor["Valor liquidado"].sum())
+                total_pago = float(base_credor["Valor executado produto"].sum())
+                pendente = max(total_liquidado - total_pago, 0.0)
+                percentual = (total_pago / total_liquidado * 100) if total_liquidado else 0.0
 
-        with st.container(key="produtos_fnde", border=True):
-            p1, p2, p3 = st.columns(3)
-            p1.metric("Produtos identificados", int(produtos["Produto"].nunique()))
-            p2.metric("Executado conciliado", _moeda(float(produtos_pagos["Valor liquidado"].sum())))
-            pendente_produto = float(
-                produtos.loc[~produtos["Status"].eq("Pago"), "Valor liquidado"].sum()
-            )
-            p3.metric("Aguardando conciliação", _moeda(pendente_produto))
+                resumo = (
+                    base_credor.groupby("Produto", as_index=False)
+                    .agg(
+                        Liquidado=("Valor liquidado", "sum"),
+                        Pago=("Valor executado produto", "sum"),
+                        Documentos=("DocumentoNL", "count"),
+                    )
+                    .sort_values("Liquidado", ascending=False)
+                )
+                resumo["Pendente"] = (resumo["Liquidado"] - resumo["Pago"]).clip(lower=0)
+                resumo["Situação"] = resumo.apply(
+                    lambda linha: "✅ Pago"
+                    if abs(float(linha["Pendente"])) < 0.01
+                    else ("🟡 Parcial" if float(linha["Pago"]) > 0 else "⏳ Aguardando"),
+                    axis=1,
+                )
 
-            if not resumo_produtos.empty:
-                figura_produto = go.Figure()
-                figura_produto.add_bar(
-                    name="Liquidado",
-                    x=resumo_produtos["Produto"],
-                    y=resumo_produtos["Liquidado"],
-                    marker_color="#d8a13b",
+                st.markdown(
+                    f"""<div style="margin-top:16px;border:1px solid #d7e3ee;border-radius:8px 8px 0 0;
+                    background:#f5f9fc;padding:11px 14px;color:#073b61;font-weight:800;font-size:.92rem">
+                    {cooperativa}</div>""",
+                    unsafe_allow_html=True,
                 )
-                figura_produto.add_bar(
-                    name="Pago / conciliado",
-                    x=resumo_produtos["Produto"],
-                    y=resumo_produtos["Executado"],
-                    marker_color="#07879b",
-                )
-                figura_produto.update_layout(
-                    barmode="group", height=360, margin=dict(l=10, r=10, t=35, b=90),
-                    yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f",
-                    plot_bgcolor="#fff", paper_bgcolor="#fff",
-                    legend=dict(orientation="h", y=1.12, x=0),
-                )
-                figura_produto.update_xaxes(tickangle=-35, showgrid=False)
-                figura_produto.update_yaxes(gridcolor="#dce8ef", rangemode="tozero")
-                st.plotly_chart(figura_produto, use_container_width=True, config={"displayModeBar": False})
+                a, b, d, e = st.columns([1, 1, 1, .72])
+                a.metric("Liquidado", _moeda(total_liquidado))
+                b.metric("Pago / conciliado", _moeda(total_pago))
+                d.metric("Pendente", _moeda(pendente))
+                e.metric("Execução", f"{percentual:.1f}%")
 
-            st.markdown("##### Rastreabilidade do produto")
-            tabela_produtos = produtos[
-                ["Mês", "Cooperativa", "Produto", "DocumentoNE", "DocumentoNL",
-                 "DocumentoPD", "DocumentoOB", "Valor liquidado", "Status"]
-            ].rename(columns={
-                "DocumentoNE": "NE", "DocumentoNL": "NL", "DocumentoPD": "PD",
-                "DocumentoOB": "OB", "Valor liquidado": "Valor",
-            })
-            st.dataframe(
-                tabela_produtos,
-                hide_index=True,
-                use_container_width=True,
-                height=420,
-                column_config={
-                    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                },
-            )
+                tabela_resumo = resumo.rename(columns={
+                    "Produto": "PRODUTO",
+                    "Liquidado": "LIQUIDADO",
+                    "Pago": "PAGO",
+                    "Pendente": "PENDENTE",
+                    "Documentos": "Nº NL",
+                    "Situação": "STATUS",
+                })[["PRODUTO", "LIQUIDADO", "PAGO", "PENDENTE", "Nº NL", "STATUS"]]
+                st.dataframe(
+                    tabela_resumo,
+                    hide_index=True,
+                    use_container_width=True,
+                    height=min(70 + 35 * len(tabela_resumo), 300),
+                    column_config={
+                        "LIQUIDADO": st.column_config.NumberColumn("LIQUIDADO", format="R$ %.2f"),
+                        "PAGO": st.column_config.NumberColumn("PAGO", format="R$ %.2f"),
+                        "PENDENTE": st.column_config.NumberColumn("PENDENTE", format="R$ %.2f"),
+                    },
+                )
+
+                with st.expander(f"Ver documentos e rastreabilidade — {cooperativa.split(' — ')[0]}"):
+                    rastreio = base_credor[
+                        ["Mês", "Produto", "DocumentoNE", "DocumentoNL",
+                         "DocumentoPD", "DocumentoOB", "Valor liquidado", "Status"]
+                    ].rename(columns={
+                        "Produto": "Produto", "DocumentoNE": "NE", "DocumentoNL": "NL",
+                        "DocumentoPD": "PD", "DocumentoOB": "OB",
+                        "Valor liquidado": "Valor", "Status": "Status",
+                    }).sort_values(["Produto", "Mês"])
+                    st.dataframe(
+                        rastreio,
+                        hide_index=True,
+                        use_container_width=True,
+                        height=min(90 + 35 * len(rastreio), 420),
+                        column_config={
+                            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                        },
+                    )
     except Exception as erro_produtos:
         st.warning("O detalhamento por produto ainda não conseguiu ler a aba FNDE_Produtos.")
         st.caption(f"Detalhe técnico: {erro_produtos}")
