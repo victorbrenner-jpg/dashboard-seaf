@@ -26,7 +26,7 @@ MESES = [
 COOPERATIVAS = {
     "COODAPISJG — Cooperativa de Jaboatão dos Guararapes": ("COODAPISJG",),
     "ASSOCENE — Associação de Orientação às Cooperativas do Nordeste": ("ASSOCENE",),
-    "Cooperativa dos Pequenos Agricultores Familiares da Mata Norte": ("MATA NORTE",),
+    "COOPANORTE — Cooperativa dos Pequenos Agricultores Familiares da Mata Norte": ("MATA NORTE", "COOPANORTE"),
     "COPAF — Cooperativa da Agricultura Familiar de Pernambuco": ("COPAF",),
 }
 
