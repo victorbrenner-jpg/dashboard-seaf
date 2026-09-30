@@ -114,7 +114,7 @@ def render() -> None:
         .fnde-tabela{border:1px solid #d7e3ee;border-top:0;border-radius:0 0 7px 7px;overflow:auto;background:#fff;margin-bottom:6px}.fnde-tabela table{width:max-content;min-width:100%;border-collapse:collapse;font-size:.76rem;color:#163b5b}
         .fnde-tabela th{background:#edf4f8;padding:10px 12px;text-align:left;font-size:.67rem;white-space:nowrap;border-right:1px solid #dce7ef}.fnde-tabela td{padding:11px 12px;border-top:1px solid #e1eaf1;border-right:1px solid #edf2f6;white-space:nowrap}.fnde-tabela td:not(:first-child):not(:last-child),.fnde-tabela th:not(:first-child):not(:last-child){text-align:center}.fnde-tabela td:last-child,.fnde-tabela th:last-child{text-align:right}.fnde-tabela .fnde-credor{font-weight:750;white-space:normal;min-width:290px}.fnde-tabela .fnde-valor{font-weight:800;color:#16865b}.fnde-tabela .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
         .fnde-analise{border:1px solid #d7e3ee;border-radius:8px;padding:14px 16px 12px;margin-top:14px;background:#fff}.fnde-analise-titulo{font-size:1.25rem;font-weight:800;color:#1f3655;margin:28px 0 20px}
-        .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 13px}.fnde-mini-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 16px}.fnde-mini-card{border:1px solid #dbe5ee;border-radius:8px;padding:10px 11px;background:#f8fbfd}.fnde-mini-label{font-size:.58rem;color:#64748b;font-weight:800;letter-spacing:.04em}.fnde-mini-value{font-size:.92rem;color:#075b88;font-weight:800;margin-top:3px}
+        .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 13px}
         .fnde-resumo-mes{border:1px solid #d7e3ee;border-radius:7px;overflow:hidden;background:#fff}.fnde-resumo-mes table{width:100%;border-collapse:collapse;font-size:.75rem;color:#163b5b}.fnde-resumo-mes th{background:#edf4f8;padding:9px;text-align:left;font-size:.64rem}.fnde-resumo-mes td{padding:9px;border-top:1px solid #e1eaf1}.fnde-resumo-mes td:not(:first-child),.fnde-resumo-mes th:not(:first-child){text-align:center}.fnde-resumo-mes .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
         </style>""",
         unsafe_allow_html=True,
@@ -172,7 +172,6 @@ def render() -> None:
     executado = float(filtrado["Valor executado"].sum()) if not filtrado.empty else 0.0
     saldo = max(META_COOPERATIVAS - executado, 0.0)
     percentual_executado = (executado / META_COOPERATIVAS * 100) if META_COOPERATIVAS else 0.0
-    meta_mensal = META_COOPERATIVAS / 12
 
     c1, c2, c3, c4 = st.columns(4)
     with c1:
@@ -219,36 +218,25 @@ def render() -> None:
     quantidade_mensal = filtrado.groupby("Mês").size() if not filtrado.empty else pd.Series(dtype=int)
     grafico = pd.DataFrame({"Mês": MESES, "Executado no mês": [float(mensal.get(mes, 0.0)) for mes in MESES]})
     grafico["Pagamentos"] = [int(quantidade_mensal.get(mes, 0)) for mes in MESES]
-    meses_com_execucao = grafico.loc[grafico["Executado no mês"] > 0, "Executado no mês"]
-    media_mensal = float(meses_com_execucao.mean()) if not meses_com_execucao.empty else 0.0
-    desvio_mensal = float(meses_com_execucao.std(ddof=0)) if len(meses_com_execucao) > 1 else 0.0
-    faixa_inferior = max(0.0, meta_mensal * 0.8)
-    faixa_superior = meta_mensal * 1.2
-
     st.markdown('<div class="fnde-analise-titulo">Análise temporal e execução mensal</div>', unsafe_allow_html=True)
     with st.container():
         esquerda, direita = st.columns([1.18, .92], gap="large")
         with esquerda:
             st.markdown('<div class="fnde-subtitulo-grafico">Curva de execução mensal das cooperativas</div>', unsafe_allow_html=True)
-            st.markdown(
-                f"""<div class="fnde-mini-cards">
-                <div class="fnde-mini-card"><div class="fnde-mini-label">META MENSAL</div><div class="fnde-mini-value">{_moeda(meta_mensal)}</div></div>
-                <div class="fnde-mini-card"><div class="fnde-mini-label">MÉDIA EXECUTADA</div><div class="fnde-mini-value">{_moeda(media_mensal)}</div></div>
-                <div class="fnde-mini-card"><div class="fnde-mini-label">FAIXA DE REFERÊNCIA</div><div class="fnde-mini-value">80% – 120% da meta</div></div>
-                </div>""",
-                unsafe_allow_html=True,
-            )
             grafico_visual = grafico[grafico["Executado no mês"] > 0].copy()
             figura = go.Figure()
             figura.add_bar(
                 name="Executado no mês",
                 x=grafico_visual["Mês"],
                 y=grafico_visual["Executado no mês"],
-                marker_color=["#16a36a" if valor >= meta_mensal else "#ed9b16" for valor in grafico_visual["Executado no mês"]],
+                text=[_moeda(valor) for valor in grafico_visual["Executado no mês"]],
+                textposition="outside",
+                textfont=dict(size=10, color="#34566f"),
+                cliponaxis=False,
+                marker_color="#07879b",
                 hovertemplate="<b>%{x}</b><br>Executado: R$ %{y:,.2f}<extra></extra>",
             )
-            figura.add_hline(y=meta_mensal, line_width=2, line_dash="dash", line_color="#356a8a", annotation_text="Meta mensal", annotation_position="top left", annotation_font=dict(size=10, color="#356a8a"))
-            figura.update_layout(height=310, margin=dict(l=10, r=10, t=24, b=10), showlegend=False, bargap=.34, yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", plot_bgcolor="#fff", paper_bgcolor="#fff")
+            figura.update_layout(height=310, margin=dict(l=10, r=10, t=42, b=10), showlegend=False, bargap=.34, yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", plot_bgcolor="#fff", paper_bgcolor="#fff")
             figura.update_xaxes(showgrid=False, tickangle=0)
             figura.update_yaxes(gridcolor="#e8eff4", zerolinecolor="#e8eff4", rangemode="tozero")
             st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
@@ -269,5 +257,3 @@ def render() -> None:
                 + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
-
-    st.caption("Base de cálculo: fonte 552, cooperativas cadastradas e pagamentos emitidos em 2026. Atualize a base de Pagamentos (OB) para refletir novas execuções.")
