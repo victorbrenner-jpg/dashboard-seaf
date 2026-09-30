@@ -118,7 +118,13 @@ def _painel_resumo(titulo, df, campo, total, limite=6):
     linhas=[]
     for nome,v in g.items():
         p=_pct(v,total)
-        linhas.append(f"""<div class="dea-resumo-row"><div class="dea-resumo-label">{nome or "Não informado"}</div>
+        status = str(nome or "Não informado").upper()
+        classe_status = ""
+        if campo == "Status pagamento":
+            classe_status = "dea-status-ok" if status == "PAGO" else "dea-status-pendente"
+        elif campo == "Status CPF":
+            classe_status = "dea-status-ok" if status == "APROVADO" else "dea-status-pendente"
+        linhas.append(f"""<div class="dea-resumo-row {classe_status}"><div class="dea-resumo-label">{nome or "Não informado"}</div>
         <div class="dea-bar"><span style="width:{min(p,100):.1f}%"></span></div>
         <div class="dea-resumo-valor">{_moeda(v)}</div><div class="dea-resumo-pct">{p:.1f}%</div></div>""")
     st.markdown('<div class="dea-resumo">'+"".join(linhas)+'</div>',unsafe_allow_html=True)
@@ -138,6 +144,8 @@ def render():
     .dea-resumo{border:1px solid #d7e3ee;border-top:0;padding:4px 8px 8px;border-radius:0 0 7px 7px;background:#fff}
     .dea-resumo-row{display:grid;grid-template-columns:1.25fr .8fr 1.05fr .35fr;gap:7px;align-items:center;font-size:.72rem;padding:5px 0;border-bottom:1px solid #edf2f6}
     .dea-bar{height:10px;background:#e9f1f7}.dea-bar span{display:block;height:100%;background:#2782c5}.dea-resumo-valor{text-align:right}.dea-resumo-pct{text-align:right;font-weight:700}
+    .dea-resumo-row.dea-status-ok .dea-bar span{background:#20a36c}.dea-resumo-row.dea-status-ok .dea-resumo-label,.dea-resumo-row.dea-status-ok .dea-resumo-valor,.dea-resumo-row.dea-status-ok .dea-resumo-pct{color:#10794e}
+    .dea-resumo-row.dea-status-pendente .dea-bar span{background:#f0a01b}.dea-resumo-row.dea-status-pendente .dea-resumo-label,.dea-resumo-row.dea-status-pendente .dea-resumo-valor,.dea-resumo-row.dea-status-pendente .dea-resumo-pct{color:#b56700}
     div[data-testid="stDataFrame"]{border:1px solid #d7e3ee;border-radius:0 0 7px 7px}
     .dea-detalhe-card{border:1px solid #cbddeb;border-radius:7px;margin-top:12px;overflow:hidden;background:#fff}
     .dea-lista-credores [data-testid="stExpander"]{border:0;border-bottom:1px solid #dce7ef;border-radius:0;background:#fff}
@@ -312,7 +320,7 @@ def render():
             st.markdown('</div>', unsafe_allow_html=True)
 
     with lateral:
-        _painel_resumo("◉  Status do pagamento",filtrado,"Status pagamento",total,4)
-        _painel_resumo("★  Status CPF",filtrado,"Status CPF",total,4)
-        _painel_resumo("◫  Grupo de despesa",filtrado,"Grupo de despesa",total,6)
-        _painel_resumo("▣  Por Executiva",filtrado,"Executiva",total,6)
+        _painel_resumo("Status do pagamento",filtrado,"Status pagamento",total,4)
+        _painel_resumo("Status CPF",filtrado,"Status CPF",total,4)
+        _painel_resumo("Grupo de despesa",filtrado,"Grupo de despesa",total,6)
+        _painel_resumo("Por Executiva",filtrado,"Executiva",total,6)
