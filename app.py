@@ -174,7 +174,8 @@ st.markdown(
         background: linear-gradient(90deg, #002b49 0%, #005691 52%, #028090 100%);
         color: #ffffff;
         border-radius: 9px 9px 0 0;
-        padding: 10px 18px;
+        /* Reserva a largura da aba lateral de filtros antes da marca. */
+        padding: 10px 18px 10px 52px;
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
         position: fixed !important;
         top: 0 !important;
@@ -216,7 +217,8 @@ st.markdown(
     }
     .st-key-topo_navegacao .st-key-seletor_tela_global {
         margin-bottom: 0 !important;
-        padding: 8px 22px 9px !important;
+        /* Impede que o primeiro módulo fique sob a aba vertical de filtros. */
+        padding: 8px 22px 9px 52px !important;
     }
     /* Navegação por módulos: abas corporativas, com módulo ativo evidente. */
     .st-key-seletor_tela_global [data-testid="stSegmentedControl"] {
