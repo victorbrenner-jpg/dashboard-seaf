@@ -138,6 +138,7 @@ MODULOS = [
     # na entrada do sistema a pedido da área usuária.
     # ("🎯", "Planejar Priorização"),
     ("📋", "Monitoramento DEA"),
+    ("🏦", "Monitoramento FNDE"),
     ("📊", "Relatório 009717"),
 ]
 
@@ -160,7 +161,7 @@ def render() -> None:
             overflow: hidden;
           }
           .home-title {margin: 0; color: #1d344d; font: 600 2.15rem/1.15 'Segoe UI', Arial, sans-serif; letter-spacing: -.035em;}
-          .home-grid {display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)); gap: 1rem; margin-top: 2.4rem;}
+          .home-grid {display: grid; grid-template-columns: repeat(6, minmax(0, 1fr)); gap: 1rem; margin-top: 2.4rem;}
           .home-module {
             min-height: 160px; box-sizing: border-box; background: #fff; border: 1px solid #d7e1eb;
             border-radius: 9px; box-shadow: 0 4px 13px rgba(25, 56, 85, .07); color: #173753 !important;

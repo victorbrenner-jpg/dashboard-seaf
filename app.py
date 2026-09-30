@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, monitoramento_dea, relatorio_mde, relatorio_credores
+from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores
 
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
@@ -2748,6 +2748,7 @@ opcoes_tela = [
     "Pagamentos (OB)",
     # "Planejar Priorização",  # Temporariamente desativada na homologação.
     "Monitoramento DEA",
+    "Monitoramento FNDE",
     "Relatório 009717",
 ]
 
@@ -2799,6 +2800,7 @@ with st.container(key="topo_navegacao"):
                 "Liquidação (NL)": "📑 Liquidação (NL)",
                 "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
                 "Monitoramento DEA": "📋 Monitoramento DEA",
+                "Monitoramento FNDE": "🏦 Monitoramento FNDE",
                 "Relatório 009717": "📊 Relatório 009717",
             }[opcao],
             selection_mode="single",
@@ -5406,6 +5408,9 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
 elif st.session_state["tela_atual"] == "Monitoramento DEA":
     monitoramento_dea.render()
+
+elif st.session_state["tela_atual"] == "Monitoramento FNDE":
+    monitoramento_fnde.render()
 
 elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
     # ---------------------------------------------------------------------
