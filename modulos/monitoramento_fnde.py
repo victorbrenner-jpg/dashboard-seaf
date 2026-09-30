@@ -14,6 +14,11 @@ URL_BASE_PAGAMENTOS = (
     "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
     "pub?gid=1786485134&single=true&output=csv"
 )
+URL_BASE_PRODUTOS = (
+    "https://docs.google.com/spreadsheets/d/e/"
+    "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
+    "pub?gid=1422300352&single=true&output=csv"
+)
 TOTAL_RECEBIDO = 18_881_868.00
 PERCENTUAL_COOPERATIVAS = 0.45
 META_COOPERATIVAS = TOTAL_RECEBIDO * PERCENTUAL_COOPERATIVAS
@@ -94,6 +99,74 @@ def _carregar_pagamentos() -> pd.DataFrame:
          7: "Jul/2026", 8: "Ago/2026", 9: "Set/2026", 10: "Out/2026", 11: "Nov/2026", 12: "Dez/2026"}
     ).fillna("Sem mês informado")
     return base
+
+
+
+@st.cache_data(ttl=300, show_spinner=False)
+def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
+    """Liga material -> PD -> OB -> mês do pagamento, sem duplicar a execução."""
+    bruto = pd.read_csv(URL_BASE_PRODUTOS)
+    bruto.columns = [str(coluna).strip() for coluna in bruto.columns]
+    obrigatorias = {
+        "Fonte", "Credor", "LIQUIDAÇÃO", "PAGAMENTO", "Material",
+        "DocumentoNE", "DocumentoNL", "DocumentoPD", "DocumentoOB",
+    }
+    if not obrigatorias.issubset(bruto.columns):
+        faltantes = ", ".join(sorted(obrigatorias.difference(bruto.columns)))
+        raise ValueError(f"Base de produtos sem as colunas: {faltantes}")
+
+    for coluna in ["Fonte", "Credor", "Material", "DocumentoNE", "DocumentoNL", "DocumentoPD", "DocumentoOB"]:
+        bruto[coluna] = bruto[coluna].fillna("").astype(str).str.strip()
+    bruto["Valor liquidado"] = bruto["LIQUIDAÇÃO"].map(_valor_numero)
+    bruto["Valor pago"] = bruto["PAGAMENTO"].map(_valor_numero)
+
+    # O PD é a ponte entre a linha de material/liquidação e a linha que contém a OB.
+    mapa_pd_ob = (
+        bruto[
+            (bruto["DocumentoPD"] != "")
+            & (~bruto["DocumentoOB"].isin(["", "-"]))
+            & (bruto["Valor pago"] > 0)
+        ][["DocumentoPD", "DocumentoOB"]]
+        .drop_duplicates("DocumentoPD", keep="last")
+    )
+    detalhe = bruto[
+        (bruto["Valor liquidado"] > 0)
+        & (~bruto["Material"].isin(["", "-"]))
+    ].copy()
+    detalhe = detalhe.drop(columns=["DocumentoOB"]).merge(
+        mapa_pd_ob, on="DocumentoPD", how="left"
+    )
+    detalhe["DocumentoOB"] = detalhe["DocumentoOB"].fillna("").astype(str).str.strip()
+
+    # A OB já existe na base financeira usada pela própria tela. Ela fornece
+    # a data real de pagamento e evita inferir o mês pela posição da extração.
+    coluna_ob = _localizar_coluna(pagamentos.columns, "Número", "Numero", "DocumentoOB", "OB")
+    if coluna_ob:
+        mapa_ob_data = pagamentos[[coluna_ob, "Data", "Mês"]].copy()
+        mapa_ob_data["__ob"] = mapa_ob_data[coluna_ob].fillna("").astype(str).str.strip()
+        mapa_ob_data = mapa_ob_data.drop_duplicates("__ob", keep="last")[["__ob", "Data", "Mês"]]
+        detalhe = detalhe.merge(
+            mapa_ob_data, left_on="DocumentoOB", right_on="__ob", how="left"
+        ).drop(columns=["__ob"])
+    else:
+        detalhe["Data"] = pd.NaT
+        detalhe["Mês"] = "Sem mês informado"
+
+    detalhe["Cooperativa"] = detalhe["Credor"].map(_nome_cooperativa)
+    detalhe["Produto"] = (
+        detalhe["Material"]
+        .str.replace(r"^\d+\s*-\s*", "", regex=True)
+        .str.strip()
+        .replace("", "Produto não informado")
+    )
+    detalhe["Status"] = "Aguardando conciliação"
+    detalhe.loc[detalhe["DocumentoOB"].ne(""), "Status"] = "OB localizada"
+    detalhe.loc[detalhe["Data"].notna(), "Status"] = "Pago"
+    detalhe["Valor executado produto"] = detalhe["Valor liquidado"].where(
+        detalhe["Status"].eq("Pago"), 0.0
+    )
+    return detalhe
+
 
 
 def _card(titulo: str, valor: float, detalhe: str, classe: str) -> None:
@@ -265,3 +338,80 @@ def render() -> None:
                 + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
+
+    # ------------------------------------------------------------------
+    # DETALHAMENTO POR PRODUTO — conciliado por PD -> OB -> data da OB
+    # ------------------------------------------------------------------
+    st.markdown('<div class="fnde-analise-titulo">Execução por produto</div>', unsafe_allow_html=True)
+    try:
+        produtos = _carregar_produtos(pagamentos)
+        if filtros["meses"]:
+            produtos = produtos[produtos["Mês"].isin(filtros["meses"])]
+        if filtros["credores"]:
+            produtos = produtos[produtos["Cooperativa"].isin(filtros["credores"])]
+
+        produtos_pagos = produtos[produtos["Status"].eq("Pago")].copy()
+        resumo_produtos = (
+            produtos.groupby("Produto", as_index=False)
+            .agg(
+                Liquidado=("Valor liquidado", "sum"),
+                Executado=("Valor executado produto", "sum"),
+                Itens=("DocumentoNL", "count"),
+            )
+            .sort_values("Liquidado", ascending=False)
+        )
+
+        with st.container(key="produtos_fnde", border=True):
+            p1, p2, p3 = st.columns(3)
+            p1.metric("Produtos identificados", int(produtos["Produto"].nunique()))
+            p2.metric("Executado conciliado", _moeda(float(produtos_pagos["Valor liquidado"].sum())))
+            pendente_produto = float(
+                produtos.loc[~produtos["Status"].eq("Pago"), "Valor liquidado"].sum()
+            )
+            p3.metric("Aguardando conciliação", _moeda(pendente_produto))
+
+            if not resumo_produtos.empty:
+                figura_produto = go.Figure()
+                figura_produto.add_bar(
+                    name="Liquidado",
+                    x=resumo_produtos["Produto"],
+                    y=resumo_produtos["Liquidado"],
+                    marker_color="#d8a13b",
+                )
+                figura_produto.add_bar(
+                    name="Pago / conciliado",
+                    x=resumo_produtos["Produto"],
+                    y=resumo_produtos["Executado"],
+                    marker_color="#07879b",
+                )
+                figura_produto.update_layout(
+                    barmode="group", height=360, margin=dict(l=10, r=10, t=35, b=90),
+                    yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f",
+                    plot_bgcolor="#fff", paper_bgcolor="#fff",
+                    legend=dict(orientation="h", y=1.12, x=0),
+                )
+                figura_produto.update_xaxes(tickangle=-35, showgrid=False)
+                figura_produto.update_yaxes(gridcolor="#dce8ef", rangemode="tozero")
+                st.plotly_chart(figura_produto, use_container_width=True, config={"displayModeBar": False})
+
+            st.markdown("##### Rastreabilidade do produto")
+            tabela_produtos = produtos[
+                ["Mês", "Cooperativa", "Produto", "DocumentoNE", "DocumentoNL",
+                 "DocumentoPD", "DocumentoOB", "Valor liquidado", "Status"]
+            ].rename(columns={
+                "DocumentoNE": "NE", "DocumentoNL": "NL", "DocumentoPD": "PD",
+                "DocumentoOB": "OB", "Valor liquidado": "Valor",
+            })
+            st.dataframe(
+                tabela_produtos,
+                hide_index=True,
+                use_container_width=True,
+                height=420,
+                column_config={
+                    "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
+                },
+            )
+    except Exception as erro_produtos:
+        st.warning("O detalhamento por produto ainda não conseguiu ler a aba FNDE_Produtos.")
+        st.caption(f"Detalhe técnico: {erro_produtos}")
+
