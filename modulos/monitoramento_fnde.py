@@ -110,11 +110,11 @@ def render() -> None:
         .fnde-card{background:#fff;border:1px solid #d7e3ee;border-radius:8px;padding:13px 16px;min-height:96px;box-shadow:0 1px 2px #00000008}
         .fnde-card-title{font-size:.78rem;font-weight:800;color:#174d7c;text-transform:uppercase}.fnde-card-value{font-size:1.38rem;font-weight:800;color:#063b70;margin-top:6px}.fnde-card-detail{font-size:.76rem;color:#63788d;margin-top:5px}
         .fnde-card.verde .fnde-card-value{color:#16865b}.fnde-card.laranja .fnde-card-value{color:#c97800}
-        .fnde-box-title{background:linear-gradient(90deg,#075b88,#08749a);color:#fff;font-weight:700;padding:8px 11px;border-radius:7px 7px 0 0;margin-top:5px}
-        .fnde-tabela{border:1px solid #d7e3ee;border-top:0;border-radius:0 0 7px 7px;overflow:auto;background:#fff}.fnde-tabela table{width:max-content;min-width:100%;border-collapse:collapse;font-size:.76rem;color:#163b5b}
+        .fnde-box-title{background:linear-gradient(90deg,#075b88,#08749a);color:#fff;font-weight:700;padding:8px 11px;border-radius:7px 7px 0 0;margin-top:22px}
+        .fnde-tabela{border:1px solid #d7e3ee;border-top:0;border-radius:0 0 7px 7px;overflow:auto;background:#fff;margin-bottom:6px}.fnde-tabela table{width:max-content;min-width:100%;border-collapse:collapse;font-size:.76rem;color:#163b5b}
         .fnde-tabela th{background:#edf4f8;padding:10px 12px;text-align:left;font-size:.67rem;white-space:nowrap;border-right:1px solid #dce7ef}.fnde-tabela td{padding:11px 12px;border-top:1px solid #e1eaf1;border-right:1px solid #edf2f6;white-space:nowrap}.fnde-tabela td:not(:first-child),.fnde-tabela th:not(:first-child){text-align:right}.fnde-tabela .fnde-credor{font-weight:750;white-space:normal;min-width:290px}.fnde-tabela .fnde-valor{font-weight:800;color:#16865b}.fnde-tabela .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
-        .fnde-analise{border:1px solid #d7e3ee;border-radius:8px;padding:14px 16px 12px;margin-top:14px;background:#fff}.fnde-analise-titulo{font-size:1.25rem;font-weight:800;color:#1f3655;margin:0 0 14px}
-        .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 9px}.fnde-mini-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:8px;margin:0 0 8px}.fnde-mini-card{border:1px solid #dbe5ee;border-radius:8px;padding:8px 10px;background:#f8fbfd}.fnde-mini-label{font-size:.58rem;color:#64748b;font-weight:800;letter-spacing:.04em}.fnde-mini-value{font-size:.92rem;color:#075b88;font-weight:800;margin-top:3px}
+        .fnde-analise{border:1px solid #d7e3ee;border-radius:8px;padding:14px 16px 12px;margin-top:14px;background:#fff}.fnde-analise-titulo{font-size:1.25rem;font-weight:800;color:#1f3655;margin:28px 0 20px}
+        .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 13px}.fnde-mini-cards{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin:0 0 16px}.fnde-mini-card{border:1px solid #dbe5ee;border-radius:8px;padding:10px 11px;background:#f8fbfd}.fnde-mini-label{font-size:.58rem;color:#64748b;font-weight:800;letter-spacing:.04em}.fnde-mini-value{font-size:.92rem;color:#075b88;font-weight:800;margin-top:3px}
         .fnde-resumo-mes{border:1px solid #d7e3ee;border-radius:7px;overflow:hidden;background:#fff}.fnde-resumo-mes table{width:100%;border-collapse:collapse;font-size:.75rem;color:#163b5b}.fnde-resumo-mes th{background:#edf4f8;padding:9px;text-align:left;font-size:.64rem}.fnde-resumo-mes td{padding:9px;border-top:1px solid #e1eaf1}.fnde-resumo-mes td:not(:first-child),.fnde-resumo-mes th:not(:first-child){text-align:right}.fnde-resumo-mes .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
         </style>""",
         unsafe_allow_html=True,
@@ -194,6 +194,10 @@ def render() -> None:
         fill_value=0.0,
     ) if not filtrado.empty else pd.DataFrame()
     matriz = matriz.reindex(index=list(COOPERATIVAS), columns=MESES, fill_value=0.0)
+    # A leitura gerencial mostra somente os meses com execução no recorte
+    # atual; meses sem pagamentos não ocupam espaço na matriz.
+    meses_exibidos = [mes for mes in MESES if float(matriz[mes].sum()) > 0]
+    matriz = matriz[meses_exibidos]
     linhas = []
     for cooperativa, valores in matriz.iterrows():
         total_credor = float(valores.sum())
@@ -204,7 +208,7 @@ def render() -> None:
     rodape = "".join(f"<td class='fnde-total'>{_moeda(valor)}</td>" for valor in totais_mes)
     st.markdown(
         "<div class='fnde-tabela'><table><thead><tr><th>RAZÃO SOCIAL / CREDOR</th>"
-        + "".join(f"<th>{mes.upper()}</th>" for mes in MESES)
+        + "".join(f"<th>{mes.upper()}</th>" for mes in meses_exibidos)
         + "<th>TOTAL GERAL</th></tr></thead><tbody>" + "".join(linhas)
         + f"<tr><td class='fnde-total'>TOTAL CONSOLIDADO DO FILTRO</td>{rodape}<td class='fnde-total'>{_moeda(total_geral)}</td></tr>"
         + "</tbody></table></div>",
@@ -240,8 +244,8 @@ def render() -> None:
             figura.add_scatter(name="Executado", x=grafico["Mês"], y=grafico["Executado no mês"], mode="lines+markers+text", text=[_moeda(valor) if valor else "" for valor in grafico["Executado no mês"]], textposition="top center", textfont=dict(size=9, color="#61758a"), line=dict(color="#00879a", width=3), marker=dict(color="#f39b16", size=9))
             figura.update_layout(height=330, margin=dict(l=10, r=10, t=28, b=10), showlegend=False, yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", plot_bgcolor="#fff", paper_bgcolor="#fff")
             figura.update_xaxes(showgrid=False, tickangle=-28)
-        figura.update_yaxes(gridcolor="#e8eff4", zerolinecolor="#e8eff4")
-        st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
+            figura.update_yaxes(gridcolor="#e8eff4", zerolinecolor="#e8eff4")
+            st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
         with direita:
             st.markdown('<div class="fnde-subtitulo-grafico">Execução por cooperativa</div>', unsafe_allow_html=True)
             por_credor = filtrado.groupby("Cooperativa")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
