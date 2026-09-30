@@ -263,7 +263,7 @@ st.markdown(
     /* A barra SEAF e a navegação são fixas. O conteúdo começa logo abaixo
        delas sem permitir que o wrapper flex principal seja esticado. */
     body [data-testid="stMainBlockContainer"] {
-        padding-top: 0.75rem !important;
+        padding-top: 2.25rem !important;
     }
     /* O Streamlit mantém no bloco principal vários stElementContainer vazios
        (altura 0). Como o stVerticalBlock aplica gap de 1rem entre filhos, cada
@@ -951,7 +951,7 @@ st.markdown(
     </style>
 """,
     unsafe_allow_html=True,
-, unsafe_allow_html=True)
+)
 
 
 def formatar_brl(valor):
