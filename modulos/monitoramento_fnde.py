@@ -373,7 +373,6 @@ def render() -> None:
                 .sort_values("Executado", ascending=True)
             )
             total_produtos = float(por_produto["Executado"].sum())
-            por_produto["Participação"] = por_produto["Executado"] / total_produtos * 100 if total_produtos else 0.0
 
             esquerda_produto, direita_produto = st.columns([1.1, .9], gap="large")
             with esquerda_produto:
@@ -403,20 +402,19 @@ def render() -> None:
                     legend=dict(orientation="h", y=1.18, x=0, font=dict(size=10, color="#244b69")),
                     plot_bgcolor="#fff", paper_bgcolor="#fff", xaxis_tickprefix="R$ ", xaxis_tickformat=",.0f",
                 )
-                figura_produtos.update_xaxes(showgrid=True, gridcolor="#dce8ef", tickfont=dict(size=10, color="#244b69"), rangemode="tozero")
+                figura_produtos.update_xaxes(showgrid=False, showticklabels=False, showline=False, zeroline=False, rangemode="tozero")
                 figura_produtos.update_yaxes(showgrid=False, tickfont=dict(size=11, color="#063b70"), autorange="reversed")
                 st.plotly_chart(figura_produtos, use_container_width=True, config={"displayModeBar": False})
             with direita_produto:
                 st.markdown('<div class="fnde-produtos-titulo">Resumo por produto</div>', unsafe_allow_html=True)
                 linhas_produtos = "".join(
-                    f"<tr><td>{linha['Produto']}</td><td>{_moeda(linha['Executado'])}</td>"
-                    f"<td>{linha['Participação']:.1f}%</td></tr>"
+                    f"<tr><td>{linha['Produto']}</td><td>{_moeda(linha['Executado'])}</td></tr>"
                     for _, linha in por_produto.sort_values("Executado", ascending=False).iterrows()
                 )
                 st.markdown(
-                    "<div class='fnde-produtos-tabela'><table><thead><tr><th>PRODUTO</th><th>EXECUTADO</th><th>PARTICIPAÇÃO</th></tr></thead><tbody>"
+                    "<div class='fnde-produtos-tabela'><table><thead><tr><th>PRODUTO</th><th>EXECUTADO</th></tr></thead><tbody>"
                     + linhas_produtos
-                    + f"<tr><td class='fnde-total'>TOTAL</td><td class='fnde-total'>{_moeda(total_produtos)}</td><td class='fnde-total'>100,0%</td></tr>"
+                    + f"<tr><td class='fnde-total'>TOTAL</td><td class='fnde-total'>{_moeda(total_produtos)}</td></tr>"
                     + "</tbody></table></div>",
                     unsafe_allow_html=True,
                 )
