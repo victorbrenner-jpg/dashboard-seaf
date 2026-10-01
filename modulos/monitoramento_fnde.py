@@ -407,6 +407,7 @@ def render() -> None:
                 st.plotly_chart(figura_produtos, use_container_width=True, config={"displayModeBar": False})
             with direita_produto:
                 st.markdown('<div class="fnde-produtos-titulo">Resumo por produto</div>', unsafe_allow_html=True)
+                # Resumo executivo: exibe somente produto e valor executado.
                 linhas_produtos = "".join(
                     f"<tr><td>{linha['Produto']}</td><td>{_moeda(linha['Executado'])}</td></tr>"
                     for _, linha in por_produto.sort_values("Executado", ascending=False).iterrows()
