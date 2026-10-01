@@ -389,7 +389,8 @@ def render() -> None:
                 for indice, produto in enumerate(mensal_produtos.columns):
                     valores = mensal_produtos[produto]
                     figura_produtos.add_bar(
-                        name=produto.title(), x=mensal_produtos.index, y=valores,
+                        name=produto.title(), x=valores, y=mensal_produtos.index,
+                        orientation="h",
                         marker_color=cores_produtos[indice % len(cores_produtos)],
                         text=[f"<b>{_moeda(valor)}</b>" if valor else "" for valor in valores],
                         textposition="outside",
@@ -398,12 +399,12 @@ def render() -> None:
                         hovertemplate=f"<b>{produto.title()}</b><br>%{{x}}<br>Executado: R$ %{{y:,.2f}}<extra></extra>",
                     )
                 figura_produtos.update_layout(
-                    height=335, margin=dict(l=10, r=20, t=30, b=10), barmode="group",
+                    height=max(315, 58 * len(meses_produtos)), margin=dict(l=10, r=105, t=30, b=10), barmode="group",
                     legend=dict(orientation="h", y=1.18, x=0, font=dict(size=10, color="#244b69")),
-                    plot_bgcolor="#fff", paper_bgcolor="#fff", yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f",
+                    plot_bgcolor="#fff", paper_bgcolor="#fff", xaxis_tickprefix="R$ ", xaxis_tickformat=",.0f",
                 )
-                figura_produtos.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#244b69"))
-                figura_produtos.update_yaxes(showgrid=True, gridcolor="#dce8ef", tickfont=dict(size=10, color="#244b69"), rangemode="tozero")
+                figura_produtos.update_xaxes(showgrid=True, gridcolor="#dce8ef", tickfont=dict(size=10, color="#244b69"), rangemode="tozero")
+                figura_produtos.update_yaxes(showgrid=False, tickfont=dict(size=11, color="#063b70"), autorange="reversed")
                 st.plotly_chart(figura_produtos, use_container_width=True, config={"displayModeBar": False})
             with direita_produto:
                 st.markdown('<div class="fnde-produtos-titulo">Resumo por produto</div>', unsafe_allow_html=True)
