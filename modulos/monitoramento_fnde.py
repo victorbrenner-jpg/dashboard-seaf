@@ -414,12 +414,18 @@ def render() -> None:
                     legend=dict(orientation="h", y=1.18, x=0, font=dict(size=10, color="#244b69")),
                     plot_bgcolor="#fff", paper_bgcolor="#fff", xaxis_tickprefix="R$ ", xaxis_tickformat=",.0f",
                 )
-                figura_produtos.update_xaxes(showgrid=False, showticklabels=False, showline=False, zeroline=False, rangemode="tozero")
-                figura_produtos.update_yaxes(showgrid=False, tickfont=dict(size=11, color="#063b70"), autorange="reversed")
+                figura_produtos.update_xaxes(
+                    visible=False, showgrid=False, showticklabels=False, showline=False,
+                    zeroline=False, ticks="", title=None, rangemode="tozero",
+                )
+                figura_produtos.update_yaxes(
+                    showgrid=False, showline=False, zeroline=False, ticks="",
+                    tickfont=dict(size=11, color="#063b70"), autorange="reversed",
+                )
                 st.plotly_chart(figura_produtos, use_container_width=True, config={"displayModeBar": False})
             with direita_produto:
                 st.markdown('<div class="fnde-produtos-titulo">Resumo por produto</div>', unsafe_allow_html=True)
-                # Resumo executivo: exibe somente produto e valor executado.
+                # Resumo executivo v2: somente Produto e Executado; participação removida.
                 linhas_produtos = "".join(
                     f"<tr><td>{linha['Produto']}</td><td>{_moeda(linha['Executado'])}</td></tr>"
                     for _, linha in por_produto.sort_values("Executado", ascending=False).iterrows()
