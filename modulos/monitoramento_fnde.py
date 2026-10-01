@@ -123,6 +123,7 @@ def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
     coluna_nl = _localizar_coluna(dados.columns, "DocumentoNL", "Documento NL")
     coluna_pd = _localizar_coluna(dados.columns, "DocumentoPD", "Documento PD")
     coluna_ob = _localizar_coluna(dados.columns, "DocumentoOB", "Documento OB")
+    coluna_data_pagamento = _localizar_coluna(dados.columns, "Data Pagamento", "Data_Pagamento", "DataPagamento")
     obrigatorias = (
         coluna_fonte, coluna_credor, coluna_liquidacao, coluna_pagamento,
         coluna_material, coluna_nl, coluna_pd, coluna_ob,
@@ -140,6 +141,14 @@ def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
     base["NL"] = base[coluna_nl].fillna("").astype(str).str.strip()
     base["PD"] = base[coluna_pd].fillna("").astype(str).str.strip()
     base["OB"] = base[coluna_ob].fillna("").astype(str).str.strip()
+    if coluna_data_pagamento:
+        base["Data Pagamento"] = pd.to_datetime(base[coluna_data_pagamento], errors="coerce", dayfirst=True)
+        base["Mês Pagamento"] = base["Data Pagamento"].dt.month.map(
+            {1: "Jan/2026", 2: "Fev/2026", 3: "Mar/2026", 4: "Abr/2026", 5: "Mai/2026", 6: "Jun/2026",
+             7: "Jul/2026", 8: "Ago/2026", 9: "Set/2026", 10: "Out/2026", 11: "Nov/2026", 12: "Dez/2026"}
+        )
+    else:
+        base["Mês Pagamento"] = pd.NA
 
     # Quando a linha de produto não traz OB, a própria extração Qlik permite
     # localizá-la pela mesma NL ou PD da linha de pagamento.
@@ -162,13 +171,16 @@ def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
     coluna_ob_pagamentos = _localizar_coluna(
         pagamentos.columns, "Número", "Numero", "DocumentoOB", "Documento OB", "OB"
     )
+    # A nova base já traz Data Pagamento. Ela passa a ser a fonte principal
+    # do mês; o cruzamento pela OB fica somente como compatibilidade/fallback.
+    produtos["Mês"] = produtos["Mês Pagamento"]
     if coluna_ob_pagamentos:
         meses_ob = pagamentos[[coluna_ob_pagamentos, "Mês"]].copy()
         meses_ob["OB"] = meses_ob[coluna_ob_pagamentos].fillna("").astype(str).str.strip()
         meses_ob = meses_ob.drop_duplicates("OB", keep="last")[["OB", "Mês"]]
-        produtos = produtos.merge(meses_ob, on="OB", how="left")
-    else:
-        produtos["Mês"] = pd.NA
+        produtos = produtos.merge(meses_ob, on="OB", how="left", suffixes=("", "_OB"))
+        produtos["Mês"] = produtos["Mês"].fillna(produtos["Mês_OB"])
+        produtos = produtos.drop(columns=["Mês_OB"], errors="ignore")
     produtos["Mês"] = produtos["Mês"].fillna("Sem mês informado")
     produtos["Executado"] = produtos["Liquidado"]
     return produtos[["Cooperativa", "Produto", "Mês", "Executado"]]
