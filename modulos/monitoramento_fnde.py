@@ -76,10 +76,10 @@ def _nome_cooperativa(nome: object) -> str | None:
 
 
 def _nome_produto(material: object) -> str | None:
-    """Remove o código do material sem perder produtos ainda não classificados."""
+    """Remove o código do material e preserva valores sem detalhamento."""
     texto = str(material or "").strip()
     if not texto or texto == "-" or texto.lower() == "nan":
-        return None
+        return "PRODUTO NÃO INFORMADO"
     partes = texto.split("-", maxsplit=1)
     return (partes[-1] if len(partes) == 2 else texto).strip().upper()
 
@@ -118,13 +118,9 @@ def _carregar_produtos() -> pd.DataFrame:
     coluna_fonte = _localizar_coluna(dados.columns, "Fonte")
     coluna_credor = _localizar_coluna(dados.columns, "Credor")
     coluna_liquidacao = _localizar_coluna(dados.columns, "LIQUIDAÇÃO", "Liquidacao")
-    coluna_pagamento = _localizar_coluna(dados.columns, "PAGAMENTO", "Pagamento")
     coluna_material = _localizar_coluna(dados.columns, "Material")
-    coluna_pd = _localizar_coluna(dados.columns, "DocumentoPD", "Documento PD")
-    coluna_ob = _localizar_coluna(dados.columns, "DocumentoOB", "Documento OB")
     obrigatorias = (
-        coluna_fonte, coluna_credor, coluna_liquidacao, coluna_pagamento,
-        coluna_material, coluna_pd, coluna_ob,
+        coluna_fonte, coluna_credor, coluna_liquidacao, coluna_material,
     )
     if not all(obrigatorias):
         raise ValueError("A base de produtos não contém todas as colunas do Qlik.")
@@ -135,18 +131,9 @@ def _carregar_produtos() -> pd.DataFrame:
     base["Cooperativa"] = base[coluna_credor].map(_nome_cooperativa)
     base["Produto"] = base[coluna_material].map(_nome_produto)
     base["Liquidado"] = base[coluna_liquidacao].map(_valor_numero)
-    base["Pago"] = base[coluna_pagamento].map(_valor_numero)
-    base["PD"] = base[coluna_pd].fillna("").astype(str).str.strip()
-    base["OB"] = base[coluna_ob].fillna("").astype(str).str.strip()
-
-    # O arquivo do Qlik traz linhas de pagamento e de produto separadamente.
-    # A associação abaixo é usada apenas como validação interna da execução.
-    pds_pagos = set(base.loc[(base["Pago"] > 0) & (~base["OB"].isin(["", "-"])), "PD"])
     produtos = base[
         base["Cooperativa"].notna()
-        & base["Produto"].notna()
         & (base["Liquidado"] > 0)
-        & base["PD"].isin(pds_pagos)
     ].copy()
     produtos["Executado"] = produtos["Liquidado"]
     return produtos[["Cooperativa", "Produto", "Executado"]]
