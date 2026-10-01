@@ -370,13 +370,16 @@ def render() -> None:
                 st.info("Não há produtos pagos para os filtros selecionados.")
                 return
 
-            cooperativa_padrao = filtros["credores"][0] if len(filtros["credores"]) == 1 else opcoes_cooperativas[0]
-            indice_padrao = opcoes_cooperativas.index(cooperativa_padrao) if cooperativa_padrao in opcoes_cooperativas else 0
-            cooperativa_produto = st.selectbox(
-                "Cooperativa",
-                opcoes_cooperativas,
-                index=indice_padrao,
-                key="fnde_cooperativa_produtos",
+            # A visão de produtos acompanha exclusivamente o filtro lateral do FNDE.
+            # Removido o selectbox interno: clicar/selecionar no conteúdo não deve abrir
+            # um segundo filtro com comportamento diferente do padrão da tela.
+            if len(filtros["credores"]) == 1 and filtros["credores"][0] in opcoes_cooperativas:
+                cooperativa_produto = filtros["credores"][0]
+            else:
+                cooperativa_produto = opcoes_cooperativas[0]
+            st.markdown(
+                f"<div class='fnde-produtos-titulo'>Cooperativa: {cooperativa_produto}</div>",
+                unsafe_allow_html=True,
             )
             por_produto = (
                 produtos[produtos["Cooperativa"] == cooperativa_produto]
