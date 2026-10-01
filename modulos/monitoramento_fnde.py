@@ -15,15 +15,9 @@ URL_BASE_PAGAMENTOS = (
     "pub?gid=1786485134&single=true&output=csv"
 )
 URL_BASE_PRODUTOS = (
-<<<<<<< HEAD
-    "https://docs.google.com/spreadsheets/d/"
-    "1E9T7CdSuk0e_C5X82efoA9rkmCwEP5cFJbcNPSR3m00/"
-    "export?format=csv&gid=57532928"
-=======
     "https://docs.google.com/spreadsheets/d/e/"
     "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
     "pub?gid=1422300352&single=true&output=csv"
->>>>>>> fe2c294dda516f2a98553c2407145ee1beaf4697
 )
 TOTAL_RECEBIDO = 18_881_868.00
 PERCENTUAL_COOPERATIVAS = 0.45
@@ -116,7 +110,6 @@ def _carregar_pagamentos() -> pd.DataFrame:
     return base
 
 
-<<<<<<< HEAD
 @st.cache_data(ttl=300, show_spinner=False)
 def _carregar_produtos() -> pd.DataFrame:
     """Lê a base Qlik e mantém somente produtos com pagamento confirmado."""
@@ -157,74 +150,6 @@ def _carregar_produtos() -> pd.DataFrame:
     ].copy()
     produtos["Executado"] = produtos["Liquidado"]
     return produtos[["Cooperativa", "Produto", "Executado"]]
-=======
-
-@st.cache_data(ttl=300, show_spinner=False)
-def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
-    """Liga material -> PD -> OB -> mês do pagamento, sem duplicar a execução."""
-    bruto = pd.read_csv(URL_BASE_PRODUTOS)
-    bruto.columns = [str(coluna).strip() for coluna in bruto.columns]
-    obrigatorias = {
-        "Fonte", "Credor", "LIQUIDAÇÃO", "PAGAMENTO", "Material",
-        "DocumentoNE", "DocumentoNL", "DocumentoPD", "DocumentoOB",
-    }
-    if not obrigatorias.issubset(bruto.columns):
-        faltantes = ", ".join(sorted(obrigatorias.difference(bruto.columns)))
-        raise ValueError(f"Base de produtos sem as colunas: {faltantes}")
-
-    for coluna in ["Fonte", "Credor", "Material", "DocumentoNE", "DocumentoNL", "DocumentoPD", "DocumentoOB"]:
-        bruto[coluna] = bruto[coluna].fillna("").astype(str).str.strip()
-    bruto["Valor liquidado"] = bruto["LIQUIDAÇÃO"].map(_valor_numero)
-    bruto["Valor pago"] = bruto["PAGAMENTO"].map(_valor_numero)
-
-    # O PD é a ponte entre a linha de material/liquidação e a linha que contém a OB.
-    mapa_pd_ob = (
-        bruto[
-            (bruto["DocumentoPD"] != "")
-            & (~bruto["DocumentoOB"].isin(["", "-"]))
-            & (bruto["Valor pago"] > 0)
-        ][["DocumentoPD", "DocumentoOB"]]
-        .drop_duplicates("DocumentoPD", keep="last")
-    )
-    detalhe = bruto[
-        (bruto["Valor liquidado"] > 0)
-        & (~bruto["Material"].isin(["", "-"]))
-    ].copy()
-    detalhe = detalhe.drop(columns=["DocumentoOB"]).merge(
-        mapa_pd_ob, on="DocumentoPD", how="left"
-    )
-    detalhe["DocumentoOB"] = detalhe["DocumentoOB"].fillna("").astype(str).str.strip()
-
-    # A OB já existe na base financeira usada pela própria tela. Ela fornece
-    # a data real de pagamento e evita inferir o mês pela posição da extração.
-    coluna_ob = _localizar_coluna(pagamentos.columns, "Número", "Numero", "DocumentoOB", "OB")
-    if coluna_ob:
-        mapa_ob_data = pagamentos[[coluna_ob, "Data", "Mês"]].copy()
-        mapa_ob_data["__ob"] = mapa_ob_data[coluna_ob].fillna("").astype(str).str.strip()
-        mapa_ob_data = mapa_ob_data.drop_duplicates("__ob", keep="last")[["__ob", "Data", "Mês"]]
-        detalhe = detalhe.merge(
-            mapa_ob_data, left_on="DocumentoOB", right_on="__ob", how="left"
-        ).drop(columns=["__ob"])
-    else:
-        detalhe["Data"] = pd.NaT
-        detalhe["Mês"] = "Sem mês informado"
-
-    detalhe["Cooperativa"] = detalhe["Credor"].map(_nome_cooperativa)
-    detalhe["Produto"] = (
-        detalhe["Material"]
-        .str.replace(r"^\d+\s*-\s*", "", regex=True)
-        .str.strip()
-        .replace("", "Produto não informado")
-    )
-    detalhe["Status"] = "Aguardando conciliação"
-    detalhe.loc[detalhe["DocumentoOB"].ne(""), "Status"] = "OB localizada"
-    detalhe.loc[detalhe["Data"].notna(), "Status"] = "Pago"
-    detalhe["Valor executado produto"] = detalhe["Valor liquidado"].where(
-        detalhe["Status"].eq("Pago"), 0.0
-    )
-    return detalhe
-
->>>>>>> fe2c294dda516f2a98553c2407145ee1beaf4697
 
 
 def _card(titulo: str, valor: float, detalhe: str, classe: str) -> None:
@@ -398,7 +323,6 @@ def render() -> None:
                 unsafe_allow_html=True,
             )
 
-<<<<<<< HEAD
     st.markdown('<div class="fnde-box-title">Produtos fornecidos por cooperativa</div>', unsafe_allow_html=True)
     with st.container(key="produtos_fnde"):
         try:
@@ -453,8 +377,9 @@ def render() -> None:
             with direita_produto:
                 st.markdown('<div class="fnde-produtos-titulo">Resumo por produto</div>', unsafe_allow_html=True)
                 linhas_produtos = "".join(
-                    f"<tr><td>{linha.Produto}</td><td>{_moeda(linha.Executado)}</td><td>{linha.Participação:.1f}%</td></tr>"
-                    for linha in por_produto.sort_values("Executado", ascending=False).itertuples(index=False)
+                    f"<tr><td>{linha['Produto']}</td><td>{_moeda(linha['Executado'])}</td>"
+                    f"<td>{linha['Participação']:.1f}%</td></tr>"
+                    for _, linha in por_produto.sort_values("Executado", ascending=False).iterrows()
                 )
                 st.markdown(
                     "<div class='fnde-produtos-tabela'><table><thead><tr><th>PRODUTO</th><th>EXECUTADO</th><th>PARTICIPAÇÃO</th></tr></thead><tbody>"
@@ -465,97 +390,3 @@ def render() -> None:
                 )
         except Exception:
             st.info("A base de produtos está sendo preparada para atualização automática.")
-=======
-    # ------------------------------------------------------------------
-    # PRODUTOS POR COOPERATIVA — visão gerencial + rastreabilidade
-    # ------------------------------------------------------------------
-    st.markdown('<div class="fnde-analise-titulo">Produtos fornecidos por cooperativa</div>', unsafe_allow_html=True)
-    try:
-        produtos = _carregar_produtos(pagamentos)
-        if filtros["meses"]:
-            produtos = produtos[produtos["Mês"].isin(filtros["meses"])]
-        if filtros["credores"]:
-            produtos = produtos[produtos["Cooperativa"].isin(filtros["credores"])]
-
-        if produtos.empty:
-            st.info("Nenhum produto encontrado para os filtros aplicados.")
-        else:
-            for cooperativa in [nome for nome in COOPERATIVAS if nome in set(produtos["Cooperativa"].dropna())]:
-                base_credor = produtos[produtos["Cooperativa"].eq(cooperativa)].copy()
-                total_liquidado = float(base_credor["Valor liquidado"].sum())
-                total_pago = float(base_credor["Valor executado produto"].sum())
-                pendente = max(total_liquidado - total_pago, 0.0)
-                percentual = (total_pago / total_liquidado * 100) if total_liquidado else 0.0
-
-                resumo = (
-                    base_credor.groupby("Produto", as_index=False)
-                    .agg(
-                        Liquidado=("Valor liquidado", "sum"),
-                        Pago=("Valor executado produto", "sum"),
-                        Documentos=("DocumentoNL", "count"),
-                    )
-                    .sort_values("Liquidado", ascending=False)
-                )
-                resumo["Pendente"] = (resumo["Liquidado"] - resumo["Pago"]).clip(lower=0)
-                resumo["Situação"] = resumo.apply(
-                    lambda linha: "✅ Pago"
-                    if abs(float(linha["Pendente"])) < 0.01
-                    else ("🟡 Parcial" if float(linha["Pago"]) > 0 else "⏳ Aguardando"),
-                    axis=1,
-                )
-
-                st.markdown(
-                    f"""<div style="margin-top:16px;border:1px solid #d7e3ee;border-radius:8px 8px 0 0;
-                    background:#f5f9fc;padding:11px 14px;color:#073b61;font-weight:800;font-size:.92rem">
-                    {cooperativa}</div>""",
-                    unsafe_allow_html=True,
-                )
-                a, b, d, e = st.columns([1, 1, 1, .72])
-                a.metric("Liquidado", _moeda(total_liquidado))
-                b.metric("Pago / conciliado", _moeda(total_pago))
-                d.metric("Pendente", _moeda(pendente))
-                e.metric("Execução", f"{percentual:.1f}%")
-
-                tabela_resumo = resumo.rename(columns={
-                    "Produto": "PRODUTO",
-                    "Liquidado": "LIQUIDADO",
-                    "Pago": "PAGO",
-                    "Pendente": "PENDENTE",
-                    "Documentos": "Nº NL",
-                    "Situação": "STATUS",
-                })[["PRODUTO", "LIQUIDADO", "PAGO", "PENDENTE", "Nº NL", "STATUS"]]
-                st.dataframe(
-                    tabela_resumo,
-                    hide_index=True,
-                    use_container_width=True,
-                    height=min(70 + 35 * len(tabela_resumo), 300),
-                    column_config={
-                        "LIQUIDADO": st.column_config.NumberColumn("LIQUIDADO", format="R$ %.2f"),
-                        "PAGO": st.column_config.NumberColumn("PAGO", format="R$ %.2f"),
-                        "PENDENTE": st.column_config.NumberColumn("PENDENTE", format="R$ %.2f"),
-                    },
-                )
-
-                with st.expander(f"Ver documentos e rastreabilidade — {cooperativa.split(' — ')[0]}"):
-                    rastreio = base_credor[
-                        ["Mês", "Produto", "DocumentoNE", "DocumentoNL",
-                         "DocumentoPD", "DocumentoOB", "Valor liquidado", "Status"]
-                    ].rename(columns={
-                        "Produto": "Produto", "DocumentoNE": "NE", "DocumentoNL": "NL",
-                        "DocumentoPD": "PD", "DocumentoOB": "OB",
-                        "Valor liquidado": "Valor", "Status": "Status",
-                    }).sort_values(["Produto", "Mês"])
-                    st.dataframe(
-                        rastreio,
-                        hide_index=True,
-                        use_container_width=True,
-                        height=min(90 + 35 * len(rastreio), 420),
-                        column_config={
-                            "Valor": st.column_config.NumberColumn("Valor", format="R$ %.2f"),
-                        },
-                    )
-    except Exception as erro_produtos:
-        st.warning("O detalhamento por produto ainda não conseguiu ler a aba FNDE_Produtos.")
-        st.caption(f"Detalhe técnico: {erro_produtos}")
-
->>>>>>> fe2c294dda516f2a98553c2407145ee1beaf4697
