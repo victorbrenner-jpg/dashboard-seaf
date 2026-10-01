@@ -111,16 +111,21 @@ def _carregar_pagamentos() -> pd.DataFrame:
 
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _carregar_produtos() -> pd.DataFrame:
-    """Lê a base Qlik e mantém somente produtos com pagamento confirmado."""
+def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
+    """Vincula cada produto ao mês efetivo da OB, sem exibir a rastreabilidade."""
     dados = pd.read_csv(URL_BASE_PRODUTOS)
     dados.columns = [str(coluna).strip() for coluna in dados.columns]
     coluna_fonte = _localizar_coluna(dados.columns, "Fonte")
     coluna_credor = _localizar_coluna(dados.columns, "Credor")
     coluna_liquidacao = _localizar_coluna(dados.columns, "LIQUIDAÇÃO", "Liquidacao")
+    coluna_pagamento = _localizar_coluna(dados.columns, "PAGAMENTO", "Pagamento")
     coluna_material = _localizar_coluna(dados.columns, "Material")
+    coluna_nl = _localizar_coluna(dados.columns, "DocumentoNL", "Documento NL")
+    coluna_pd = _localizar_coluna(dados.columns, "DocumentoPD", "Documento PD")
+    coluna_ob = _localizar_coluna(dados.columns, "DocumentoOB", "Documento OB")
     obrigatorias = (
-        coluna_fonte, coluna_credor, coluna_liquidacao, coluna_material,
+        coluna_fonte, coluna_credor, coluna_liquidacao, coluna_pagamento,
+        coluna_material, coluna_nl, coluna_pd, coluna_ob,
     )
     if not all(obrigatorias):
         raise ValueError("A base de produtos não contém todas as colunas do Qlik.")
@@ -131,12 +136,42 @@ def _carregar_produtos() -> pd.DataFrame:
     base["Cooperativa"] = base[coluna_credor].map(_nome_cooperativa)
     base["Produto"] = base[coluna_material].map(_nome_produto)
     base["Liquidado"] = base[coluna_liquidacao].map(_valor_numero)
+    base["Pago"] = base[coluna_pagamento].map(_valor_numero)
+    base["NL"] = base[coluna_nl].fillna("").astype(str).str.strip()
+    base["PD"] = base[coluna_pd].fillna("").astype(str).str.strip()
+    base["OB"] = base[coluna_ob].fillna("").astype(str).str.strip()
+
+    # Quando a linha de produto não traz OB, a própria extração Qlik permite
+    # localizá-la pela mesma NL ou PD da linha de pagamento.
+    pagos_qlik = base[(base["Pago"] > 0) & (~base["OB"].isin(["", "-"]))]
+    mapa_pd_ob = (
+        pagos_qlik[~pagos_qlik["PD"].isin(["", "-"])]
+        .drop_duplicates("PD", keep="last").set_index("PD")["OB"]
+    )
+    mapa_nl_ob = (
+        pagos_qlik[~pagos_qlik["NL"].isin(["", "-"])]
+        .drop_duplicates("NL", keep="last").set_index("NL")["OB"]
+    )
     produtos = base[
         base["Cooperativa"].notna()
         & (base["Liquidado"] > 0)
     ].copy()
+    produtos["OB"] = produtos["OB"].where(~produtos["OB"].isin(["", "-"]), produtos["PD"].map(mapa_pd_ob))
+    produtos["OB"] = produtos["OB"].fillna(produtos["NL"].map(mapa_nl_ob))
+
+    coluna_ob_pagamentos = _localizar_coluna(
+        pagamentos.columns, "Número", "Numero", "DocumentoOB", "Documento OB", "OB"
+    )
+    if coluna_ob_pagamentos:
+        meses_ob = pagamentos[[coluna_ob_pagamentos, "Mês"]].copy()
+        meses_ob["OB"] = meses_ob[coluna_ob_pagamentos].fillna("").astype(str).str.strip()
+        meses_ob = meses_ob.drop_duplicates("OB", keep="last")[["OB", "Mês"]]
+        produtos = produtos.merge(meses_ob, on="OB", how="left")
+    else:
+        produtos["Mês"] = pd.NA
+    produtos["Mês"] = produtos["Mês"].fillna("Sem mês informado")
     produtos["Executado"] = produtos["Liquidado"]
-    return produtos[["Cooperativa", "Produto", "Executado"]]
+    return produtos[["Cooperativa", "Produto", "Mês", "Executado"]]
 
 
 def _card(titulo: str, valor: float, detalhe: str, classe: str) -> None:
@@ -313,7 +348,9 @@ def render() -> None:
     st.markdown('<div class="fnde-box-title">Produtos fornecidos por cooperativa</div>', unsafe_allow_html=True)
     with st.container(key="produtos_fnde"):
         try:
-            produtos = _carregar_produtos()
+            produtos = _carregar_produtos(pagamentos)
+            if filtros["meses"]:
+                produtos = produtos[produtos["Mês"].isin(filtros["meses"])]
             if filtros["credores"]:
                 produtos = produtos[produtos["Cooperativa"].isin(filtros["credores"])]
             opcoes_cooperativas = [cooperativa for cooperativa in COOPERATIVAS if cooperativa in set(produtos["Cooperativa"])]
@@ -340,26 +377,33 @@ def render() -> None:
 
             esquerda_produto, direita_produto = st.columns([1.1, .9], gap="large")
             with esquerda_produto:
-                st.markdown('<div class="fnde-produtos-titulo">Execução por produto</div>', unsafe_allow_html=True)
+                st.markdown('<div class="fnde-produtos-titulo">Execução mensal por produto</div>', unsafe_allow_html=True)
+                mensal_produtos = pd.pivot_table(
+                    produtos[produtos["Cooperativa"] == cooperativa_produto],
+                    index="Mês", columns="Produto", values="Executado", aggfunc="sum", fill_value=0.0,
+                ).reindex(MESES, fill_value=0.0)
+                meses_produtos = [mes for mes in MESES if float(mensal_produtos.loc[mes].sum()) > 0]
+                mensal_produtos = mensal_produtos.loc[meses_produtos]
                 figura_produtos = go.Figure()
-                figura_produtos.add_bar(
-                    x=por_produto["Executado"],
-                    y=por_produto["Produto"],
-                    orientation="h",
-                    marker_color="#087c93",
-                    text=[f"<b>{_moeda(valor)}</b>" for valor in por_produto["Executado"]],
-                    textposition="outside",
-                    textfont=dict(family="Arial Black, Arial, sans-serif", size=12, color="#002b49"),
-                    cliponaxis=False,
-                    hovertemplate="<b>%{y}</b><br>Executado: R$ %{x:,.2f}<extra></extra>",
-                )
+                cores_produtos = ["#087c93", "#1f5f99", "#718096", "#c97800", "#16865b"]
+                for indice, produto in enumerate(mensal_produtos.columns):
+                    valores = mensal_produtos[produto]
+                    figura_produtos.add_bar(
+                        name=produto.title(), x=mensal_produtos.index, y=valores,
+                        marker_color=cores_produtos[indice % len(cores_produtos)],
+                        text=[f"<b>{_moeda(valor)}</b>" if valor else "" for valor in valores],
+                        textposition="outside",
+                        textfont=dict(family="Arial, sans-serif", size=10, color="#002b49"),
+                        cliponaxis=False,
+                        hovertemplate=f"<b>{produto.title()}</b><br>%{{x}}<br>Executado: R$ %{{y:,.2f}}<extra></extra>",
+                    )
                 figura_produtos.update_layout(
-                    height=max(230, 78 * len(por_produto)), margin=dict(l=10, r=80, t=8, b=5),
-                    showlegend=False, plot_bgcolor="#fff", paper_bgcolor="#fff",
-                    xaxis_tickprefix="R$ ", xaxis_tickformat=",.0f",
+                    height=335, margin=dict(l=10, r=20, t=30, b=10), barmode="group",
+                    legend=dict(orientation="h", y=1.18, x=0, font=dict(size=10, color="#244b69")),
+                    plot_bgcolor="#fff", paper_bgcolor="#fff", yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f",
                 )
-                figura_produtos.update_xaxes(showgrid=True, gridcolor="#dce8ef", tickfont=dict(size=10, color="#244b69"))
-                figura_produtos.update_yaxes(showgrid=False, tickfont=dict(size=12, color="#063b70"))
+                figura_produtos.update_xaxes(showgrid=False, tickfont=dict(size=10, color="#244b69"))
+                figura_produtos.update_yaxes(showgrid=True, gridcolor="#dce8ef", tickfont=dict(size=10, color="#244b69"), rangemode="tozero")
                 st.plotly_chart(figura_produtos, use_container_width=True, config={"displayModeBar": False})
             with direita_produto:
                 st.markdown('<div class="fnde-produtos-titulo">Resumo por produto</div>', unsafe_allow_html=True)
