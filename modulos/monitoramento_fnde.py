@@ -14,6 +14,11 @@ URL_BASE_PAGAMENTOS = (
     "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
     "pub?gid=1786485134&single=true&output=csv"
 )
+URL_BASE_PRODUTOS = (
+    "https://docs.google.com/spreadsheets/d/"
+    "1E9T7CdSuk0e_C5X82efoA9rkmCwEP5cFJbcNPSR3m00/"
+    "export?format=csv&gid=57532928"
+)
 TOTAL_RECEBIDO = 18_881_868.00
 PERCENTUAL_COOPERATIVAS = 0.45
 META_COOPERATIVAS = TOTAL_RECEBIDO * PERCENTUAL_COOPERATIVAS
@@ -70,6 +75,15 @@ def _nome_cooperativa(nome: object) -> str | None:
     return None
 
 
+def _nome_produto(material: object) -> str | None:
+    """Remove o código do material sem perder produtos ainda não classificados."""
+    texto = str(material or "").strip()
+    if not texto or texto == "-" or texto.lower() == "nan":
+        return None
+    partes = texto.split("-", maxsplit=1)
+    return (partes[-1] if len(partes) == 2 else texto).strip().upper()
+
+
 @st.cache_data(ttl=300, show_spinner=False)
 def _carregar_pagamentos() -> pd.DataFrame:
     dados = pd.read_csv(URL_BASE_PAGAMENTOS)
@@ -96,6 +110,48 @@ def _carregar_pagamentos() -> pd.DataFrame:
     return base
 
 
+@st.cache_data(ttl=300, show_spinner=False)
+def _carregar_produtos() -> pd.DataFrame:
+    """Lê a base Qlik e mantém somente produtos com pagamento confirmado."""
+    dados = pd.read_csv(URL_BASE_PRODUTOS)
+    dados.columns = [str(coluna).strip() for coluna in dados.columns]
+    coluna_fonte = _localizar_coluna(dados.columns, "Fonte")
+    coluna_credor = _localizar_coluna(dados.columns, "Credor")
+    coluna_liquidacao = _localizar_coluna(dados.columns, "LIQUIDAÇÃO", "Liquidacao")
+    coluna_pagamento = _localizar_coluna(dados.columns, "PAGAMENTO", "Pagamento")
+    coluna_material = _localizar_coluna(dados.columns, "Material")
+    coluna_pd = _localizar_coluna(dados.columns, "DocumentoPD", "Documento PD")
+    coluna_ob = _localizar_coluna(dados.columns, "DocumentoOB", "Documento OB")
+    obrigatorias = (
+        coluna_fonte, coluna_credor, coluna_liquidacao, coluna_pagamento,
+        coluna_material, coluna_pd, coluna_ob,
+    )
+    if not all(obrigatorias):
+        raise ValueError("A base de produtos não contém todas as colunas do Qlik.")
+
+    base = dados.copy()
+    fonte = base[coluna_fonte].fillna("").astype(str)
+    base = base[fonte.str.contains(r"(?<!\d)552(?!\d)", regex=True, na=False)].copy()
+    base["Cooperativa"] = base[coluna_credor].map(_nome_cooperativa)
+    base["Produto"] = base[coluna_material].map(_nome_produto)
+    base["Liquidado"] = base[coluna_liquidacao].map(_valor_numero)
+    base["Pago"] = base[coluna_pagamento].map(_valor_numero)
+    base["PD"] = base[coluna_pd].fillna("").astype(str).str.strip()
+    base["OB"] = base[coluna_ob].fillna("").astype(str).str.strip()
+
+    # O arquivo do Qlik traz linhas de pagamento e de produto separadamente.
+    # A associação abaixo é usada apenas como validação interna da execução.
+    pds_pagos = set(base.loc[(base["Pago"] > 0) & (~base["OB"].isin(["", "-"])), "PD"])
+    produtos = base[
+        base["Cooperativa"].notna()
+        & base["Produto"].notna()
+        & (base["Liquidado"] > 0)
+        & base["PD"].isin(pds_pagos)
+    ].copy()
+    produtos["Executado"] = produtos["Liquidado"]
+    return produtos[["Cooperativa", "Produto", "Executado"]]
+
+
 def _card(titulo: str, valor: float, detalhe: str, classe: str) -> None:
     st.markdown(
         f"""<div class="fnde-card {classe}"><div class="fnde-card-title">{titulo}</div>
@@ -119,6 +175,7 @@ def render() -> None:
         .st-key-analise_fnde{margin-top:-1rem!important;border-radius:0 0 8px 8px!important}
         .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 13px}
         .fnde-resumo-mes{border:1px solid #d7e3ee;border-radius:7px;overflow:hidden;background:#fff;height:fit-content!important;min-height:0!important;padding:0!important;margin:0!important}.fnde-resumo-mes table,body .fnde-resumo-mes table{width:100%;border-collapse:collapse;font-size:.75rem;color:#163b5b;margin:0!important;margin-bottom:0!important}.fnde-resumo-mes th{background:#edf4f8;padding:9px;text-align:left;font-size:.64rem}.fnde-resumo-mes td{padding:9px;border-top:1px solid #e1eaf1}.fnde-resumo-mes td:not(:first-child),.fnde-resumo-mes th:not(:first-child){text-align:center}.fnde-resumo-mes td:not(:first-child){font-weight:700;color:#063b70}.fnde-resumo-mes .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
+        .st-key-produtos_fnde{border:1px solid #d7e3ee!important;border-top:0!important;border-radius:0 0 8px 8px!important;padding:18px 16px 14px!important;margin-top:-1rem!important;background:#fff}.st-key-produtos_fnde .stSelectbox{max-width:560px}.fnde-produtos-titulo{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 9px}.fnde-produtos-tabela{border:1px solid #d7e3ee;border-radius:7px;overflow:hidden;background:#fff}.fnde-produtos-tabela table{width:100%;border-collapse:collapse;font-size:.78rem;color:#163b5b}.fnde-produtos-tabela th{background:#edf4f8;padding:10px 12px;text-align:left;font-size:.67rem}.fnde-produtos-tabela td{padding:11px 12px;border-top:1px solid #e1eaf1}.fnde-produtos-tabela td:not(:first-child),.fnde-produtos-tabela th:not(:first-child){text-align:center}.fnde-produtos-tabela td:not(:first-child){font-weight:750;color:#063b70}.fnde-produtos-tabela .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
         </style>""",
         unsafe_allow_html=True,
     )
@@ -265,3 +322,70 @@ def render() -> None:
                 + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
+
+    st.markdown('<div class="fnde-box-title">Produtos fornecidos por cooperativa</div>', unsafe_allow_html=True)
+    with st.container(key="produtos_fnde"):
+        try:
+            produtos = _carregar_produtos()
+            if filtros["credores"]:
+                produtos = produtos[produtos["Cooperativa"].isin(filtros["credores"])]
+            opcoes_cooperativas = [cooperativa for cooperativa in COOPERATIVAS if cooperativa in set(produtos["Cooperativa"])]
+            if not opcoes_cooperativas:
+                st.info("Não há produtos pagos para os filtros selecionados.")
+                return
+
+            cooperativa_padrao = filtros["credores"][0] if len(filtros["credores"]) == 1 else opcoes_cooperativas[0]
+            indice_padrao = opcoes_cooperativas.index(cooperativa_padrao) if cooperativa_padrao in opcoes_cooperativas else 0
+            cooperativa_produto = st.selectbox(
+                "Cooperativa",
+                opcoes_cooperativas,
+                index=indice_padrao,
+                key="fnde_cooperativa_produtos",
+            )
+            por_produto = (
+                produtos[produtos["Cooperativa"] == cooperativa_produto]
+                .groupby("Produto", as_index=False)["Executado"]
+                .sum()
+                .sort_values("Executado", ascending=True)
+            )
+            total_produtos = float(por_produto["Executado"].sum())
+            por_produto["Participação"] = por_produto["Executado"] / total_produtos * 100 if total_produtos else 0.0
+
+            esquerda_produto, direita_produto = st.columns([1.1, .9], gap="large")
+            with esquerda_produto:
+                st.markdown('<div class="fnde-produtos-titulo">Execução por produto</div>', unsafe_allow_html=True)
+                figura_produtos = go.Figure()
+                figura_produtos.add_bar(
+                    x=por_produto["Executado"],
+                    y=por_produto["Produto"],
+                    orientation="h",
+                    marker_color="#087c93",
+                    text=[f"<b>{_moeda(valor)}</b>" for valor in por_produto["Executado"]],
+                    textposition="outside",
+                    textfont=dict(family="Arial Black, Arial, sans-serif", size=12, color="#002b49"),
+                    cliponaxis=False,
+                    hovertemplate="<b>%{y}</b><br>Executado: R$ %{x:,.2f}<extra></extra>",
+                )
+                figura_produtos.update_layout(
+                    height=max(230, 78 * len(por_produto)), margin=dict(l=10, r=80, t=8, b=5),
+                    showlegend=False, plot_bgcolor="#fff", paper_bgcolor="#fff",
+                    xaxis_tickprefix="R$ ", xaxis_tickformat=",.0f",
+                )
+                figura_produtos.update_xaxes(showgrid=True, gridcolor="#dce8ef", tickfont=dict(size=10, color="#244b69"))
+                figura_produtos.update_yaxes(showgrid=False, tickfont=dict(size=12, color="#063b70"))
+                st.plotly_chart(figura_produtos, use_container_width=True, config={"displayModeBar": False})
+            with direita_produto:
+                st.markdown('<div class="fnde-produtos-titulo">Resumo por produto</div>', unsafe_allow_html=True)
+                linhas_produtos = "".join(
+                    f"<tr><td>{linha.Produto}</td><td>{_moeda(linha.Executado)}</td><td>{linha.Participação:.1f}%</td></tr>"
+                    for linha in por_produto.sort_values("Executado", ascending=False).itertuples(index=False)
+                )
+                st.markdown(
+                    "<div class='fnde-produtos-tabela'><table><thead><tr><th>PRODUTO</th><th>EXECUTADO</th><th>PARTICIPAÇÃO</th></tr></thead><tbody>"
+                    + linhas_produtos
+                    + f"<tr><td class='fnde-total'>TOTAL</td><td class='fnde-total'>{_moeda(total_produtos)}</td><td class='fnde-total'>100,0%</td></tr>"
+                    + "</tbody></table></div>",
+                    unsafe_allow_html=True,
+                )
+        except Exception:
+            st.info("A base de produtos está sendo preparada para atualização automática.")
