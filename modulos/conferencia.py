@@ -183,10 +183,11 @@ def _linhas_pdf(conteudo):
     return tabela,sorted(set(fontes))
 
 
-def comparar(conteudo,data,classificacao):
+def comparar(conteudo,data_inicial,data_final,classificacao):
     pdf,fontes=_linhas_pdf(conteudo); pdf=pdf[~pdf["Credor_Chave"].str.contains("INSS",na=False)].copy(); base=carregar_base_ob().copy()
     if base.empty: raise ValueError("A base consolidada de Pagamentos (OB) está indisponível.")
-    base=base[base["Data_Conferencia"]==data].copy()
+    if data_final < data_inicial: data_inicial, data_final = data_final, data_inicial
+    base=base[base["Data_Conferencia"].between(data_inicial,data_final,inclusive="both")].copy()
     if classificacao!="TODAS": base=base[base["Tipo_Item_Conferencia"]==classificacao].copy()
     if fontes: base=base[base["Fonte_Conferencia"].isin(fontes)].copy()
     base=base[~base["Credor_Chave"].str.contains("INSS",na=False)].copy(); base=_consolidar_pagamentos_coletivos(pdf,base)
@@ -216,7 +217,8 @@ def renderizar():
     st.markdown("### 🔎 Conferência de pagamentos"); st.caption("Compare o PDF gerado pelo SIAFIM com a Base OB do mesmo dia. INSS é desconsiderado e retenções são consolidadas conforme o PDF.")
     with st.container(border=True):
         c_data,c_tipo,c_pdf=st.columns([.85,1.05,2.1],vertical_alignment="bottom")
-        with c_data: data=st.date_input("Data do pagamento",value=datetime.date.today(),format="DD/MM/YYYY",key="data_conferencia_ob_009717")
+        with c_data:
+            periodo=st.date_input("Data do pagamento",value=(datetime.date.today(),datetime.date.today()),format="DD/MM/YYYY",key="data_conferencia_ob_009717",help="Selecione uma única data ou um período de pagamento.")
         with c_tipo: tipo=st.selectbox("Classificação da base OB",["ITEM","RETENÇÃO","TODAS"],key="classificacao_conferencia_ob_009717")
         with c_pdf: arquivo=st.file_uploader("PDF do Relatório de Pagamento",type=["pdf"],key="arquivo_conferencia_ob_009717")
         c_comp,c_voltar,_=st.columns([1.1,.82,3.03])
@@ -225,10 +227,13 @@ def renderizar():
     if voltar: st.session_state["mostrar_conferencia_ob_009717"]=False; st.session_state.pop("resultado_conferencia_ob_009717",None); st.rerun()
     if executar:
         if arquivo is None: st.warning("Selecione o PDF que será comparado.")
+        elif not isinstance(periodo,(tuple,list)) or len(periodo)==0: st.warning("Selecione a data ou o período de pagamento.")
+        elif len(periodo)==1: st.warning("Para usar um período, selecione também a data final. Para uma única data, clique duas vezes no mesmo dia.")
         else:
             try:
-                with st.spinner("Lendo o PDF e conciliando com a base de Pagamentos (OB)..."): comparacao,detalhe,fontes=comparar(arquivo.getvalue(),data,tipo)
-                st.session_state["resultado_conferencia_ob_009717"]={"comparacao":comparacao,"detalhe":detalhe,"fontes":fontes,"arquivo":arquivo.name,"data":data,"tipo":tipo}
+                data_inicial,data_final=periodo[0],periodo[-1]
+                with st.spinner("Lendo o PDF e conciliando com a base de Pagamentos (OB)..."): comparacao,detalhe,fontes=comparar(arquivo.getvalue(),data_inicial,data_final,tipo)
+                st.session_state["resultado_conferencia_ob_009717"]={"comparacao":comparacao,"detalhe":detalhe,"fontes":fontes,"arquivo":arquivo.name,"data_inicial":data_inicial,"data_final":data_final,"tipo":tipo}
             except Exception as erro: st.session_state.pop("resultado_conferencia_ob_009717",None); st.error(f"Não foi possível concluir a conferência: {erro}")
     resultado=st.session_state.get("resultado_conferencia_ob_009717")
     if not resultado: return
@@ -237,7 +242,8 @@ def renderizar():
     else: st.warning(f"⚠️ Foram encontradas {len(divergencias)} divergência(s). Use a aba de detalhes para identificar os registros.")
     for coluna,(titulo,valor,descricao,cor) in zip(st.columns(4),[("TOTAL PDF SIAFIM",_brl(total_pdf),"Valor extraído do PDF","#005691"),("TOTAL BASE OB",_brl(total_base),"Mesmo dia, classificação e fonte","#028090"),("DIFERENÇA",_brl(total_base-total_pdf),"Base OB menos PDF","#d62828"),("LINHAS DIVERGENTES",str(len(divergencias)),"Credor + GD para verificar","#d97706")]):
         with coluna: st.markdown(f"<div class='metric-card'><p style='font-size:11px;font-weight:bold;margin:0'>{titulo}</p><h3 style='color:{cor};margin:5px 0'>{valor}</h3><p style='font-size:11px;margin:0'>{descricao}</p></div>",unsafe_allow_html=True)
-    st.caption(f"Arquivo: {resultado['arquivo']} · Data: {resultado['data'].strftime('%d/%m/%Y')} · Classificação: {resultado['tipo']} · Fonte(s) do PDF: {', '.join(resultado['fontes']) or 'não identificada'}")
+    data_inicial=resultado.get("data_inicial",resultado.get("data")); data_final=resultado.get("data_final",data_inicial); periodo_txt=data_inicial.strftime("%d/%m/%Y") if data_inicial==data_final else f"{data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}"
+    st.caption(f"Arquivo: {resultado['arquivo']} · Período: {periodo_txt} · Classificação: {resultado['tipo']} · Fonte(s) do PDF: {', '.join(resultado['fontes']) or 'não identificada'}")
     colunas=["Situação","Credor","GD","Valor_PDF","Valor_Base","Diferença","ITEM","RETENÇÃO","Registros_Base","Indício"]; formatos={c:_brl for c in ["Valor_PDF","Valor_Base","Diferença","ITEM","RETENÇÃO"]}; aba1,aba2,aba3=st.tabs(["Resumo","Divergências","Detalhamento da Base OB"])
     with aba1: st.dataframe(_tabela(comparacao[colunas],formatos),use_container_width=True,hide_index=True,height=420)
     with aba2: st.dataframe(_tabela(divergencias[colunas],formatos),use_container_width=True,hide_index=True,height=420)
