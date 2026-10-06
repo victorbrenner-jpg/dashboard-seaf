@@ -178,6 +178,55 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
             last_existing_month = target_month
 
 
+def _reparar_totais_painel(sheet) -> None:
+    """Recalcula totais após inserções de linhas no Painel.
+
+    openpyxl desloca as células ao inserir linhas, mas não reescreve referências
+    das fórmulas existentes nos blocos inferiores. Esta rotina ancora cada total
+    na própria linha e recompõe o Total Geral de cada bloco mensal.
+    """
+    for header_row in range(1, sheet.max_row + 1):
+        headers = {
+            _norm(sheet.cell(header_row, col).value): col
+            for col in range(1, sheet.max_column + 1)
+            if sheet.cell(header_row, col).value is not None
+        }
+        if "MES" not in headers or "TOTALGERAL" not in headers:
+            continue
+
+        month_col = headers["MES"]
+        total_col = headers["TOTALGERAL"]
+        data_start = header_row + 1
+        total_row = None
+        for row in range(data_start, sheet.max_row + 1):
+            if _norm(sheet.cell(row, month_col).value) == "TOTALGERAL":
+                total_row = row
+                break
+        if total_row is None or total_row <= data_start:
+            continue
+
+        # Em blocos com coluna MDE, ela é identificador (1001), não valor.
+        first_value_col = month_col + 1
+        if _norm(sheet.cell(header_row, first_value_col).value) == "MDE":
+            first_value_col += 1
+        last_value_col = total_col - 1
+
+        # Total mensal = somente os componentes da própria competência.
+        for row in range(data_start, total_row):
+            if str(sheet.cell(row, month_col).value or "").strip():
+                start_letter = sheet.cell(row, first_value_col).column_letter
+                end_letter = sheet.cell(row, last_value_col).column_letter
+                sheet.cell(row, total_col).value = f"=SUM({start_letter}{row}:{end_letter}{row})"
+
+        # Total Geral do bloco = soma das competências efetivamente exibidas.
+        for col in range(first_value_col, total_col + 1):
+            letter = sheet.cell(total_row, col).column_letter
+            sheet.cell(total_row, col).value = (
+                f"=SUM({letter}{data_start}:{letter}{total_row - 1})"
+            )
+
+
+
 def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
     """Cria o relatório MDE completo, com fórmulas vinculadas à aba-base."""
     if df_ob is None or df_ob.empty:
@@ -242,8 +291,7 @@ def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
             if cell.__class__.__name__ != "MergedCell":
                 cell.value = _formula_range(cell.value, last_base)
 
-    # Resumo diário é refeito para refletir exatamente os filtros ativos, sem
-    # perder a vinculação com a aba Base Fonte 500 do arquivo exportado.
+    # Inserções de competência deslocam os blocos inferiores; recompõe os\n    # totais para que outubro nunca herde referências de setembro/outra tabela.\n    _reparar_totais_painel(painel)\n\n    # Resumo diário é refeito para refletir exatamente os filtros ativos, sem\n    # perder a vinculação com a aba Base Fonte 500 do arquivo exportado.
     dates_valid = dates.dropna().dt.normalize()
     unique_dates = sorted(dates_valid.unique())
     if diario.max_row > 3:
