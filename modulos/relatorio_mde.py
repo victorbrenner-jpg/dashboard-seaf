@@ -80,64 +80,67 @@ def _formula_range(formula: object, last_row: int, old_last: int = 12921):
 
 
 def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
-    """Expande os blocos mensais do Painel até o último mês presente na base.
+    """Expande cada bloco mensal do Painel até a última competência da base.
 
-    O modelo MDE foi criado com meses fixos. Quando entra uma competência nova
-    (ex.: outubro), insere a linha antes de Total Geral, preserva estilos e
-    traduz as fórmulas da competência anterior para a nova linha.
+    O modelo não usa necessariamente a coluna A para os meses. Por isso a rotina
+    localiza cada célula 'Total Geral' e descobre, na própria coluna, a sequência
+    jan/fev/... imediatamente acima dela.
     """
     month_pt = {1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun",
                 7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez"}
     wanted = [month_pt[m] for m in range(1, max(1, min(12, ultimo_mes)) + 1)]
 
-    # Processa de baixo para cima para que inserções não desloquem os blocos seguintes.
-    total_rows = [
-        row for row in range(1, sheet.max_row + 1)
-        if _norm(sheet.cell(row, 1).value) == "TOTALGERAL"
-    ]
-    for total_row in reversed(total_rows):
-        start = total_row - 1
-        while start >= 1 and str(sheet.cell(start, 1).value or "").strip().lower() in month_pt.values():
-            start -= 1
-        start += 1
+    totals = []
+    for row in range(1, sheet.max_row + 1):
+        for col in range(1, sheet.max_column + 1):
+            if _norm(sheet.cell(row, col).value) == "TOTALGERAL":
+                totals.append((row, col))
+
+    # De baixo para cima para preservar as posições dos blocos ainda não tratados.
+    for total_row, month_col in sorted(totals, reverse=True):
+        start_row = total_row - 1
+        while start_row >= 1:
+            value = str(sheet.cell(start_row, month_col).value or "").strip().lower()
+            if value not in month_pt.values():
+                break
+            start_row -= 1
+        start_row += 1
+
         existing = [
-            str(sheet.cell(row, 1).value or "").strip().lower()
-            for row in range(start, total_row)
+            str(sheet.cell(row, month_col).value or "").strip().lower()
+            for row in range(start_row, total_row)
         ]
         if not existing:
             continue
 
-        missing = [month for month in wanted if month not in existing]
-        for month in missing:
+        for month in [m for m in wanted if m not in existing]:
             insert_at = total_row
             previous = insert_at - 1
-            old_total_formulas = {
-                col: sheet.cell(total_row, col).value
-                for col in range(1, sheet.max_column + 1)
-            }
+            old_total = [sheet.cell(total_row, col).value for col in range(1, sheet.max_column + 1)]
 
             sheet.insert_rows(insert_at, 1)
             _copy_row_style(sheet, previous, insert_at, sheet.max_column)
-            sheet.cell(insert_at, 1).value = month
+            sheet.cell(insert_at, month_col).value = month
 
-            # Replica a lógica da competência anterior ajustando referências de linha.
-            for col in range(2, sheet.max_column + 1):
+            # Copia as fórmulas da competência anterior, traduzindo a linha.
+            for col in range(1, sheet.max_column + 1):
+                if col == month_col:
+                    continue
                 formula = sheet.cell(previous, col).value
                 if isinstance(formula, str) and formula.startswith("="):
                     try:
-                        sheet.cell(insert_at, col).value = Translator(
+                        formula = Translator(
                             formula,
                             origin=sheet.cell(previous, col).coordinate,
                         ).translate_formula(sheet.cell(insert_at, col).coordinate)
                     except Exception:
-                        sheet.cell(insert_at, col).value = formula
-                else:
-                    sheet.cell(insert_at, col).value = formula
+                        pass
+                sheet.cell(insert_at, col).value = formula
 
-            # O Total Geral foi deslocado uma linha. Mantém a fórmula original,
-            # apenas ampliando referências que terminavam na última competência.
+            # Recria o Total Geral deslocado e amplia somatórios que terminavam
+            # na competência anterior para incluir a nova linha.
             new_total = total_row + 1
-            for col, formula in old_total_formulas.items():
+            for col, formula in enumerate(old_total, start=1):
                 if isinstance(formula, str) and formula.startswith("="):
                     formula = re.sub(
                         rf"(?<=[A-Z]){previous}(?!\\d)",
@@ -145,7 +148,6 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
                         formula,
                     )
                 sheet.cell(new_total, col).value = formula
-
             total_row = new_total
 
 
