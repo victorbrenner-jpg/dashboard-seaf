@@ -188,18 +188,14 @@ def comparar(conteudo,data_inicial,data_final,classificacao):
     if base.empty: raise ValueError("A base consolidada de Pagamentos (OB) está indisponível.")
     if data_final < data_inicial: data_inicial, data_final = data_final, data_inicial
 
-    # Esta conferência é exclusiva do Relatório de Pagamento da fonte 500.
-    # Não dependemos apenas da fonte identificada no PDF: a Base OB também é
-    # explicitamente limitada à 500 antes de qualquer soma ou comparação.
-    base=base[
-        base["Data_Conferencia"].between(data_inicial,data_final,inclusive="both")
-        & base["Fonte_Conferencia"].eq("500")
-    ].copy()
+    # A fonte da conciliação vem do próprio PDF. Assim a mesma tela pode
+    # conferir fonte 500, 540, 550 ou um relatório com várias fontes.
+    base=base[base["Data_Conferencia"].between(data_inicial,data_final,inclusive="both")].copy()
     if classificacao!="TODAS": base=base[base["Tipo_Item_Conferencia"]==classificacao].copy()
-
-    # O PDF pode informar outras fontes em textos auxiliares; para esta rotina
-    # somente a fonte 500 participa da conciliação.
-    fontes=["500"]
+    if fontes:
+        base=base[base["Fonte_Conferencia"].isin(fontes)].copy()
+    else:
+        raise ValueError("Não foi possível identificar a fonte no PDF. Verifique se o relatório contém o resumo por fonte.")
 
     base=base[~base["Credor_Chave"].str.contains("INSS",na=False)].copy(); base=_consolidar_pagamentos_coletivos(pdf,base)
     chave_ret=_normalizar(_CREDOR_RETENCAO)
@@ -233,7 +229,7 @@ def _tabela(df,formatos=None):
 
 
 def renderizar():
-    st.markdown("### 🔎 Conferência de pagamentos"); st.caption("Confere se os pagamentos da fonte 500 do PDF constam na Base OB no período selecionado e aponta também pagamentos da Base OB que ficaram fora do PDF. INSS é desconsiderado e retenções da Prefeitura são consolidadas conforme o relatório.")
+    st.markdown("### 🔎 Conferência de pagamentos"); st.caption("Confere se os pagamentos das fontes identificadas no PDF constam na Base OB no período selecionado e aponta também pagamentos da Base OB que ficaram fora do PDF. INSS é desconsiderado e retenções da Prefeitura são consolidadas conforme o relatório.")
     with st.container(border=True):
         c_data,c_tipo,c_pdf=st.columns([.85,1.05,2.1],vertical_alignment="bottom")
         with c_data:
@@ -259,7 +255,7 @@ def renderizar():
     comparacao,detalhe=resultado["comparacao"].copy(),resultado["detalhe"].copy(); divergencias=comparacao[comparacao["Situação"]!="Conciliado"]; total_pdf,total_base=comparacao["Valor_PDF"].sum(),comparacao["Valor_Base"].sum()
     if divergencias.empty and abs(total_base-total_pdf)<=.005: st.success("✅ Pagamentos conciliados: PDF SIAFIM e Base OB batem integralmente.")
     else: st.warning(f"⚠️ Foram encontradas {len(divergencias)} divergência(s). Use a aba de detalhes para identificar os registros.")
-    for coluna,(titulo,valor,descricao,cor) in zip(st.columns(4),[("TOTAL PDF SIAFIM",_brl(total_pdf),"Valor extraído do PDF","#005691"),("TOTAL BASE OB",_brl(total_base),"Fonte 500 no período selecionado","#028090"),("DIFERENÇA",_brl(total_base-total_pdf),"Base OB menos PDF","#d62828"),("LINHAS DIVERGENTES",str(len(divergencias)),"Credor + GD para verificar","#d97706")]):
+    for coluna,(titulo,valor,descricao,cor) in zip(st.columns(4),[("TOTAL PDF SIAFIM",_brl(total_pdf),"Valor extraído do PDF","#005691"),("TOTAL BASE OB",_brl(total_base),"Mesma(s) fonte(s) do PDF no período","#028090"),("DIFERENÇA",_brl(total_base-total_pdf),"Base OB menos PDF","#d62828"),("LINHAS DIVERGENTES",str(len(divergencias)),"Credor + GD para verificar","#d97706")]):
         with coluna: st.markdown(f"<div class='metric-card'><p style='font-size:11px;font-weight:bold;margin:0'>{titulo}</p><h3 style='color:{cor};margin:5px 0'>{valor}</h3><p style='font-size:11px;margin:0'>{descricao}</p></div>",unsafe_allow_html=True)
     data_inicial=resultado.get("data_inicial",resultado.get("data")); data_final=resultado.get("data_final",data_inicial); periodo_txt=data_inicial.strftime("%d/%m/%Y") if data_inicial==data_final else f"{data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}"
     st.caption(f"Arquivo: {resultado['arquivo']} · Período: {periodo_txt} · Classificação: {resultado['tipo']} · Fonte(s) do PDF: {', '.join(resultado['fontes']) or 'não identificada'}")
