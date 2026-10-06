@@ -79,6 +79,30 @@ def _formula_range(formula: object, last_row: int, old_last: int = 12921):
     return formula.replace(f"${old_last}", f"${last_row}") if isinstance(formula, str) and formula.startswith("=") else formula
 
 
+def _sincronizar_formulas_apos_insercao(sheet, inserted_row: int) -> None:
+    """Traduz fórmulas dos blocos deslocados após insert_rows.
+
+    openpyxl move as células, mas mantém o texto das fórmulas apontando para as
+    posições antigas. Cada célula abaixo da linha inserida veio originalmente
+    de uma linha acima; traduzimos a fórmula da origem antiga para a nova
+    coordenada para preservar a mesma relação lógica do modelo.
+    """
+    for row in range(inserted_row + 1, sheet.max_row + 1):
+        for col in range(1, sheet.max_column + 1):
+            cell = sheet.cell(row, col)
+            formula = cell.value
+            if not (isinstance(formula, str) and formula.startswith("=")):
+                continue
+            old_coord = sheet.cell(row - 1, col).coordinate
+            try:
+                cell.value = Translator(
+                    formula,
+                    origin=old_coord,
+                ).translate_formula(cell.coordinate)
+            except Exception:
+                pass
+
+
 def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
     """Acrescenta somente competências posteriores às já existentes no modelo.
 
@@ -128,6 +152,7 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
             ]
 
             sheet.insert_rows(insert_at, 1)
+            _sincronizar_formulas_apos_insercao(sheet, insert_at)
             _copy_row_style(sheet, previous, insert_at, sheet.max_column)
             sheet.cell(insert_at, month_col).value = month_pt[target_month]
 
@@ -313,9 +338,8 @@ def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
             if cell.__class__.__name__ != "MergedCell":
                 cell.value = _formula_range(cell.value, last_base)
 
-    # Inserções de competência deslocam os blocos inferiores; recompõe os
-    # totais para que outubro nunca herde referências de setembro/outra tabela.
-    _reparar_totais_painel(painel, amounts, expense)
+    # As fórmulas dos blocos inferiores já foram traduzidas no momento de cada
+    # inserção, preservando a lógica original do modelo em todos os quadros.
 
     # Resumo diário é refeito para refletir exatamente os filtros ativos, sem
     # perder a vinculação com a aba Base Fonte 500 do arquivo exportado.
