@@ -19,6 +19,26 @@ import textwrap
 
 from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores
 
+
+def assinatura_exportacao(df: pd.DataFrame, *contexto: object) -> tuple:
+    """Identifica o recorte que originou um arquivo preparado na sessão.
+
+    Os relatórios Excel são gerados apenas quando solicitados. Esta assinatura
+    impede que um arquivo preparado para filtros anteriores continue disponível
+    após qualquer mudança no recorte de dados.
+    """
+    contexto_normalizado = tuple(map(str, contexto))
+    if df is None or df.empty:
+        return (0, (), 0, contexto_normalizado)
+
+    try:
+        conteudo = int(pd.util.hash_pandas_object(df, index=True).sum())
+    except (TypeError, ValueError):
+        conteudo = hash((len(df), tuple(map(str, df.columns))))
+
+    return (len(df), tuple(map(str, df.columns)), conteudo, contexto_normalizado)
+
+
 # 1. CONFIGURAÇÃO DA PÁGINA (Deve ser a primeira linha executável do Streamlit)
 st.set_page_config(
     page_title="Painel de Controle Financeiro SEAF - 2026",
@@ -3534,14 +3554,38 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     if df_filtrado.empty:
         st.sidebar.caption("Aplique filtros que retornem pagamentos para habilitar a extração.")
     else:
-        try:
-            resumo_ob_excel = relatorio_mde.gerar_relatorio_mde_excel(
-                df_filtrado,
-                Path(__file__).resolve().parent / "modelos" / "modelo_relatorio_mde.xlsx",
-            )
+        assinatura_mde = assinatura_exportacao(df_filtrado)
+        arquivo_mde = st.session_state.get("arquivo_relatorio_mde_ob")
+        if arquivo_mde and arquivo_mde["assinatura"] != assinatura_mde:
+            st.session_state.pop("arquivo_relatorio_mde_ob", None)
+            arquivo_mde = None
+
+        if st.sidebar.button(
+            "Preparar Relatório MDE",
+            key="preparar_relatorio_gerencial_ob_sidebar",
+            use_container_width=True,
+        ):
+            try:
+                with st.spinner("Preparando Relatório MDE..."):
+                    st.session_state["arquivo_relatorio_mde_ob"] = {
+                        "assinatura": assinatura_mde,
+                        "dados": relatorio_mde.gerar_relatorio_mde_excel(
+                            df_filtrado,
+                            Path(__file__).resolve().parent
+                            / "modelos"
+                            / "modelo_relatorio_mde.xlsx",
+                        ),
+                    }
+                arquivo_mde = st.session_state["arquivo_relatorio_mde_ob"]
+            except Exception as erro_relatorio_ob:
+                st.sidebar.error(
+                    f"Não foi possível gerar o relatório: {erro_relatorio_ob}"
+                )
+
+        if arquivo_mde:
             st.sidebar.download_button(
                 "📥 Relatório MDE .xlsx",
-                data=resumo_ob_excel,
+                data=arquivo_mde["dados"],
                 file_name=(
                     "Relatorio_MDE_Pagamentos_"
                     f"{datetime.date.today().strftime('%d-%m-%Y')}.xlsx"
@@ -3553,9 +3597,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                 key="baixar_relatorio_gerencial_ob_sidebar",
                 use_container_width=True,
             )
-            st.sidebar.caption("O Relatório MDE considera os filtros aplicados nesta tela.")
-        except Exception as erro_relatorio_ob:
-            st.sidebar.error(f"Não foi possível gerar o relatório: {erro_relatorio_ob}")
+        else:
+            st.sidebar.caption("Clique em Preparar para gerar o arquivo com os filtros aplicados.")
 
     st.sidebar.markdown("### 🔄 Atualizar Dados do Painel")
     if st.sidebar.button("🔄 Incorporar Novos Pagamentos do CSV", key="btn_csv_ob"):
@@ -3931,23 +3974,51 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                         unsafe_allow_html=True,
                     )
                 with acao_resumo:
-                    resumo_ob_excel = gerar_resumo_gerencial_ob_excel(
-                        df_filtrado, meses_exibicao
+                    assinatura_resumo_diario = assinatura_exportacao(
+                        df_filtrado, *meses_exibicao
                     )
-                    st.download_button(
-                        "📥 Exportar por dia .xlsx",
-                        data=resumo_ob_excel,
-                        file_name=(
-                            "Resumo_Gerencial_Diario_Pagamentos_"
-                            f"{datetime.date.today().strftime('%d-%m-%Y')}.xlsx"
-                        ),
-                        mime=(
-                            "application/vnd.openxmlformats-officedocument."
-                            "spreadsheetml.sheet"
-                        ),
-                        key="baixar_resumo_gerencial_ob",
+                    arquivo_resumo_diario = st.session_state.get(
+                        "arquivo_resumo_diario_ob"
+                    )
+                    if (
+                        arquivo_resumo_diario
+                        and arquivo_resumo_diario["assinatura"]
+                        != assinatura_resumo_diario
+                    ):
+                        st.session_state.pop("arquivo_resumo_diario_ob", None)
+                        arquivo_resumo_diario = None
+
+                    if st.button(
+                        "Preparar .xlsx",
+                        key="preparar_resumo_gerencial_ob",
                         use_container_width=True,
-                    )
+                    ):
+                        with st.spinner("Preparando resumo por dia..."):
+                            st.session_state["arquivo_resumo_diario_ob"] = {
+                                "assinatura": assinatura_resumo_diario,
+                                "dados": gerar_resumo_gerencial_ob_excel(
+                                    df_filtrado, meses_exibicao
+                                ),
+                            }
+                        arquivo_resumo_diario = st.session_state[
+                            "arquivo_resumo_diario_ob"
+                        ]
+
+                    if arquivo_resumo_diario:
+                        st.download_button(
+                            "📥 Baixar por dia .xlsx",
+                            data=arquivo_resumo_diario["dados"],
+                            file_name=(
+                                "Resumo_Gerencial_Diario_Pagamentos_"
+                            f"{datetime.date.today().strftime('%d-%m-%Y')}.xlsx"
+                            ),
+                            mime=(
+                                "application/vnd.openxmlformats-officedocument."
+                                "spreadsheetml.sheet"
+                            ),
+                            key="baixar_resumo_gerencial_ob",
+                            use_container_width=True,
+                        )
 
                 total_documentos = int(df_agrupado_mes["Qtd_Docs"].sum())
                 total_financeiro = float(df_agrupado_mes["Total_Liq"].sum())
@@ -4046,17 +4117,41 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         filtros_credores = relatorio_credores.descrever_filtros(st.session_state)
         _, coluna_excel = st.columns([3.4, 1], gap="small")
         with coluna_excel:
-            st.download_button(
-                "📥 Exportar .xlsx",
-                data=relatorio_credores.gerar_excel(
-                    df_matriz_credor, lista_meses_fixa, filtros_credores
-                ),
-                file_name="relacao_pagamentos_por_credor.xlsx",
-                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                key="exportar_relacao_credores_ob",
-                use_container_width=True,
-                help="Exporta a relação de credores conforme os filtros aplicados.",
+            assinatura_credores = assinatura_exportacao(
+                df_matriz_credor, *lista_meses_fixa, filtros_credores
             )
+            arquivo_credores = st.session_state.get("arquivo_relacao_credores_ob")
+            if (
+                arquivo_credores
+                and arquivo_credores["assinatura"] != assinatura_credores
+            ):
+                st.session_state.pop("arquivo_relacao_credores_ob", None)
+                arquivo_credores = None
+
+            if st.button(
+                "Preparar .xlsx",
+                key="preparar_relacao_credores_ob",
+                use_container_width=True,
+            ):
+                with st.spinner("Preparando relação de credores..."):
+                    st.session_state["arquivo_relacao_credores_ob"] = {
+                        "assinatura": assinatura_credores,
+                        "dados": relatorio_credores.gerar_excel(
+                            df_matriz_credor, lista_meses_fixa, filtros_credores
+                        ),
+                    }
+                arquivo_credores = st.session_state["arquivo_relacao_credores_ob"]
+
+            if arquivo_credores:
+                st.download_button(
+                    "📥 Baixar .xlsx",
+                    data=arquivo_credores["dados"],
+                    file_name="relacao_pagamentos_por_credor.xlsx",
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="exportar_relacao_credores_ob",
+                    use_container_width=True,
+                    help="Exporta a relação de credores conforme os filtros aplicados.",
+                )
         st.markdown(html_credores, unsafe_allow_html=True)
 
 elif st.session_state["tela_atual"] == "Liquidação (NL)":
