@@ -228,6 +228,24 @@ def _reparar_totais_painel(sheet, amounts: pd.Series, expense: pd.Series) -> Non
         sheet.cell(total_row, rp_col).value = rp_total
         sheet.cell(total_row, dea_col).value = dea_total
         sheet.cell(total_row, total_col).value = corrente_total + rp_total + dea_total
+
+        # Restaura apenas a aparência da linha Total Geral do primeiro quadro.
+        # Ao inserir outubro, openpyxl desloca a linha mas não leva o estilo.
+        # Usa como referência a próxima linha Total Geral já formatada do modelo.
+        style_source_row = None
+        for candidate in range(total_row + 1, sheet.max_row + 1):
+            if _norm(sheet.cell(candidate, month_col).value) == "TOTALGERAL":
+                style_source_row = candidate
+                break
+        if style_source_row:
+            for col in range(month_col, total_col + 1):
+                source_col = month_col + (col - month_col)
+                if source_col <= sheet.max_column:
+                    source = sheet.cell(style_source_row, source_col)
+                    target = sheet.cell(total_row, col)
+                    target._style = copy(source._style)
+                    if source.has_style:
+                        target.number_format = source.number_format
         return
 
 
