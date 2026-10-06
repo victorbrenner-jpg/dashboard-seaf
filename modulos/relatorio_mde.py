@@ -291,7 +291,12 @@ def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
             if cell.__class__.__name__ != "MergedCell":
                 cell.value = _formula_range(cell.value, last_base)
 
-    # Inserções de competência deslocam os blocos inferiores; recompõe os\n    # totais para que outubro nunca herde referências de setembro/outra tabela.\n    _reparar_totais_painel(painel)\n\n    # Resumo diário é refeito para refletir exatamente os filtros ativos, sem\n    # perder a vinculação com a aba Base Fonte 500 do arquivo exportado.
+    # Inserções de competência deslocam os blocos inferiores; recompõe os
+    # totais para que outubro nunca herde referências de setembro/outra tabela.
+    _reparar_totais_painel(painel)
+
+    # Resumo diário é refeito para refletir exatamente os filtros ativos, sem
+    # perder a vinculação com a aba Base Fonte 500 do arquivo exportado.
     dates_valid = dates.dropna().dt.normalize()
     unique_dates = sorted(dates_valid.unique())
     if diario.max_row > 3:
