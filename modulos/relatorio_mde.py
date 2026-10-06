@@ -178,7 +178,7 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
             last_existing_month = target_month
 
 
-def _reparar_totais_painel(sheet) -> None:
+def _reparar_totais_painel(sheet, amounts: pd.Series, expense: pd.Series) -> None:
     """Ajusta somente o primeiro quadro mensal (Corrente/RP/DEA).
 
     Os demais quadros do modelo já possuem fórmulas corretas e não devem ser
@@ -217,12 +217,17 @@ def _reparar_totais_painel(sheet) -> None:
                 c3 = sheet.cell(row, dea_col).coordinate
                 sheet.cell(row, total_col).value = f"=SUM({c1},{c2},{c3})"
 
-        # Total Geral acompanha automaticamente a nova linha de outubro.
-        for col in (corrente_col, rp_col, dea_col, total_col):
-            letter = sheet.cell(total_row, col).column_letter
-            sheet.cell(total_row, col).value = (
-                f"=SUM({letter}{data_start}:{letter}{total_row - 1})"
-            )
+        # O Total Geral precisa acompanhar a linha inserida. Como o arquivo é
+        # gerado pelo openpyxl (que não recalcula fórmulas), grava os totais
+        # numéricos diretamente a partir da base filtrada para o Excel abrir
+        # correto imediatamente.
+        corrente_total = float(amounts.loc[expense.eq("CORRENTE")].sum())
+        rp_total = float(amounts.loc[expense.eq("RP")].sum())
+        dea_total = float(amounts.loc[expense.eq("DEA")].sum())
+        sheet.cell(total_row, corrente_col).value = corrente_total
+        sheet.cell(total_row, rp_col).value = rp_total
+        sheet.cell(total_row, dea_col).value = dea_total
+        sheet.cell(total_row, total_col).value = corrente_total + rp_total + dea_total
         return
 
 
@@ -292,7 +297,7 @@ def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
 
     # Inserções de competência deslocam os blocos inferiores; recompõe os
     # totais para que outubro nunca herde referências de setembro/outra tabela.
-    _reparar_totais_painel(painel)
+    _reparar_totais_painel(painel, amounts, expense)
 
     # Resumo diário é refeito para refletir exatamente os filtros ativos, sem
     # perder a vinculação com a aba Base Fonte 500 do arquivo exportado.
