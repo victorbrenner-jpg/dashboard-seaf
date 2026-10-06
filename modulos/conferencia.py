@@ -187,13 +187,32 @@ def comparar(conteudo,data_inicial,data_final,classificacao):
     pdf,fontes=_linhas_pdf(conteudo); pdf=pdf[~pdf["Credor_Chave"].str.contains("INSS",na=False)].copy(); base=carregar_base_ob().copy()
     if base.empty: raise ValueError("A base consolidada de Pagamentos (OB) está indisponível.")
     if data_final < data_inicial: data_inicial, data_final = data_final, data_inicial
-    base=base[base["Data_Conferencia"].between(data_inicial,data_final,inclusive="both")].copy()
+
+    # Esta conferência é exclusiva do Relatório de Pagamento da fonte 500.
+    # Não dependemos apenas da fonte identificada no PDF: a Base OB também é
+    # explicitamente limitada à 500 antes de qualquer soma ou comparação.
+    base=base[
+        base["Data_Conferencia"].between(data_inicial,data_final,inclusive="both")
+        & base["Fonte_Conferencia"].eq("500")
+    ].copy()
     if classificacao!="TODAS": base=base[base["Tipo_Item_Conferencia"]==classificacao].copy()
-    if fontes: base=base[base["Fonte_Conferencia"].isin(fontes)].copy()
+
+    # O PDF pode informar outras fontes em textos auxiliares; para esta rotina
+    # somente a fonte 500 participa da conciliação.
+    fontes=["500"]
+
     base=base[~base["Credor_Chave"].str.contains("INSS",na=False)].copy(); base=_consolidar_pagamentos_coletivos(pdf,base)
     chave_ret=_normalizar(_CREDOR_RETENCAO)
-    if pdf["Credor_Chave"].eq(chave_ret).any():
-        ret=base["Tipo_Item_Conferencia"].eq("RETENÇÃO"); base.loc[ret,["Credor_Exibicao","Credor_Chave"]]=[_CREDOR_RETENCAO,chave_ret]
+    linhas_ret_pdf=pdf[pdf["Credor_Chave"].eq(chave_ret)].copy()
+    if not linhas_ret_pdf.empty:
+        # No relatório consolidado a Prefeitura aparece como uma única retenção.
+        # A Base OB pode trazer as retenções distribuídas em vários lançamentos
+        # e até em GDs distintos. Todas devem compor a mesma linha consolidada
+        # do PDF, sem gerar uma diferença artificial por GD.
+        ret=base["Tipo_Item_Conferencia"].eq("RETENÇÃO")
+        base.loc[ret,["Credor_Exibicao","Credor_Chave"]]=[_CREDOR_RETENCAO,chave_ret]
+        if len(linhas_ret_pdf)==1:
+            base.loc[ret,"GD_Conferencia"]=str(linhas_ret_pdf.iloc[0]["GD"]).strip()
     agrupada=base.groupby(["Credor_Chave","GD_Conferencia"],as_index=False).agg(Credor_Base=("Credor_Exibicao","first"),Valor_Base=("Valor_Conferencia","sum"),Registros_Base=("Valor_Conferencia","size")).rename(columns={"GD_Conferencia":"GD"})
     tipos=base.pivot_table(index=["Credor_Chave","GD_Conferencia"],columns="Tipo_Item_Conferencia",values="Valor_Conferencia",aggfunc="sum",fill_value=0).reset_index().rename(columns={"GD_Conferencia":"GD"})
     for tipo in ("ITEM","RETENÇÃO"):
@@ -214,7 +233,7 @@ def _tabela(df,formatos=None):
 
 
 def renderizar():
-    st.markdown("### 🔎 Conferência de pagamentos"); st.caption("Compare o PDF gerado pelo SIAFIM com a Base OB do mesmo dia. INSS é desconsiderado e retenções são consolidadas conforme o PDF.")
+    st.markdown("### 🔎 Conferência de pagamentos"); st.caption("Confere se os pagamentos da fonte 500 do PDF constam na Base OB no período selecionado e aponta também pagamentos da Base OB que ficaram fora do PDF. INSS é desconsiderado e retenções da Prefeitura são consolidadas conforme o relatório.")
     with st.container(border=True):
         c_data,c_tipo,c_pdf=st.columns([.85,1.05,2.1],vertical_alignment="bottom")
         with c_data:
@@ -240,7 +259,7 @@ def renderizar():
     comparacao,detalhe=resultado["comparacao"].copy(),resultado["detalhe"].copy(); divergencias=comparacao[comparacao["Situação"]!="Conciliado"]; total_pdf,total_base=comparacao["Valor_PDF"].sum(),comparacao["Valor_Base"].sum()
     if divergencias.empty and abs(total_base-total_pdf)<=.005: st.success("✅ Pagamentos conciliados: PDF SIAFIM e Base OB batem integralmente.")
     else: st.warning(f"⚠️ Foram encontradas {len(divergencias)} divergência(s). Use a aba de detalhes para identificar os registros.")
-    for coluna,(titulo,valor,descricao,cor) in zip(st.columns(4),[("TOTAL PDF SIAFIM",_brl(total_pdf),"Valor extraído do PDF","#005691"),("TOTAL BASE OB",_brl(total_base),"Mesmo dia, classificação e fonte","#028090"),("DIFERENÇA",_brl(total_base-total_pdf),"Base OB menos PDF","#d62828"),("LINHAS DIVERGENTES",str(len(divergencias)),"Credor + GD para verificar","#d97706")]):
+    for coluna,(titulo,valor,descricao,cor) in zip(st.columns(4),[("TOTAL PDF SIAFIM",_brl(total_pdf),"Valor extraído do PDF","#005691"),("TOTAL BASE OB",_brl(total_base),"Fonte 500 no período selecionado","#028090"),("DIFERENÇA",_brl(total_base-total_pdf),"Base OB menos PDF","#d62828"),("LINHAS DIVERGENTES",str(len(divergencias)),"Credor + GD para verificar","#d97706")]):
         with coluna: st.markdown(f"<div class='metric-card'><p style='font-size:11px;font-weight:bold;margin:0'>{titulo}</p><h3 style='color:{cor};margin:5px 0'>{valor}</h3><p style='font-size:11px;margin:0'>{descricao}</p></div>",unsafe_allow_html=True)
     data_inicial=resultado.get("data_inicial",resultado.get("data")); data_final=resultado.get("data_final",data_inicial); periodo_txt=data_inicial.strftime("%d/%m/%Y") if data_inicial==data_final else f"{data_inicial.strftime('%d/%m/%Y')} a {data_final.strftime('%d/%m/%Y')}"
     st.caption(f"Arquivo: {resultado['arquivo']} · Período: {periodo_txt} · Classificação: {resultado['tipo']} · Fonte(s) do PDF: {', '.join(resultado['fontes']) or 'não identificada'}")
