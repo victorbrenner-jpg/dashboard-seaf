@@ -351,6 +351,17 @@ def _padronizar_primeiro_quadro_mde_(
     sheet.row_dimensions[total_row].height = sheet.row_dimensions[style_source_row].height
 
 
+def _ocultar_botoes_expandir_pivot(sheet) -> None:
+    """Oculta os controles +/- da Tabela Dinâmica do Painel.
+
+    Os controles são próprios da Tabela Dinâmica (``showDrill``), não do
+    agrupamento das linhas da planilha. A alteração preserva a atualização da
+    tabela e seus totais; remove somente os botões visuais ao lado dos meses.
+    """
+    for pivot in getattr(sheet, "_pivots", []):
+        pivot.showDrill = False
+
+
 def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
     """Cria o relatório MDE completo, com fórmulas vinculadas à aba-base."""
     if df_ob is None or df_ob.empty:
@@ -390,6 +401,8 @@ def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
     planilha_rp = _sheet(workbook, "Planilha1")
     rp_sheet = _sheet(workbook, "RP_Consolidado")
     base_sheet = _sheet(workbook, "Base Fonte 500")
+
+    _ocultar_botoes_expandir_pivot(painel)
 
     # O modelo possui linhas mensais fixas; expande o Painel até a última
     # competência realmente presente nos pagamentos filtrados.
