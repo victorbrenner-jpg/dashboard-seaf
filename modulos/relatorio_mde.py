@@ -150,6 +150,11 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
                 sheet.cell(total_row, col).value
                 for col in range(1, sheet.max_column + 1)
             ]
+            old_total_styles = [
+                copy(sheet.cell(total_row, col)._style)
+                for col in range(1, sheet.max_column + 1)
+            ]
+            old_total_height = sheet.row_dimensions[total_row].height
 
             sheet.insert_rows(insert_at, 1)
             _sincronizar_formulas_apos_insercao(sheet, insert_at)
@@ -198,6 +203,15 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
                         formula,
                     )
                 sheet.cell(new_total, col).value = formula
+                sheet.cell(new_total, col)._style = copy(old_total_styles[col - 1])
+            sheet.row_dimensions[new_total].height = old_total_height
+
+            # Remove o agrupamento (+) herdado do modelo nas linhas mensais.
+            # Mantém as linhas visíveis no padrão simples do relatório.
+            for row in range(start_row, new_total):
+                sheet.row_dimensions[row].outlineLevel = 0
+                sheet.row_dimensions[row].hidden = False
+                sheet.row_dimensions[row].collapsed = False
 
             total_row = new_total
             last_existing_month = target_month
