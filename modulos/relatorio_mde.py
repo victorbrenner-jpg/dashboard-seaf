@@ -268,24 +268,70 @@ def _reparar_totais_painel(sheet, amounts: pd.Series, expense: pd.Series) -> Non
         sheet.cell(total_row, dea_col).value = dea_total
         sheet.cell(total_row, total_col).value = corrente_total + rp_total + dea_total
 
-        # Restaura apenas a aparência da linha Total Geral do primeiro quadro.
-        # Ao inserir outubro, openpyxl desloca a linha mas não leva o estilo.
-        # Usa como referência a próxima linha Total Geral já formatada do modelo.
-        style_source_row = None
-        for candidate in range(total_row + 1, sheet.max_row + 1):
-            if _norm(sheet.cell(candidate, month_col).value) == "TOTALGERAL":
-                style_source_row = candidate
-                break
-        if style_source_row:
-            for col in range(month_col, total_col + 1):
-                source_col = month_col + (col - month_col)
-                if source_col <= sheet.max_column:
-                    source = sheet.cell(style_source_row, source_col)
-                    target = sheet.cell(total_row, col)
-                    target._style = copy(source._style)
-                    if source.has_style:
-                        target.number_format = source.number_format
+        _padronizar_primeiro_quadro_mde_(
+            sheet,
+            data_start=data_start,
+            total_row=total_row,
+            month_col=month_col,
+            total_col=total_col,
+        )
         return
+
+
+def _padronizar_primeiro_quadro_mde_(
+    sheet,
+    *,
+    data_start: int,
+    total_row: int,
+    month_col: int,
+    total_col: int,
+) -> None:
+    """Mantém o primeiro quadro do Painel no padrão visual do relatório.
+
+    O modelo tem menos colunas no segundo quadro. Portanto, para a última
+    coluna do primeiro quadro (``Total Geral``), repetimos o estilo da última
+    célula numérica disponível no total de referência, sem sobrescrevê-la com
+    uma célula vazia e sem estilo. A rotina é executada em toda geração, não
+    apenas quando um novo mês é inserido.
+    """
+    # Remove grupos herdados em todas as linhas mensais. Isso impede o botão
+    # "+" ao lado de jan/set e também vale para outubro em diante.
+    for row in range(data_start, total_row):
+        dimension = sheet.row_dimensions[row]
+        dimension.outlineLevel = 0
+        dimension.hidden = False
+        dimension.collapsed = False
+
+    style_source_row = next(
+        (
+            candidate
+            for candidate in range(total_row + 1, sheet.max_row + 1)
+            if _norm(sheet.cell(candidate, month_col).value) == "TOTALGERAL"
+        ),
+        None,
+    )
+    if not style_source_row:
+        return
+
+    # No total de referência, B é o rótulo e C:E são valores. A coluna F do
+    # primeiro quadro recebe o mesmo acabamento de E, que é a última coluna
+    # numérica do quadro de referência.
+    last_styled_value_col = max(
+        (
+            col
+            for col in range(month_col + 1, sheet.max_column + 1)
+            if sheet.cell(style_source_row, col).has_style
+        ),
+        default=month_col,
+    )
+    for col in range(month_col, total_col + 1):
+        source_col = month_col if col == month_col else min(col, last_styled_value_col)
+        source = sheet.cell(style_source_row, source_col)
+        target = sheet.cell(total_row, col)
+        target._style = copy(source._style)
+        target.number_format = source.number_format
+        target.alignment = copy(source.alignment)
+    sheet.row_dimensions[total_row].height = sheet.row_dimensions[style_source_row].height
 
 
 def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
@@ -333,6 +379,7 @@ def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
     meses_validos = dates.dropna().dt.month
     if not meses_validos.empty:
         _garantir_meses_painel(painel, int(meses_validos.max()))
+    _reparar_totais_painel(painel, amounts, expense)
 
     # Mantém a aba de origem editável: ao alterar Valor/Data/Despesa/Marcador,
     # o Painel recalcula no Excel pelas fórmulas preservadas no modelo.
