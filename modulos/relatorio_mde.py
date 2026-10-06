@@ -67,6 +67,23 @@ def _status_rp(row: pd.Series) -> str:
 
 
 def _copy_row_style(sheet, origin: int, destination: int, last_col: int):
+    """Replica a aparência completa de uma linha de detalhe.
+
+    ``insert_rows`` pode conservar propriedades da dimensão da linha que estava
+    no destino (no caso, a linha ``Total Geral``). Copiar somente as células
+    deixava a nova competência com um preenchimento residual. Ao levar também
+    o estilo da dimensão, a competência nova fica idêntica à anterior.
+    """
+    source_dimension = sheet.row_dimensions[origin]
+    target_dimension = sheet.row_dimensions[destination]
+    target_dimension._style = copy(source_dimension._style)
+    target_dimension.height = source_dimension.height
+    target_dimension.hidden = source_dimension.hidden
+    target_dimension.outlineLevel = source_dimension.outlineLevel
+    target_dimension.collapsed = source_dimension.collapsed
+    target_dimension.thickTop = source_dimension.thickTop
+    target_dimension.thickBot = source_dimension.thickBot
+
     for column in range(1, last_col + 1):
         source = sheet.cell(origin, column)
         target = sheet.cell(destination, column)
