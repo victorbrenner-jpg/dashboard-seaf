@@ -80,15 +80,15 @@ def _formula_range(formula: object, last_row: int, old_last: int = 12921):
 
 
 def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
-    """Expande cada bloco mensal do Painel até a última competência da base.
+    """Acrescenta somente competências posteriores às já existentes no modelo.
 
-    O modelo não usa necessariamente a coluna A para os meses. Por isso a rotina
-    localiza cada célula 'Total Geral' e descobre, na própria coluna, a sequência
-    jan/fev/... imediatamente acima dela.
+    As fórmulas mensais usam DATE(ano, mês, 1); portanto não basta copiar a
+    linha anterior. Ao criar outubro/novembro/dezembro, os limites de data são
+    reescritos explicitamente para a competência correta.
     """
     month_pt = {1: "jan", 2: "fev", 3: "mar", 4: "abr", 5: "mai", 6: "jun",
                 7: "jul", 8: "ago", 9: "set", 10: "out", 11: "nov", 12: "dez"}
-    wanted = [month_pt[m] for m in range(1, max(1, min(12, ultimo_mes)) + 1)]
+    month_num = {name: num for num, name in month_pt.items()}
 
     totals = []
     for row in range(1, sheet.max_row + 1):
@@ -96,12 +96,11 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
             if _norm(sheet.cell(row, col).value) == "TOTALGERAL":
                 totals.append((row, col))
 
-    # De baixo para cima para preservar as posições dos blocos ainda não tratados.
     for total_row, month_col in sorted(totals, reverse=True):
         start_row = total_row - 1
         while start_row >= 1:
             value = str(sheet.cell(start_row, month_col).value or "").strip().lower()
-            if value not in month_pt.values():
+            if value not in month_num:
                 break
             start_row -= 1
         start_row += 1
@@ -110,19 +109,34 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
             str(sheet.cell(row, month_col).value or "").strip().lower()
             for row in range(start_row, total_row)
         ]
-        if not existing:
+        existing_nums = [month_num[m] for m in existing if m in month_num]
+        if not existing_nums:
             continue
 
-        for month in [m for m in wanted if m not in existing]:
+        # Nunca preenche meses históricos ausentes no modelo (ex.: janeiro no
+        # quadro de RP). Apenas acrescenta competências após a última existente.
+        last_existing_month = max(existing_nums)
+        if ultimo_mes <= last_existing_month:
+            continue
+
+        for target_month in range(last_existing_month + 1, min(12, ultimo_mes) + 1):
             insert_at = total_row
             previous = insert_at - 1
-            old_total = [sheet.cell(total_row, col).value for col in range(1, sheet.max_column + 1)]
+            old_total = [
+                sheet.cell(total_row, col).value
+                for col in range(1, sheet.max_column + 1)
+            ]
 
             sheet.insert_rows(insert_at, 1)
             _copy_row_style(sheet, previous, insert_at, sheet.max_column)
-            sheet.cell(insert_at, month_col).value = month
+            sheet.cell(insert_at, month_col).value = month_pt[target_month]
 
-            # Copia as fórmulas da competência anterior, traduzindo a linha.
+            next_month = target_month + 1
+            next_year = 2026
+            if next_month == 13:
+                next_month = 1
+                next_year = 2027
+
             for col in range(1, sheet.max_column + 1):
                 if col == month_col:
                     continue
@@ -135,20 +149,33 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
                         ).translate_formula(sheet.cell(insert_at, col).coordinate)
                     except Exception:
                         pass
+
+                    # SUMIFS mensais: substitui os dois limites de competência.
+                    date_pattern = r"DATE\(\d{4},\d{1,2},1\)"
+                    dates_found = list(re.finditer(date_pattern, formula, flags=re.IGNORECASE))
+                    if len(dates_found) >= 2:
+                        replacements = [
+                            f"DATE(2026,{target_month},1)",
+                            f"DATE({next_year},{next_month},1)",
+                        ]
+                        for match, replacement in reversed(list(zip(dates_found[:2], replacements))):
+                            formula = formula[:match.start()] + replacement + formula[match.end():]
+
                 sheet.cell(insert_at, col).value = formula
 
-            # Recria o Total Geral deslocado e amplia somatórios que terminavam
-            # na competência anterior para incluir a nova linha.
             new_total = total_row + 1
             for col, formula in enumerate(old_total, start=1):
                 if isinstance(formula, str) and formula.startswith("="):
+                    # Total Geral passa a incluir a nova competência.
                     formula = re.sub(
-                        rf"(?<=[A-Z]){previous}(?!\\d)",
+                        rf"(?<=[A-Z]){previous}(?!\d)",
                         str(insert_at),
                         formula,
                     )
                 sheet.cell(new_total, col).value = formula
+
             total_row = new_total
+            last_existing_month = target_month
 
 
 def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
