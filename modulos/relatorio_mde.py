@@ -179,11 +179,10 @@ def _garantir_meses_painel(sheet, ultimo_mes: int) -> None:
 
 
 def _reparar_totais_painel(sheet) -> None:
-    """Recalcula totais após inserções de linhas no Painel.
+    """Ajusta somente o primeiro quadro mensal (Corrente/RP/DEA).
 
-    openpyxl desloca as células ao inserir linhas, mas não reescreve referências
-    das fórmulas existentes nos blocos inferiores. Esta rotina ancora cada total
-    na própria linha e recompõe o Total Geral de cada bloco mensal.
+    Os demais quadros do modelo já possuem fórmulas corretas e não devem ser
+    reescritos. O primeiro quadro é identificado pelos cabeçalhos específicos.
     """
     for header_row in range(1, sheet.max_row + 1):
         headers = {
@@ -191,40 +190,40 @@ def _reparar_totais_painel(sheet) -> None:
             for col in range(1, sheet.max_column + 1)
             if sheet.cell(header_row, col).value is not None
         }
-        if "MES" not in headers or "TOTALGERAL" not in headers:
+        required = {"MES", "CORRENTE", "RESTOSAPAGARRP", "DEA", "TOTALGERAL"}
+        if not required.issubset(headers):
             continue
 
         month_col = headers["MES"]
+        corrente_col = headers["CORRENTE"]
+        rp_col = headers["RESTOSAPAGARRP"]
+        dea_col = headers["DEA"]
         total_col = headers["TOTALGERAL"]
         data_start = header_row + 1
+
         total_row = None
         for row in range(data_start, sheet.max_row + 1):
             if _norm(sheet.cell(row, month_col).value) == "TOTALGERAL":
                 total_row = row
                 break
-        if total_row is None or total_row <= data_start:
-            continue
+        if total_row is None:
+            return
 
-        # Em blocos com coluna MDE, ela é identificador (1001), não valor.
-        first_value_col = month_col + 1
-        if _norm(sheet.cell(header_row, first_value_col).value) == "MDE":
-            first_value_col += 1
-        last_value_col = total_col - 1
-
-        # Total mensal = somente os componentes da própria competência.
+        # Total de cada mês = Corrente + RP + DEA da mesma linha.
         for row in range(data_start, total_row):
             if str(sheet.cell(row, month_col).value or "").strip():
-                start_letter = sheet.cell(row, first_value_col).column_letter
-                end_letter = sheet.cell(row, last_value_col).column_letter
-                sheet.cell(row, total_col).value = f"=SUM({start_letter}{row}:{end_letter}{row})"
+                c1 = sheet.cell(row, corrente_col).coordinate
+                c2 = sheet.cell(row, rp_col).coordinate
+                c3 = sheet.cell(row, dea_col).coordinate
+                sheet.cell(row, total_col).value = f"=SUM({c1},{c2},{c3})"
 
-        # Total Geral do bloco = soma das competências efetivamente exibidas.
-        for col in range(first_value_col, total_col + 1):
+        # Total Geral acompanha automaticamente a nova linha de outubro.
+        for col in (corrente_col, rp_col, dea_col, total_col):
             letter = sheet.cell(total_row, col).column_letter
             sheet.cell(total_row, col).value = (
                 f"=SUM({letter}{data_start}:{letter}{total_row - 1})"
             )
-
+        return
 
 
 def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
