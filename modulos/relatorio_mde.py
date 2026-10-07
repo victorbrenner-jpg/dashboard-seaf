@@ -16,6 +16,7 @@ from pathlib import Path
 import pandas as pd
 from openpyxl import load_workbook
 from openpyxl.formula.translate import Translator
+from openpyxl.utils.cell import get_column_letter, range_boundaries
 
 
 COLUNAS_BASE = [
@@ -362,6 +363,35 @@ def _ocultar_botoes_expandir_pivot(sheet) -> None:
         pivot.showDrill = False
 
 
+def _atualizar_intervalo_pivot_painel(sheet) -> None:
+    """Estende a Tabela Dinâmica até a linha atual de Total Geral.
+
+    Ao inserir outubro/novembro/dezembro, ``openpyxl`` move as células do
+    total, mas não amplia o ``location.ref`` da Tabela Dinâmica. Sem essa
+    atualização, o último mês passa a receber o acabamento visual de total.
+    """
+    total_row = next(
+        (
+            row
+            for row in range(1, sheet.max_row + 1)
+            if _norm(sheet.cell(row, 2).value) == "TOTALGERAL"
+        ),
+        None,
+    )
+    if not total_row:
+        return
+
+    for pivot in getattr(sheet, "_pivots", []):
+        location = getattr(pivot, "location", None)
+        if not location or not location.ref:
+            continue
+        min_col, min_row, max_col, _ = range_boundaries(location.ref)
+        location.ref = (
+            f"{get_column_letter(min_col)}{min_row}:"
+            f"{get_column_letter(max_col)}{total_row}"
+        )
+
+
 def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
     """Cria o relatório MDE completo, com fórmulas vinculadas à aba-base."""
     if df_ob is None or df_ob.empty:
@@ -410,6 +440,7 @@ def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
     if not meses_validos.empty:
         _garantir_meses_painel(painel, int(meses_validos.max()))
     _reparar_totais_painel(painel, amounts, expense)
+    _atualizar_intervalo_pivot_painel(painel)
 
     # Mantém a aba de origem editável: ao alterar Valor/Data/Despesa/Marcador,
     # o Painel recalcula no Excel pelas fórmulas preservadas no modelo.
