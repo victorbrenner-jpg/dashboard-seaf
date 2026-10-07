@@ -8,6 +8,7 @@ import pandas as pd
 import streamlit as st
 
 URL_BASE_DEA = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRFcspPcERcq_Eu2bFM5uHRa6thMKvCKf5zs_87QzokzZe3W5QYZFsWoK2m4seEkA/pub?gid=1881579019&single=true&output=csv"
+VERSAO_BASE_DEA = "2026-10-07-sipr-2025"
 
 def _normalizar(v):
     return " ".join(unicodedata.normalize("NFKD", str(v)).encode("ASCII","ignore").decode().upper().replace("/"," ").split())
@@ -76,8 +77,11 @@ def _preparar(dados):
     return dados
 
 @st.cache_data(ttl=300, show_spinner=False)
-def _carregar_publicada():
+def _carregar_publicada(versao_cache: str):
     # Publicação CSV é mais estável e leve que a página HTML.
+    # A versão integra a chave do cache. Assim, mudanças no tratamento de
+    # colunas obrigam a releitura da fonte, em vez de reutilizar um dataframe
+    # carregado antes do novo mapeamento.
     # A BASE oficial possui linhas de apresentação antes do cabeçalho.
     for header in (2, 0, 1, 3):
         t = pd.read_csv(URL_BASE_DEA, header=header)
@@ -183,7 +187,7 @@ def render():
     )
 
     try:
-        dados=_carregar_publicada()
+        dados=_carregar_publicada(VERSAO_BASE_DEA)
         origem="Base DEA publicada"
     except Exception as erro:
         st.error("Não foi possível atualizar a Base DEA conectada ao Google Sheets.")
