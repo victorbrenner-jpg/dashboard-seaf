@@ -380,6 +380,15 @@ def _atualizar_intervalo_pivot_painel(sheet) -> None:
     )
     if not total_row:
         return
+    month_names = {"jan", "fev", "mar", "abr", "mai", "jun", "jul", "ago", "set", "out", "nov", "dez"}
+    month_rows = []
+    for row in range(total_row - 1, 0, -1):
+        if str(sheet.cell(row, 2).value or "").strip().lower() not in month_names:
+            break
+        month_rows.append(row)
+    month_rows.reverse()
+    if not month_rows:
+        return
 
     for pivot in getattr(sheet, "_pivots", []):
         location = getattr(pivot, "location", None)
@@ -390,6 +399,23 @@ def _atualizar_intervalo_pivot_painel(sheet) -> None:
             f"{get_column_letter(min_col)}{min_row}:"
             f"{get_column_letter(max_col)}{total_row}"
         )
+
+        # ``rowItems`` é a lista que o Excel usa para posicionar o estilo de
+        # cada item da Tabela Dinâmica. openpyxl não a amplia ao inserir a
+        # linha mensal: o item ``grand`` ficava na linha de outubro e recebia
+        # o acabamento de Total Geral. Incluímos itens de detalhe até a mesma
+        # quantidade de meses exibida, preservando o item grand no fim.
+        detail_items = [item for item in pivot.rowItems if item.t == "data"]
+        grand_items = [item for item in pivot.rowItems if item.t == "grand"]
+        if not detail_items or not grand_items:
+            continue
+        while len(detail_items) < len(month_rows):
+            new_item = copy(detail_items[-1])
+            new_item.x = [copy(index) for index in new_item.x]
+            if new_item.x:
+                new_item.x[0].v = int(new_item.x[0].v) + 1
+            detail_items.append(new_item)
+        pivot.rowItems = detail_items[: len(month_rows)] + grand_items
 
 
 def gerar_relatorio_mde_excel(df_ob: pd.DataFrame, modelo_path: Path) -> bytes:
