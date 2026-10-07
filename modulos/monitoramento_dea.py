@@ -32,7 +32,9 @@ def _preparar(dados):
         "Valor":("VALOR",),"Ano DEA":("ANO DO DEA","ANO DO DEA2"),
         "Executiva":("EXECUTIVA",),"Grupo de despesa":("GRUPO DE DESPESA",),
         "Objeto":("OBJETO","DESCRIÇÃO DO OBJETO"),"Status pagamento":("STATUS PAGAMENTO",),
-        "Status CPF":("STATUS CPF",),"SIPR 2026":("Nº SIPR 2026","N SIPR 2026"),
+        "Status CPF":("STATUS CPF",),
+        "SIPR 2025":("Nº SIPR 2025","N SIPR 2025","SIPR 2025"),
+        "SIPR 2026":("Nº SIPR 2026","N SIPR 2026","SIPR 2026"),
         "Prioritário":("PRIORITÁRIO","PRIORITARIO"),
     }
     ren={}
@@ -294,14 +296,15 @@ def render():
                         sei = proc.get("Processo / SEI", "") or "—"
                         objeto = proc.get("Objeto", "") or "—"
                         ano = proc.get("Ano DEA", "") or "—"
-                        sipr_proc = proc.get("SIPR 2026", "") or "—"
+                        sipr_2025_proc = proc.get("SIPR 2025", "") or "—"
+                        sipr_2026_proc = proc.get("SIPR 2026", "") or "—"
                         status_cpf_proc = proc.get("Status CPF", "") or "—"
                         status_pag_proc = proc.get("Status pagamento", "") or "—"
                         valor_proc = _moeda(proc.get("Valor", 0))
                         linhas_html.append(
                             f"""<tr>
                                 <td><b>{sei}</b></td><td>{objeto}</td><td>{ano}</td>
-                                <td>{sipr_proc}</td><td>{status_cpf_proc}</td>
+                                <td>{sipr_2025_proc}</td><td>{sipr_2026_proc}</td><td>{status_cpf_proc}</td>
                                 <td>{status_pag_proc}</td><td class="dea-det-valor">{valor_proc}</td>
                             </tr>"""
                         )
@@ -310,7 +313,7 @@ def render():
                         <div class="dea-detalhe-tabela">
                           <table>
                             <thead><tr><th>PROCESSO / SEI</th><th>OBJETO</th><th>ANO DEA</th>
-                            <th>SIPR 2026</th><th>STATUS CPF</th><th>STATUS PAGAMENTO</th><th>VALOR</th></tr></thead>
+                            <th>SIPR 2025</th><th>SIPR 2026</th><th>STATUS CPF</th><th>STATUS PAGAMENTO</th><th>VALOR</th></tr></thead>
                             <tbody>{"".join(linhas_html)}</tbody>
                           </table>
                         </div>
