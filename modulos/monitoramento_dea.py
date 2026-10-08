@@ -38,6 +38,7 @@ def _preparar(dados):
         "Executiva":("EXECUTIVA",),"Grupo de despesa":("GRUPO DE DESPESA",),
         "Objeto":("OBJETO","DESCRIÇÃO DO OBJETO"),"Status pagamento":("STATUS PAGAMENTO",),
         "Status CPF":("STATUS CPF",),
+        "Data AD Referendum":("DATA DO AD REFERENDUM","DATA AD REFERENDUM"),
         "SIPR 2025":("Nº SIPR 2025","N SIPR 2025","SIPR 2025"),
         "SIPR 2026":("Nº SIPR 2026","N SIPR 2026","SIPR 2026"),
         "Prioritário":("PRIORITÁRIO","PRIORITARIO"),
@@ -78,6 +79,9 @@ def _preparar(dados):
             return 0.0
 
     dados["Valor"] = bruto.map(_valor_numero)
+    if "Data AD Referendum" in dados.columns:
+        datas = pd.to_datetime(dados["Data AD Referendum"].replace({"": pd.NA, "-": pd.NA}), errors="coerce", dayfirst=True)
+        dados["Data AD Referendum"] = datas.dt.strftime("%d/%m/%Y").fillna("")
     return dados
 
 @st.cache_data(ttl=300, show_spinner=False)
@@ -237,6 +241,7 @@ def render():
         if "dea_filtros_aplicados" not in st.session_state: st.session_state.dea_filtros_aplicados={}
         with st.form("form_filtros_dea"):
             ano=st.multiselect("Ano do DEA",_opts(dados,"Ano DEA"),default=st.session_state.dea_filtros_aplicados.get("Ano DEA",[]))
+            data_ad=st.multiselect("Data do AD Referendum",_opts(dados,"Data AD Referendum"),default=[x for x in st.session_state.dea_filtros_aplicados.get("Data AD Referendum",[]) if x in _opts(dados,"Data AD Referendum")])
             cpf=st.multiselect("Status CPF",_opts(dados,"Status CPF"),default=st.session_state.dea_filtros_aplicados.get("Status CPF",[]))
             pag=st.multiselect("Status do Pagamento",_opts(dados,"Status pagamento"),default=st.session_state.dea_filtros_aplicados.get("Status pagamento",[]))
             grupo=st.multiselect("Grupo de Despesa",_opts(dados,"Grupo de despesa"),default=st.session_state.dea_filtros_aplicados.get("Grupo de despesa",[]))
@@ -249,7 +254,7 @@ def render():
     if limpar:
         st.session_state.dea_filtros_aplicados={}; st.session_state.dea_credor_aplicado=""; st.rerun()
     if aplicar:
-        st.session_state.dea_filtros_aplicados={"Ano DEA":ano,"Status CPF":cpf,"Status pagamento":pag,"Grupo de despesa":grupo,"Executiva":exe,"Prioritário":pri}
+        st.session_state.dea_filtros_aplicados={"Ano DEA":ano,"Data AD Referendum":data_ad,"Status CPF":cpf,"Status pagamento":pag,"Grupo de despesa":grupo,"Executiva":exe,"Prioritário":pri}
         st.session_state.dea_credor_aplicado=credor.strip(); st.rerun()
 
     filtrado=_filtrar(dados,st.session_state.dea_filtros_aplicados)
@@ -334,12 +339,13 @@ def render():
                         sipr_2026_proc = proc.get("SIPR 2026", "") or "—"
                         status_cpf_proc = proc.get("Status CPF", "") or "—"
                         status_pag_proc = proc.get("Status pagamento", "") or "—"
+                        data_ad_proc = proc.get("Data AD Referendum", "") or "—"
                         valor_proc = _moeda(proc.get("Valor", 0))
                         linhas_html.append(
                             f"""<tr>
                                 <td><b>{sei}</b></td><td>{objeto}</td><td>{ano}</td>
                                 <td>{sipr_2025_proc}</td><td>{sipr_2026_proc}</td><td>{status_cpf_proc}</td>
-                                <td>{status_pag_proc}</td><td class="dea-det-valor">{valor_proc}</td>
+                                <td>{status_pag_proc}</td><td>{data_ad_proc}</td><td class="dea-det-valor">{valor_proc}</td>
                             </tr>"""
                         )
                     st.markdown(
@@ -347,7 +353,7 @@ def render():
                         <div class="dea-detalhe-tabela">
                           <table>
                             <thead><tr><th>PROCESSO / SEI</th><th>OBJETO</th><th>ANO DEA</th>
-                            <th>SIPR 2025</th><th>SIPR 2026</th><th>STATUS CPF</th><th>STATUS PAGAMENTO</th><th>VALOR</th></tr></thead>
+                            <th>SIPR 2025</th><th>SIPR 2026</th><th>STATUS CPF</th><th>STATUS PAGAMENTO</th><th>DATA DO AD REFERENDUM</th><th>VALOR</th></tr></thead>
                             <tbody>{"".join(linhas_html)}</tbody>
                           </table>
                         </div>
