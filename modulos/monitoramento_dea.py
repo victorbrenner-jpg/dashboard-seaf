@@ -127,8 +127,8 @@ def _filtrar(df, filtros):
 
 def _mascara_pendente(df):
     """Identifica pendências de CPF e de execução do pagamento."""
-    status_cpf = df["Status CPF"].astype(str)
-    status_pagamento = df["Status pagamento"].astype(str)
+    status_cpf = df["Status CPF"].fillna("").astype(str).str.strip()
+    status_pagamento = df["Status pagamento"].fillna("").astype(str).str.strip()
     return (
         status_cpf.str.contains("AGUARD", case=False, na=False)
         | status_pagamento.str.contains(r"N[ÃA]O PAGO|AGUARDANDO EXECU", case=False, na=False, regex=True)
@@ -211,6 +211,11 @@ def render():
         unsafe_allow_html=True,
     )
 
+    # Atualização manual independente do cache e dos filtros das demais telas.
+    if st.button("↻ Atualizar base DEA", key="dea_atualizar_base", type="secondary"):
+        _carregar_publicada.clear()
+        st.rerun()
+
     try:
         dados=_carregar_publicada(VERSAO_BASE_DEA)
         origem=dados.attrs.get("origem_dea", "Base DEA mestre")
@@ -221,6 +226,9 @@ def render():
             _carregar_publicada.clear()
             st.rerun()
         return
+
+    if origem != "Base DEA mestre":
+        st.warning("Atenção: o Monitoramento DEA está usando a base anterior (contingência). Alterações recentes da planilha mestre podem não aparecer.")
 
     # Filtros só alteram o painel quando Aplicar filtros é acionado.
     with st.sidebar:
@@ -237,7 +245,7 @@ def render():
             credor=st.text_input("Credor (buscar por nome)",value=st.session_state.get("dea_credor_aplicado",""))
             aplicar=st.form_submit_button("🔎 Aplicar filtros",use_container_width=True,type="primary")
         limpar=st.button("↻ Limpar filtros",use_container_width=True)
-        st.caption(origem)
+        st.caption(f"Origem: {origem} · {len(dados):,} registros carregados".replace(",", "."))
     if limpar:
         st.session_state.dea_filtros_aplicados={}; st.session_state.dea_credor_aplicado=""; st.rerun()
     if aplicar:
@@ -251,7 +259,7 @@ def render():
 
     total=filtrado["Valor"].sum()
     aguarda=filtrado.loc[_mascara_pendente(filtrado),"Valor"].sum()
-    pago_mask=filtrado["Status pagamento"].str.upper().eq("PAGO")
+    pago_mask=filtrado["Status pagamento"].str.strip().str.upper().eq("PAGO")
     pagos=filtrado.loc[pago_mask,"Valor"].sum()
     prio=filtrado.loc[filtrado.get("Prioritário",pd.Series("",index=filtrado.index)).str.upper().eq("SIM"),"Valor"].sum()
 
