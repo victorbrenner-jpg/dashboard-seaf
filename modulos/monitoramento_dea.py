@@ -7,8 +7,12 @@ import unicodedata
 import pandas as pd
 import streamlit as st
 
-URL_BASE_DEA = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRFcspPcERcq_Eu2bFM5uHRa6thMKvCKf5zs_87QzokzZe3W5QYZFsWoK2m4seEkA/pub?gid=1881579019&single=true&output=csv"
-VERSAO_BASE_DEA = "2026-10-07-sipr-2025"
+# A planilha abaixo é a fonte mestre editável do DEA. A aba BASE é publicada
+# como CSV para que o painel possa ler atualizações sem depender de arquivos
+# locais ou de credenciais do Google Drive.
+URL_BASE_DEA = "https://docs.google.com/spreadsheets/d/e/2PACX-1vQ_XqVN1rT9DhB-QOa7xnA6ewfgeVCy1gQ7w1VrdELXX2FQqavQs8gB7Vi6IDcruF57RBmi0HUsJ079/pub?gid=526795577&single=true&output=csv"
+URL_BASE_DEA_ANTERIOR = "https://docs.google.com/spreadsheets/d/e/2PACX-1vRFcspPcERcq_Eu2bFM5uHRa6thMKvCKf5zs_87QzokzZe3W5QYZFsWoK2m4seEkA/pub?gid=1881579019&single=true&output=csv"
+VERSAO_BASE_DEA = "2026-10-08-base-mestre"
 
 def _normalizar(v):
     return " ".join(unicodedata.normalize("NFKD", str(v)).encode("ASCII","ignore").decode().upper().replace("/"," ").split())
@@ -83,11 +87,23 @@ def _carregar_publicada(versao_cache: str):
     # colunas obrigam a releitura da fonte, em vez de reutilizar um dataframe
     # carregado antes do novo mapeamento.
     # A BASE oficial possui linhas de apresentação antes do cabeçalho.
-    for header in (2, 0, 1, 3):
-        t = pd.read_csv(URL_BASE_DEA, header=header)
-        if any(_normalizar(c) == "CREDOR" for c in t.columns):
-            return _preparar(t)
-    raise ValueError("O cabeçalho da BASE não foi localizado na publicação CSV.")
+    # A publicação anterior é usada apenas como contingência: ela mantém o
+    # painel disponível se o Google estiver temporariamente indisponível.
+    erros = []
+    for indice, url in enumerate((URL_BASE_DEA, URL_BASE_DEA_ANTERIOR)):
+        try:
+            for header in (2, 0, 1, 3):
+                t = pd.read_csv(url, header=header)
+                if any(_normalizar(c) == "CREDOR" for c in t.columns):
+                    dados = _preparar(t)
+                    dados.attrs["origem_dea"] = (
+                        "Base DEA mestre" if indice == 0 else "Base DEA anterior (contingência)"
+                    )
+                    return dados
+            erros.append(f"fonte {indice + 1}: cabeçalho não localizado")
+        except Exception as erro:
+            erros.append(f"fonte {indice + 1}: {erro}")
+    raise ValueError("; ".join(erros))
 
 def _carregar_upload(arq):
     xls=pd.ExcelFile(io.BytesIO(arq.getvalue()))
@@ -108,6 +124,15 @@ def _filtrar(df, filtros):
     for c, vals in filtros.items():
         if vals and c in out: out=out[out[c].isin(vals)]
     return out
+
+def _mascara_pendente(df):
+    """Identifica pendências de CPF e de execução do pagamento."""
+    status_cpf = df["Status CPF"].astype(str)
+    status_pagamento = df["Status pagamento"].astype(str)
+    return (
+        status_cpf.str.contains("AGUARD", case=False, na=False)
+        | status_pagamento.str.contains(r"N[ÃA]O PAGO|AGUARDANDO EXECU", case=False, na=False, regex=True)
+    )
 
 def _card(titulo, valor, subtitulo, classe="azul"):
     st.markdown(f"""<div class="dea-card {classe}">
@@ -188,7 +213,7 @@ def render():
 
     try:
         dados=_carregar_publicada(VERSAO_BASE_DEA)
-        origem="Base DEA publicada"
+        origem=dados.attrs.get("origem_dea", "Base DEA mestre")
     except Exception as erro:
         st.error("Não foi possível atualizar a Base DEA conectada ao Google Sheets.")
         st.caption(f"Detalhe técnico: {erro}")
@@ -225,14 +250,14 @@ def render():
 
 
     total=filtrado["Valor"].sum()
-    aguarda=filtrado[filtrado["Status CPF"].str.contains("AGUARD",case=False,na=False)]["Valor"].sum()
+    aguarda=filtrado.loc[_mascara_pendente(filtrado),"Valor"].sum()
     pago_mask=filtrado["Status pagamento"].str.upper().eq("PAGO")
     pagos=filtrado.loc[pago_mask,"Valor"].sum()
     prio=filtrado.loc[filtrado.get("Prioritário",pd.Series("",index=filtrado.index)).str.upper().eq("SIM"),"Valor"].sum()
 
     c1,c2,c3,c4=st.columns(4)
     with c1:_card("◉  Valor total monitorado",_moeda(total),f"{len(filtrado):,} registros".replace(",","."),"azul")
-    with c2:_card("◷  Aguardando CPF",_moeda(aguarda),f"{_pct(aguarda,total):.1f}% do total","amarelo")
+    with c2:_card("◷  Pendentes",_moeda(aguarda),f"{_pct(aguarda,total):.1f}% do total","amarelo")
     with c3:_card("✓  Pagos",_moeda(pagos),f"{_pct(pagos,total):.1f}% do total","verde")
     with c4:_card("★  Prioritários",_moeda(prio),f"{_pct(prio,total):.1f}% do total","dourado")
 
@@ -262,15 +287,12 @@ def render():
                 status_cpf = linha.get("Status CPF", "") or "—"
                 status_pag = linha.get("Status Pagamento", "") or "—"
                 processos_credor = filtrado[filtrado["Credor"].eq(nome_credor)].copy()
-                mascara_aguardando = processos_credor["Status CPF"].str.contains(
-                    "AGUARD", case=False, na=False
-                )
+                mascara_aguardando = _mascara_pendente(processos_credor)
                 valor_aguardando = float(processos_credor.loc[mascara_aguardando, "Valor"].sum())
                 possui_pendencia = valor_aguardando > 0
 
-                # A lista principal é de cobrança: somente quem ainda aguarda
-                # aprovação recebe alerta e valor. Credores já aprovados ficam
-                # limpos, sem valor destacado, para leitura rápida do gestor.
+                # A lista principal destaca qualquer pendência: tanto a
+                # aprovação de CPF quanto a execução ainda não autorizada.
                 rotulo = f'{int(linha["#"])}  |  {nome_credor}'
                 if possui_pendencia:
                     rotulo = (
