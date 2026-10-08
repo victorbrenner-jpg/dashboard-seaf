@@ -3392,6 +3392,11 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     ]
     validos_o_ob = [o for o in st.session_state["mem_ob_objetos"] if o in lista_objetos]
 
+    # Cada limpeza cria uma nova instância dos campos do formulário. Isso evita
+    # alterar uma chave de widget já registrada pelo Streamlit no mesmo rerun.
+    if "versao_filtros_ob" not in st.session_state:
+        st.session_state["versao_filtros_ob"] = 0
+
     # Em formulários, o callback é executado antes de os widgets serem
     # recriados. Assim, a limpeza remove também uma seleção ainda não aplicada.
     def limpar_filtros_ob():
@@ -3406,28 +3411,18 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         st.session_state["mem_ob_fontes"] = []
         st.session_state["mem_ob_marcadores_fonte"] = []
         st.session_state["mem_ob_objetos"] = []
-        # Não removemos as chaves: o navegador pode reenviar o último valor do
-        # formulário. Ao atribuir os valores vazios, o widget é redesenhado limpo.
-        st.session_state["w_ob_tipo_data"] = "Por Mês de Competência"
-        st.session_state["w_ob_meses"] = []
-        st.session_state["w_ob_dt_ini"] = datetime.date(2026, 1, 1)
-        st.session_state["w_ob_dt_fim"] = datetime.date(2026, 12, 31)
-        st.session_state["w_ob_despesa"] = []
-        st.session_state["w_ob_grupos"] = []
-        st.session_state["w_ob_tipo_item"] = []
-        st.session_state["w_ob_credores"] = []
-        st.session_state["w_ob_fontes"] = []
-        st.session_state["w_ob_marcadores_fonte"] = []
-        st.session_state["w_ob_objetos"] = []
+        st.session_state["versao_filtros_ob"] += 1
+
+    versao_filtros_ob = st.session_state["versao_filtros_ob"]
+    chave_ob = lambda nome: f"{nome}_{versao_filtros_ob}"
 
     # O período fica fora do formulário para que a troca entre mês e intervalo
     # redesenhe imediatamente os campos de data, sem deixar o intervalo inativo.
-    if "w_ob_tipo_data" not in st.session_state:
-        st.session_state["w_ob_tipo_data"] = st.session_state["mem_ob_tipo_data"]
     tipo_filtro_data = st.sidebar.radio(
         "Como deseja filtrar o período?",
         options=["Por Mês de Competência", "Por Intervalo de Datas"],
-        key="w_ob_tipo_data",
+        index=0 if st.session_state["mem_ob_tipo_data"] == "Por Mês de Competência" else 1,
+        key=chave_ob("w_ob_tipo_data"),
     )
 
     # Formulário impede o rerun a cada clique do multiselect. O usuário pode
@@ -3442,7 +3437,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                 "Filtrar Período de Competência:",
                 options=lista_meses_fixa,
                 default=validos_m_ob,
-                key="w_ob_meses",
+                key=chave_ob("w_ob_meses"),
             )
         else:
             if not df_base.empty and coluna_data in df_base.columns:
@@ -3460,11 +3455,11 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             col_dt1, col_dt2 = st.columns(2)
             with col_dt1:
                 data_inicio = st.date_input(
-                    "Data Inicial:", value=val_ini, format="DD/MM/YYYY", key="w_ob_dt_ini"
+                    "Data Inicial:", value=val_ini, format="DD/MM/YYYY", key=chave_ob("w_ob_dt_ini")
                 )
             with col_dt2:
                 data_fim = st.date_input(
-                    "Data Final:", value=val_fim, format="DD/MM/YYYY", key="w_ob_dt_fim"
+                    "Data Final:", value=val_fim, format="DD/MM/YYYY", key=chave_ob("w_ob_dt_fim")
                 )
 
         st.divider()
@@ -3473,25 +3468,25 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             options=opcoes_despesa_ob,
             default=despesas_validas_ob,
             placeholder="Todas as despesas",
-            key="w_ob_despesa",
+            key=chave_ob("w_ob_despesa"),
         )
 
         st.divider()
         grupos_selecionados = st.multiselect(
             "Filtrar por Grupo:", options=grupos_disponiveis,
-            default=validos_g_ob, placeholder="Todos os grupos", key="w_ob_grupos",
+            default=validos_g_ob, placeholder="Todos os grupos", key=chave_ob("w_ob_grupos"),
         )
 
         st.divider()
         tipos_item_selecionados = st.multiselect(
             "Filtrar por Classificação (Tipo Item):", options=tipos_item_disponiveis,
-            default=validos_ti_ob, placeholder="ITEM e RETENÇÃO", key="w_ob_tipo_item",
+            default=validos_ti_ob, placeholder="ITEM e RETENÇÃO", key=chave_ob("w_ob_tipo_item"),
         )
 
         st.divider()
         fontes_selecionadas = st.multiselect(
             "Filtrar por Fonte de Recurso:", options=lista_fontes,
-            default=validos_f_ob, placeholder="Todas as fontes (Exibe tudo)", key="w_ob_fontes",
+            default=validos_f_ob, placeholder="Todas as fontes (Exibe tudo)", key=chave_ob("w_ob_fontes"),
         )
 
         st.divider()
@@ -3500,13 +3495,13 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             options=lista_marcadores_fonte,
             default=validos_mf_ob,
             placeholder="Todos os marcadores (Exibe tudo)",
-            key="w_ob_marcadores_fonte",
+            key=chave_ob("w_ob_marcadores_fonte"),
         )
 
         st.divider()
         objeto_selecionado = st.multiselect(
             "Filtrar por Objeto de Despesa:", options=lista_objetos,
-            default=validos_o_ob, placeholder="Todos os objetos", key="w_ob_objetos",
+            default=validos_o_ob, placeholder="Todos os objetos", key=chave_ob("w_ob_objetos"),
         )
 
         st.divider()
@@ -3514,7 +3509,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             "Filtrar por Credor:",
             options=nomes_disponiveis,
             default=validos_c_ob,
-            key="w_ob_credores",
+            key=chave_ob("w_ob_credores"),
         )
 
         col_aplicar_ob, col_limpar_ob = st.columns(2, gap="small")
