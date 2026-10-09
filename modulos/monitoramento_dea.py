@@ -154,35 +154,65 @@ def _gerar_relatorio_xlsx(df):
     relatorio = pd.DataFrame(index=df.index)
     for origem, destino in colunas:
         if origem == "Valor":
-            relatorio[destino] = pd.to_numeric(df.get(origem, 0), errors="coerce").fillna(0)
+            valores = df[origem] if origem in df else pd.Series(0, index=df.index)
+            relatorio[destino] = pd.to_numeric(valores, errors="coerce").fillna(0)
         elif origem in df:
-            relatorio[destino] = df[origem].fillna("").astype(str).str.strip().replace("", "—")
+            relatorio[destino] = df[origem].fillna("").astype(str).str.strip()
         else:
-            relatorio[destino] = "—"
+            relatorio[destino] = ""
 
     relatorio = relatorio.sort_values(["CREDOR", "PROCESSO / SEI"], kind="stable")
     arquivo = io.BytesIO()
     with pd.ExcelWriter(arquivo, engine="xlsxwriter") as writer:
-        relatorio.to_excel(writer, sheet_name="Relatório DEA", startrow=1, index=False, header=False)
+        # A primeira coluna é deliberadamente deixada em branco como margem
+        # visual. A tabela começa na coluna B, conforme o padrão do relatório DEA.
+        relatorio.to_excel(writer, sheet_name="Relatório DEA", startrow=2, startcol=1, index=False, header=False)
         workbook = writer.book
         aba = writer.sheets["Relatório DEA"]
         formato_titulo = workbook.add_format({
             "bold": True, "font_color": "#FFFFFF", "bg_color": "#075B88",
             "align": "center", "valign": "vcenter", "border": 1, "border_color": "#D7E3EE",
         })
-        formato_texto = workbook.add_format({"border": 1, "border_color": "#DCE7EF", "valign": "vcenter"})
+        formato_esquerda = workbook.add_format({"border": 1, "border_color": "#DCE7EF", "valign": "vcenter", "align": "left"})
+        formato_centro = workbook.add_format({"border": 1, "border_color": "#DCE7EF", "valign": "vcenter", "align": "center"})
         formato_valor = workbook.add_format({
             "border": 1, "border_color": "#DCE7EF", "num_format": 'R$ #,##0.00', "align": "right",
         })
+        formato_total_rotulo = workbook.add_format({
+            "bold": True, "font_color": "#073B61", "align": "right", "valign": "vcenter",
+        })
+        formato_total_valor = workbook.add_format({
+            "bold": True, "font_color": "#073B61", "num_format": 'R$ #,##0.00', "align": "right",
+        })
+        # O 109 ignora as linhas ocultadas por filtros e também as ocultadas
+        # manualmente. Assim, o total acompanha a consulta feita no Excel.
+        ultima_linha_excel = len(relatorio) + 2
+        total_inicial = float(relatorio["VALOR"].sum())
+        aba.write(0, 7, "Total Geral Pendente", formato_total_rotulo)
+        aba.write_formula(
+            0,
+            8,
+            f"=SUBTOTAL(109,I3:I{ultima_linha_excel})",
+            formato_total_valor,
+            total_inicial,
+        )
         for coluna, titulo in enumerate(relatorio.columns):
-            aba.write(0, coluna, titulo, formato_titulo)
-        aba.set_row(0, 22)
-        aba.freeze_panes(1, 0)
-        aba.autofilter(0, 0, len(relatorio), len(relatorio.columns) - 1)
+            aba.write(1, coluna + 1, titulo, formato_titulo)
+        aba.set_row(1, 22)
+        aba.freeze_panes(2, 1)
+        aba.autofilter(1, 1, len(relatorio) + 1, len(relatorio.columns))
+        # Aproximadamente 2 cm de margem antes do início da tabela.
+        aba.set_column(0, 0, 10.71)
         larguras = [22, 42, 38, 12, 16, 16, 28, 16]
         for coluna, largura in enumerate(larguras):
-            formato = formato_valor if relatorio.columns[coluna] == "VALOR" else formato_texto
-            aba.set_column(coluna, coluna, largura, formato)
+            titulo = relatorio.columns[coluna]
+            if titulo == "VALOR":
+                formato = formato_valor
+            elif titulo in {"ANO DEA", "SIPR 2025", "SIPR 2026"}:
+                formato = formato_centro
+            else:
+                formato = formato_esquerda
+            aba.set_column(coluna + 1, coluna + 1, largura, formato)
     return arquivo.getvalue()
 
 def _card(titulo, valor, subtitulo, classe="azul"):
