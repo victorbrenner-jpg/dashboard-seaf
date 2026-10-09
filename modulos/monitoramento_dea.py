@@ -138,6 +138,53 @@ def _mascara_pendente(df):
         | status_pagamento.str.contains(r"N[ÃA]O PAGO|AGUARDANDO EXECU", case=False, na=False, regex=True)
     )
 
+
+def _gerar_relatorio_xlsx(df):
+    """Monta a planilha de detalhe DEA exatamente para o recorte filtrado."""
+    colunas = [
+        ("Processo / SEI", "PROCESSO / SEI"),
+        ("Credor", "CREDOR"),
+        ("Objeto", "OBJETO"),
+        ("Ano DEA", "ANO DEA"),
+        ("SIPR 2025", "SIPR 2025"),
+        ("SIPR 2026", "SIPR 2026"),
+        ("Status CPF", "STATUS CPF"),
+        ("Valor", "VALOR"),
+    ]
+    relatorio = pd.DataFrame(index=df.index)
+    for origem, destino in colunas:
+        if origem == "Valor":
+            relatorio[destino] = pd.to_numeric(df.get(origem, 0), errors="coerce").fillna(0)
+        elif origem in df:
+            relatorio[destino] = df[origem].fillna("").astype(str).str.strip().replace("", "—")
+        else:
+            relatorio[destino] = "—"
+
+    relatorio = relatorio.sort_values(["CREDOR", "PROCESSO / SEI"], kind="stable")
+    arquivo = io.BytesIO()
+    with pd.ExcelWriter(arquivo, engine="xlsxwriter") as writer:
+        relatorio.to_excel(writer, sheet_name="Relatório DEA", startrow=1, index=False, header=False)
+        workbook = writer.book
+        aba = writer.sheets["Relatório DEA"]
+        formato_titulo = workbook.add_format({
+            "bold": True, "font_color": "#FFFFFF", "bg_color": "#075B88",
+            "align": "center", "valign": "vcenter", "border": 1, "border_color": "#D7E3EE",
+        })
+        formato_texto = workbook.add_format({"border": 1, "border_color": "#DCE7EF", "valign": "vcenter"})
+        formato_valor = workbook.add_format({
+            "border": 1, "border_color": "#DCE7EF", "num_format": 'R$ #,##0.00', "align": "right",
+        })
+        for coluna, titulo in enumerate(relatorio.columns):
+            aba.write(0, coluna, titulo, formato_titulo)
+        aba.set_row(0, 22)
+        aba.freeze_panes(1, 0)
+        aba.autofilter(0, 0, len(relatorio), len(relatorio.columns) - 1)
+        larguras = [22, 42, 38, 12, 16, 16, 28, 16]
+        for coluna, largura in enumerate(larguras):
+            formato = formato_valor if relatorio.columns[coluna] == "VALOR" else formato_texto
+            aba.set_column(coluna, coluna, largura, formato)
+    return arquivo.getvalue()
+
 def _card(titulo, valor, subtitulo, classe="azul"):
     st.markdown(f"""<div class="dea-card {classe}">
       <div class="dea-card-title">{titulo}</div><div class="dea-card-value">{valor}</div>
@@ -215,11 +262,6 @@ def render():
         unsafe_allow_html=True,
     )
 
-    # Atualização manual independente do cache e dos filtros das demais telas.
-    if st.button("↻ Atualizar base DEA", key="dea_atualizar_base", type="secondary"):
-        _carregar_publicada.clear()
-        st.rerun()
-
     try:
         dados=_carregar_publicada(VERSAO_BASE_DEA)
         origem=dados.attrs.get("origem_dea", "Base DEA mestre")
@@ -249,13 +291,25 @@ def render():
             pri=st.multiselect("Prioritário",_opts(dados,"Prioritário"),default=st.session_state.dea_filtros_aplicados.get("Prioritário",[]))
             credor=st.text_input("Credor (buscar por nome)",value=st.session_state.get("dea_credor_aplicado",""))
             aplicar=st.form_submit_button("🔎 Aplicar filtros",use_container_width=True,type="primary")
-        limpar=st.button("↻ Limpar filtros",use_container_width=True)
+        acao_atualizar, acao_limpar = st.columns(2)
+        with acao_atualizar:
+            atualizar=st.button("↻ Atualizar base",key="dea_atualizar_base",use_container_width=True)
+        with acao_limpar:
+            limpar=st.button("↻ Limpar filtros",use_container_width=True)
         st.caption(f"Origem: {origem} · {len(dados):,} registros carregados".replace(",", "."))
+    if atualizar:
+        _carregar_publicada.clear()
+        st.session_state.pop("dea_relatorio_xlsx", None)
+        st.rerun()
     if limpar:
-        st.session_state.dea_filtros_aplicados={}; st.session_state.dea_credor_aplicado=""; st.rerun()
+        st.session_state.dea_filtros_aplicados={}; st.session_state.dea_credor_aplicado=""
+        st.session_state.pop("dea_relatorio_xlsx", None)
+        st.rerun()
     if aplicar:
         st.session_state.dea_filtros_aplicados={"Ano DEA":ano,"Data AD Referendum":data_ad,"Status CPF":cpf,"Status pagamento":pag,"Grupo de despesa":grupo,"Executiva":exe,"Prioritário":pri}
-        st.session_state.dea_credor_aplicado=credor.strip(); st.rerun()
+        st.session_state.dea_credor_aplicado=credor.strip()
+        st.session_state.pop("dea_relatorio_xlsx", None)
+        st.rerun()
 
     filtrado=_filtrar(dados,st.session_state.dea_filtros_aplicados)
     termo=st.session_state.get("dea_credor_aplicado","")
@@ -277,6 +331,21 @@ def render():
 
     principal,lateral=st.columns([3.15,1.0],gap="small")
     with principal:
+        preparar_relatorio = st.button(
+            "Preparar relatório .xlsx",
+            key="dea_preparar_relatorio",
+            disabled=filtrado.empty,
+        )
+        if preparar_relatorio:
+            st.session_state.dea_relatorio_xlsx = _gerar_relatorio_xlsx(filtrado)
+        if st.session_state.get("dea_relatorio_xlsx"):
+            st.download_button(
+                "Baixar relatório .xlsx",
+                data=st.session_state.dea_relatorio_xlsx,
+                file_name="Relatorio_DEA_filtrado.xlsx",
+                mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                key="dea_baixar_relatorio",
+            )
         st.markdown('<div class="dea-box-title">▣ &nbsp; Credor</div>',unsafe_allow_html=True)
         if filtrado.empty:
             st.info("Nenhum registro encontrado para os filtros aplicados.")
