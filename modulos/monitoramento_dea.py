@@ -201,14 +201,14 @@ def _gerar_relatorio_xlsx(df):
         aba.set_row(1, 22)
         aba.freeze_panes(2, 1)
         aba.autofilter(1, 1, len(relatorio) + 1, len(relatorio.columns))
-        # Aproximadamente 2 cm de margem antes do início da tabela.
-        aba.set_column(0, 0, 10.71)
+        # Margem em branco solicitada no padrão de largura do Excel.
+        aba.set_column(0, 0, 2)
         larguras = [22, 42, 38, 12, 16, 16, 28, 16]
         for coluna, largura in enumerate(larguras):
             titulo = relatorio.columns[coluna]
             if titulo == "VALOR":
                 formato = formato_valor
-            elif titulo in {"ANO DEA", "SIPR 2025", "SIPR 2026"}:
+            elif titulo in {"PROCESSO / SEI", "ANO DEA", "SIPR 2025", "SIPR 2026", "STATUS CPF"}:
                 formato = formato_centro
             else:
                 formato = formato_esquerda
