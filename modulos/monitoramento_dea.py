@@ -179,10 +179,12 @@ def _gerar_relatorio_xlsx(df):
             "border": 1, "border_color": "#DCE7EF", "num_format": 'R$ #,##0.00', "align": "right",
         })
         formato_total_rotulo = workbook.add_format({
-            "bold": True, "font_color": "#073B61", "align": "right", "valign": "vcenter",
+            "bold": True, "font_color": "#073B61", "bg_color": "#F2EBDD",
+            "align": "right", "valign": "vcenter",
         })
         formato_total_valor = workbook.add_format({
-            "bold": True, "font_color": "#073B61", "num_format": 'R$ #,##0.00', "align": "right",
+            "bold": True, "font_color": "#073B61", "bg_color": "#F2EBDD",
+            "num_format": 'R$ #,##0.00', "align": "right",
         })
         # O 109 ignora as linhas ocultadas por filtros e também as ocultadas
         # manualmente. Assim, o total acompanha a consulta feita no Excel.
