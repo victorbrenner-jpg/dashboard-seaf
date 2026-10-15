@@ -16,8 +16,8 @@ URL_BASE_PAGAMENTOS = (
 )
 URL_BASE_PRODUTOS = (
     "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
-    "pub?gid=1422300352&single=true&output=csv"
+    "2PACX-1vSAYpdmVOHOTf9h5L3Z36758r1kcJdS_EyMbpxeU33YPCTPM3OQlkYM8UdN527I8-GY-ejsMjGyTczX/"
+    "pub?output=csv"
 )
 TOTAL_RECEBIDO = 18_881_868.00
 PERCENTUAL_COOPERATIVAS = 0.45
@@ -119,7 +119,9 @@ def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
     coluna_credor = _localizar_coluna(dados.columns, "Credor")
     coluna_liquidacao = _localizar_coluna(dados.columns, "LIQUIDAÇÃO", "Liquidacao")
     coluna_pagamento = _localizar_coluna(dados.columns, "PAGAMENTO", "Pagamento")
-    coluna_material = _localizar_coluna(dados.columns, "Material")
+    # A base atual pode registrar o item como "Material" (extração Qlik)
+    # ou "Produto" (preenchimento complementar da planilha).
+    coluna_material = _localizar_coluna(dados.columns, "Material", "Produto", "Produto Fornecido")
     coluna_nl = _localizar_coluna(dados.columns, "DocumentoNL", "Documento NL")
     coluna_pd = _localizar_coluna(dados.columns, "DocumentoPD", "Documento PD")
     coluna_ob = _localizar_coluna(dados.columns, "DocumentoOB", "Documento OB")
