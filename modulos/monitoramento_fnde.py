@@ -216,7 +216,7 @@ def render() -> None:
         unsafe_allow_html=True,
     )
     st.markdown(
-        """<div class="fnde-cabecalho"><h1>Monitoramento FNDE — Cooperativas</h1>
+        """<div class="fnde-cabecalho"><h1>Monitoramento PNAE — Cooperativas</h1>
         <div class="fnde-subtitulo"><em>Execução da fonte 552 para as cooperativas da agricultura familiar.</em></div></div><hr class="fnde-divisor">""",
         unsafe_allow_html=True,
     )

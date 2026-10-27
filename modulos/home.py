@@ -138,7 +138,7 @@ MODULOS = [
     # na entrada do sistema a pedido da área usuária.
     # ("🎯", "Planejar Priorização"),
     ("📋", "Monitoramento DEA"),
-    ("🏦", "Monitoramento FNDE"),
+    ("🏦", "Monitoramento PNAE"),
     ("📊", "Relatório 009717"),
 ]
 
