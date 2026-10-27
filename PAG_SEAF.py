@@ -3429,7 +3429,7 @@ opcoes_tela = [
     "Pagamentos (OB)",
     "Planejar Priorização",
     "Relatório 009717",
-    "Monitoramento FNDE",
+    "Monitoramento PNAE",
 ]
 if (
     "seletor_tela_global" not in st.session_state
@@ -3456,7 +3456,7 @@ with st.container(key="topo_navegacao"):
             "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
             "Planejar Priorização": "🎯 Planejar Priorização",
             "Relatório 009717": "📊 Relatório 009717",
-            "Monitoramento FNDE": "🥖 Monitoramento FNDE",
+            "Monitoramento PNAE": "🥖 Monitoramento PNAE",
         }[opcao],
         selection_mode="single",
         key="seletor_tela_global",
