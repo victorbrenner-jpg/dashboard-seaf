@@ -7492,9 +7492,9 @@ elif st.session_state["tela_atual"] == "Relatório 009717":
             )
 
 
-elif st.session_state["tela_atual"] == "Monitoramento FNDE":
+elif st.session_state["tela_atual"] == "Monitoramento PNAE":
     st.markdown(
-        "<h2 class='titulo-pagina'>🥖 Monitoramento FNDE — Execução por Produto</h2>",
+        "<h2 class='titulo-pagina'>🥖 Monitoramento PNAE — Execução por Produto</h2>",
         unsafe_allow_html=True,
     )
     st.caption(
