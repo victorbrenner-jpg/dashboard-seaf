@@ -5499,7 +5499,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 elif st.session_state["tela_atual"] == "Monitoramento DEA":
     monitoramento_dea.render()
 
-elif st.session_state["tela_atual"] == "Monitoramento FNDE":
+elif st.session_state["tela_atual"] == "Monitoramento PNAE":
     monitoramento_fnde.render()
 
 elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
