@@ -2768,7 +2768,7 @@ opcoes_tela = [
     "Pagamentos (OB)",
     # "Planejar Priorização",  # Temporariamente desativada na homologação.
     "Monitoramento DEA",
-    "Monitoramento FNDE",
+    "Monitoramento PNAE",
     "Relatório 009717",
 ]
 
@@ -2820,7 +2820,7 @@ with st.container(key="topo_navegacao"):
                 "Liquidação (NL)": "📑 Liquidação (NL)",
                 "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
                 "Monitoramento DEA": "📋 Monitoramento DEA",
-                "Monitoramento FNDE": "🏦 Monitoramento FNDE",
+                "Monitoramento PNAE": "🏦 Monitoramento PNAE",
                 "Relatório 009717": "📊 Relatório 009717",
             }[opcao],
             selection_mode="single",
