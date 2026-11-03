@@ -4264,6 +4264,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         else:
             df1["Data_DT"] = pd.NaT
             df1["Competencia"] = "Não informada"
+        df1["Data_Emissao_Exibicao"] = df1["Data_DT"].dt.strftime("%d/%m/%Y").fillna("Não informada")
 
         df1["Grupo_Filtro"] = (
             df1["Grupo"].fillna("Todos").astype(str).str.strip()
@@ -4380,7 +4381,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
             df_cred = df_filtrado[df_filtrado["Credor_Tratado"] == credor]
             df_sub = (
-                df_cred.groupby(["NL_Numero", "NE_Chave"], as_index=False)
+                df_cred.groupby(["NL_Numero", "NE_Chave", "Data_Emissao_Exibicao"], as_index=False)
                 .agg({"Valor_Retido_Limpo": "sum", "Valor_Total_Limpo": "sum"})
                 .sort_values(by="NL_Numero", ascending=True)
             )
@@ -4389,10 +4390,11 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             for _, r in df_sub.iterrows():
                 linhas_subtabela += f"""
 <tr>
-    <td style='width: 25%; text-align: center; font-family: monospace; font-weight: 600; color: #005691;'>{r['NL_Numero']}</td>
-    <td style='width: 25%; text-align: center; font-family: monospace; color: #475569;'>{r['NE_Chave']}</td>
-    <td style='width: 25%; text-align: center; color: #d97706;'>{formatar_brl(r['Valor_Retido_Limpo'])}</td>
-    <td style='width: 25%; text-align: center; font-weight: 600; color: #002b49;'>{formatar_brl(r['Valor_Total_Limpo'])}</td>
+    <td style='width: 20%; text-align: center; font-family: monospace; font-weight: 600; color: #005691;'>{r['NL_Numero']}</td>
+    <td style='width: 20%; text-align: center; font-family: monospace; color: #475569;'>{r['NE_Chave']}</td>
+    <td style='width: 20%; text-align: center; color: #475569;'>{r['Data_Emissao_Exibicao']}</td>
+    <td style='width: 20%; text-align: center; color: #d97706;'>{formatar_brl(r['Valor_Retido_Limpo'])}</td>
+    <td style='width: 20%; text-align: center; font-weight: 600; color: #002b49;'>{formatar_brl(r['Valor_Total_Limpo'])}</td>
 </tr>"""
 
             html_grupos += f"""
@@ -4406,10 +4408,11 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         <table class='subtabela-detalhe'>
             <thead>
                 <tr>
-                    <th style='width: 25%; text-align: center;'>NL</th>
-                    <th style='width: 25%; text-align: center;'>NE</th>
-                    <th style='width: 25%; text-align: center;'>VAL. RET.</th>
-                    <th style='width: 25%; text-align: center;'>VALOR TOTAL</th>
+                    <th style='width: 20%; text-align: center;'>NL</th>
+                    <th style='width: 20%; text-align: center;'>NE</th>
+                    <th style='width: 20%; text-align: center;'>EMISSÃO</th>
+                    <th style='width: 20%; text-align: center;'>VAL. RET.</th>
+                    <th style='width: 20%; text-align: center;'>VALOR TOTAL</th>
                 </tr>
             </thead>
             <tbody>
