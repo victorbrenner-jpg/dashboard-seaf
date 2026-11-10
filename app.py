@@ -140,6 +140,8 @@ elif isinstance(st.session_state["mem_nl_fonte"], str):
         if st.session_state["mem_nl_fonte"] == "Todas as fontes (Exibe tudo)"
         else [st.session_state["mem_nl_fonte"]]
     )
+if "mem_nl_marcador_fonte" not in st.session_state:
+    st.session_state["mem_nl_marcador_fonte"] = []
 if "mem_nl_objetos" not in st.session_state:
     st.session_state["mem_nl_objetos"] = []
 
@@ -4241,6 +4243,24 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         )
         col_valor = "Valor" if "Valor" in df1.columns else df1.columns[-1]
 
+        def localizar_col_marcador_fonte(df):
+            # Prioriza colunas com MARCADOR e FONTE no nome; aceita apenas
+            # "MARCADOR" quando for a única coluna com esse termo.
+            cands = [c for c in df.columns if "MARCADOR" in str(c).upper()]
+            com_fonte = [c for c in cands if "FONTE" in str(c).upper()]
+            if com_fonte:
+                return com_fonte[0]
+            return cands[0] if len(cands) == 1 else None
+
+        col_marc_fonte1 = localizar_col_marcador_fonte(df1)
+        col_marc_fonte2 = localizar_col_marcador_fonte(df2)
+
+        df1["Marcador_Fonte_Base1"] = (
+            df1[col_marc_fonte1].fillna("").astype(str).str.strip()
+            if col_marc_fonte1
+            else ""
+        )
+
         df1["NL_Numero"] = (
             df1[col_nl].fillna("NL NÃO INFORMADA").astype(str).str.strip()
         )
@@ -4329,6 +4349,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             else "NÃO INFORMADO"
         )
 
+        df2["Marcador_Fonte_Base2"] = (
+            df2[col_marc_fonte2].fillna("").astype(str).str.strip()
+            if col_marc_fonte2
+            else ""
+        )
+
         df2_dedup = df2[df2["NE_Chave"] != ""].drop_duplicates(
             subset=["NE_Chave"]
         )
@@ -4336,10 +4362,28 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         df_merged = pd.merge(
             df1,
             df2_dedup[
-                ["NE_Chave", "Fonte_Relacao", "Objeto_Relacao", "Grupo_Relacao"]
+                [
+                    "NE_Chave", "Fonte_Relacao", "Objeto_Relacao",
+                    "Grupo_Relacao", "Marcador_Fonte_Base2",
+                ]
             ],
             on="NE_Chave",
             how="left",
+        )
+
+        # O Marcador de Fonte é atributo da própria NL (coluna da base de NL).
+        # A planilha de relação por NE serve apenas de reserva.
+        df_merged["Marcador_Fonte_Base2"] = (
+            df_merged["Marcador_Fonte_Base2"].fillna("").astype(str).str.strip()
+        )
+        df_merged["Marcador_Fonte_Relacao"] = df_merged["Marcador_Fonte_Base1"].where(
+            df_merged["Marcador_Fonte_Base1"] != "",
+            df_merged["Marcador_Fonte_Base2"],
+        )
+        df_merged["Marcador_Fonte_Relacao"] = (
+            df_merged["Marcador_Fonte_Relacao"]
+            .replace("", "NÃO INFORMADO")
+            .fillna("NÃO INFORMADO")
         )
 
         df_merged["Fonte_Relacao"] = df_merged["Fonte_Relacao"].fillna(
@@ -5080,7 +5124,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA NL ---
         # A função lê exclusivamente a memória dos filtros APLICADOS.
-        def filtrar_df_nl(df, ign_per=False, ign_grp=False, ign_sts=False, ign_cred=False, ign_fnt=False, ign_obj=False):
+        def filtrar_df_nl(df, ign_per=False, ign_grp=False, ign_sts=False, ign_cred=False, ign_fnt=False, ign_obj=False, ign_mrc=False):
             d = df.copy()
             if d.empty:
                 return d
@@ -5115,6 +5159,10 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             # Fonte
             if not ign_fnt and st.session_state["mem_nl_fonte"]:
                 d = d[d["Fonte_Relacao"].isin(st.session_state["mem_nl_fonte"])]
+
+            # Marcador de Fonte
+            if not ign_mrc and st.session_state["mem_nl_marcador_fonte"]:
+                d = d[d["Marcador_Fonte_Relacao"].isin(st.session_state["mem_nl_marcador_fonte"])]
 
             # Objeto
             if not ign_obj and st.session_state["mem_nl_objetos"]:
@@ -5162,6 +5210,11 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             f for f in df_para_fnt["Fonte_Relacao"].unique() if f != "NÃO INFORMADA"
         ]) if not df_para_fnt.empty else []
 
+        df_para_mrc = filtrar_df_nl(df_base, ign_mrc=True)
+        marcadores_fonte = sorted([
+            m for m in df_para_mrc["Marcador_Fonte_Relacao"].unique() if m != "NÃO INFORMADO"
+        ]) if not df_para_mrc.empty else []
+
         df_para_obj = filtrar_df_nl(df_base, ign_obj=True)
         objetos = sorted([
             o for o in df_para_obj["Objeto_Relacao"].unique() if o != "NÃO INFORMADO"
@@ -5171,6 +5224,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         grupos_validos_nl = [g for g in st.session_state["mem_nl_grupo"] if g in opcoes_grp_nl]
         validos_c_nl = [c for c in st.session_state["mem_nl_credores"] if c in credores]
         validas_f_nl = [f for f in st.session_state["mem_nl_fonte"] if f in fontes]
+        validos_mrc_nl = [m for m in st.session_state["mem_nl_marcador_fonte"] if m in marcadores_fonte]
         validos_obj_nl = [o for o in st.session_state["mem_nl_objetos"] if o in objetos]
         status_aplicado_nl = (
             st.session_state["mem_nl_status"]
@@ -5203,6 +5257,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["mem_nl_status"] = "Todos"
             st.session_state["mem_nl_credores"] = []
             st.session_state["mem_nl_fonte"] = []
+            st.session_state["mem_nl_marcador_fonte"] = []
             st.session_state["mem_nl_objetos"] = []
             st.session_state["w_nl_tipo_periodo"] = "Por Mês de Competência"
             st.session_state["w_nl_comps"] = []
@@ -5212,6 +5267,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["w_nl_status"] = "Todos"
             st.session_state["w_nl_credores"] = []
             st.session_state["w_nl_fonte"] = []
+            st.session_state["w_nl_marcador_fonte"] = []
             st.session_state["w_nl_objetos"] = []
 
         # O seletor de período fica fora do formulário para redesenhar os
@@ -5290,6 +5346,15 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             )
 
             st.divider()
+            marcador_fonte_sel = st.multiselect(
+                "Filtrar por Marcador de Fonte:",
+                options=marcadores_fonte,
+                default=validos_mrc_nl,
+                placeholder="Todos os marcadores (Exibe tudo)",
+                key="w_nl_marcador_fonte",
+            )
+
+            st.divider()
             objeto_sel = st.multiselect(
                 "Filtrar por Objeto de Despesa:",
                 options=objetos,
@@ -5322,6 +5387,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 st.session_state["mem_nl_status"] = status_sel
                 st.session_state["mem_nl_credores"] = list(credor_sel)
                 st.session_state["mem_nl_fonte"] = list(fontes_selecionadas_nl)
+                st.session_state["mem_nl_marcador_fonte"] = list(marcador_fonte_sel)
                 st.session_state["mem_nl_objetos"] = list(objeto_sel)
                 st.rerun()
 
