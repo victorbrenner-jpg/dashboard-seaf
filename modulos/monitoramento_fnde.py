@@ -84,7 +84,7 @@ def _nome_produto(material: object) -> str | None:
     return (partes[-1] if len(partes) == 2 else texto).strip().upper()
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _carregar_pagamentos() -> pd.DataFrame:
     dados = pd.read_csv(URL_BASE_PAGAMENTOS)
     dados.columns = [str(coluna).strip() for coluna in dados.columns]
@@ -110,7 +110,7 @@ def _carregar_pagamentos() -> pd.DataFrame:
     return base
 
 
-@st.cache_data(ttl=300, show_spinner=False)
+@st.cache_data(ttl=60, show_spinner=False)
 def _carregar_produtos(pagamentos: pd.DataFrame) -> pd.DataFrame:
     """Vincula cada produto ao mês efetivo da OB, sem exibir a rastreabilidade."""
     dados = pd.read_csv(URL_BASE_PRODUTOS)
@@ -221,6 +221,20 @@ def render() -> None:
         unsafe_allow_html=True,
     )
 
+    # Atualização manual das duas fontes: pagamentos e produtos.
+    coluna_atualizacao, _ = st.columns([1, 4])
+    with coluna_atualizacao:
+        if st.button(
+            "↻ Atualizar dados",
+            key="fnde_atualizar_dados",
+            use_container_width=True,
+            help="Busca novamente os pagamentos e os produtos nas planilhas de origem.",
+        ):
+            _carregar_pagamentos.clear()
+            _carregar_produtos.clear()
+            st.rerun()
+    st.caption("Atualização automática do cache: até 1 minuto. Use “Atualizar dados” para buscar as planilhas imediatamente.")
+
     try:
         pagamentos = _carregar_pagamentos()
         # A memória do Streamlit pode conter a identificação anterior. A troca
@@ -233,6 +247,7 @@ def render() -> None:
         st.caption(f"Detalhe técnico: {erro}")
         if st.button("Atualizar conexão", key="fnde_atualizar_conexao"):
             _carregar_pagamentos.clear()
+            _carregar_produtos.clear()
             st.rerun()
         return
 
