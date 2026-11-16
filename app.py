@@ -1448,6 +1448,9 @@ def ler_csv_url(url):
 # -------------------------------------------------------------------------
 LINK_NL_DOCUMENTOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWnQkc7oF-YdXKoVTiYeUPYDHGzaeQaiEGqX6fNmB29mkzcd1kAvZVMujFDf02y7j1X8UJzqglAzTL/pub?gid=1892412645&single=true&output=csv"
 LINK_NL_RELACOES = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTDHDK6dPnS9favMwwkNSLYZ5i9yjQrJjCEGxpifdQfD9_8dAsHSVlc8TECEyKJi0hWy3Wi5gEM_tI0/pub?gid=1866981074&single=true&output=csv"
+# Base consolidada do QLIKVIEW: reúne 2026 e histórico de 2025.
+# Na aba BASE_TRATADA: coluna B = Marcador de Fonte; coluna H = NE.
+LINK_NL_MARCADORES = "https://docs.google.com/spreadsheets/d/1GSTLlbN1rOYJfI3AMWIODyxy53LbjiMEfoyKFnV7R_0/gviz/tq?tqx=out:csv&sheet=BASE_TRATADA"
 
 # Planilha exclusiva da priorização. A base de NL permanece somente para leitura.
 URL_API_PRIORIZACAO = "https://script.google.com/macros/s/AKfycbxJn-8aq4QgZTYj7QuJg8qgAkZOt3_88hq68UG832QUj-o22wKbmbNEGm5WsxocU9NQ/exec"
@@ -3519,6 +3522,17 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.error(f"Erro no carregamento das planilhas: {e}")
             return pd.DataFrame()
 
+        # A base tratada do QLIKVIEW é consultada separadamente para que uma
+        # indisponibilidade temporária dela não interrompa o carregamento das NLs.
+        try:
+            df_marcadores = ler_csv_url(LINK_NL_MARCADORES)
+        except Exception as e:
+            df_marcadores = pd.DataFrame()
+            st.warning(
+                "Não foi possível carregar a BASE_TRATADA do QLIKVIEW para "
+                f"identificar os marcadores de fonte: {e}"
+            )
+
         if df1.empty:
             return df1
 
@@ -3640,6 +3654,61 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             ],
             on="NE_Chave",
             how="left",
+        )
+
+        # Relaciona o Marcador de Fonte pela NE, usando a BASE_TRATADA:
+        # coluna H (índice 7) = NE e coluna B (índice 1) = Marcador de Fonte.
+        if not df_marcadores.empty and df_marcadores.shape[1] >= 8:
+            marcadores_relacao = pd.DataFrame(
+                {
+                    "NE_Chave": limpar_chave_ne(df_marcadores.iloc[:, 7]),
+                    "Marcador_Fonte_Relacao": (
+                        df_marcadores.iloc[:, 1]
+                        .fillna("")
+                        .astype(str)
+                        .str.strip()
+                    ),
+                }
+            )
+            marcadores_relacao = marcadores_relacao[
+                marcadores_relacao["NE_Chave"] != ""
+            ].copy()
+
+            # Se houver mais de uma linha para a mesma NE, usa o primeiro
+            # marcador preenchido, evitando multiplicar registros da NL.
+            marcadores_relacao = (
+                marcadores_relacao.groupby("NE_Chave", as_index=False)
+                ["Marcador_Fonte_Relacao"]
+                .agg(
+                    lambda valores: next(
+                        (
+                            valor for valor in valores
+                            if valor and valor.upper() not in {"NAN", "NONE"}
+                        ),
+                        "NÃO INFORMADO",
+                    )
+                )
+            )
+        else:
+            marcadores_relacao = pd.DataFrame(
+                columns=["NE_Chave", "Marcador_Fonte_Relacao"]
+            )
+            if not df_marcadores.empty:
+                st.warning(
+                    "A BASE_TRATADA foi carregada, mas não contém as oito "
+                    "colunas necessárias para localizar a NE na coluna H."
+                )
+
+        df_merged = pd.merge(
+            df_merged,
+            marcadores_relacao,
+            on="NE_Chave",
+            how="left",
+        )
+        df_merged["Marcador_Fonte_Relacao"] = (
+            df_merged["Marcador_Fonte_Relacao"]
+            .fillna("NÃO INFORMADO")
+            .replace("", "NÃO INFORMADO")
         )
 
         df_merged["Fonte_Relacao"] = df_merged["Fonte_Relacao"].fillna(
@@ -4791,6 +4860,15 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             renderizar_tabela_credor_dinamica(df_filtrado)
 
         with col_resumos:
+            # Primeiro: resumo financeiro por Marcador de Fonte.
+            renderizar_tabela_resumida(
+                df_filtrado,
+                "Marcador_Fonte_Relacao",
+                "MARCADOR DE FONTE",
+            )
+            st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+
+            # Mantém os resumos existentes de Fonte e Objeto.
             renderizar_tabela_resumida(df_filtrado, "Fonte_Relacao", "FONTE")
             st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
             renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
