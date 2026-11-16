@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base
+from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base, conciliacao_pd_extra
 
 
 def assinatura_exportacao(df: pd.DataFrame, *contexto: object) -> tuple:
@@ -2773,6 +2773,7 @@ opcoes_tela = [
     "Liquidação (NL)",
     "Programa de Desembolso (PD)",
     "PD Extra-Orçamentária",
+    "Conciliação PD Extra",
     "Pagamentos (OB)",
     # "Planejar Priorização",  # Temporariamente desativada na homologação.
     "Monitoramento DEA",
@@ -2828,6 +2829,7 @@ with st.container(key="topo_navegacao"):
                 "Liquidação (NL)": "📑 Liquidação (NL)",
                 "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
                 "PD Extra-Orçamentária": "📅 PD Extra-Orçamentária",
+                "Conciliação PD Extra": "🔎 Conciliação PD Extra",
                 "Monitoramento DEA": "📋 Monitoramento DEA",
                 "Monitoramento PNAE": "🏦 Monitoramento PNAE",
                 "Relatório 009717": "📊 Relatório 009717",
@@ -6532,6 +6534,9 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
                 "Fonte",
                 "Fonte",
             )
+
+elif st.session_state["tela_atual"] == "Conciliação PD Extra":
+    conciliacao_pd_extra.render()
 
 elif st.session_state["tela_atual"] == "Relatório 009717":
     # ---------------------------------------------------------------------
