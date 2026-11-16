@@ -133,6 +133,7 @@ px.line = _line_com_estatistica_mensal
 MODULOS = [
     ("📑", "Liquidação (NL)"),
     ("📅", "Programa de Desembolso (PD)"),
+    ("📅", "PD Extra-Orçamentária"),
     ("💳", "Pagamentos (OB)"),
     # Priorização permanece implementada, mas está temporariamente desativada
     # na entrada do sistema a pedido da área usuária.
