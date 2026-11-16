@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores
+from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base
 
 
 def assinatura_exportacao(df: pd.DataFrame, *contexto: object) -> tuple:
@@ -70,10 +70,12 @@ if "mem_ob_tipo_data" not in st.session_state:
     st.session_state["mem_ob_tipo_data"] = "Por Mês de Competência"
 if "mem_ob_meses" not in st.session_state:
     st.session_state["mem_ob_meses"] = []
+if "mem_ob_ano" not in st.session_state:
+    st.session_state["mem_ob_ano"] = ob_base.ano_padrao()
 if "mem_ob_dt_ini" not in st.session_state:
-    st.session_state["mem_ob_dt_ini"] = datetime.date(2026, 1, 1)
+    st.session_state["mem_ob_dt_ini"] = datetime.date(st.session_state["mem_ob_ano"], 1, 1)
 if "mem_ob_dt_fim" not in st.session_state:
-    st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
+    st.session_state["mem_ob_dt_fim"] = datetime.date(st.session_state["mem_ob_ano"], 12, 31)
 if "mem_ob_despesa" not in st.session_state:
     st.session_state["mem_ob_despesa"] = []
 elif isinstance(st.session_state["mem_ob_despesa"], str):
@@ -2433,9 +2435,9 @@ def carregar_base_nl_espelho_planejamento():
 @st.cache_data(ttl=300)
 def carregar_historico_ob_fonte_500():
     """Histórico pago da mesma BASE consolidada exibida no painel de OB."""
-    link_base_ob = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/pub?gid=1786485134&single=true&output=csv"
+    # Histórico de 2026: vem do banco local (ou da planilha, enquanto o banco não existir).
     try:
-        df = ler_csv_url(link_base_ob)
+        df = ob_base.carregar_base_ob(2026)
     except Exception:
         return pd.DataFrame()
     if df.empty:
@@ -2980,13 +2982,12 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             return False
 
     @st.cache_data(ttl=60)
-    def carregar_dados_auditoria():
-        # Aba BASE: consolidado da BASE_HISTORICA com o mês atual tratado.
-        LINK_PUBLICADO = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/pub?gid=1786485134&single=true&output=csv"
+    def carregar_dados_auditoria(ano):
+        # 2026: banco local (dados/ob_2026.db). 2027: aba BASE da planilha Google.
         try:
-            df = ler_csv_url(LINK_PUBLICADO)
+            df = ob_base.carregar_base_ob(ano)
         except Exception as e:
-            st.error(f"Erro ao conectar com a aba 'BASE' do Google Sheets: {e}")
+            st.error(f"Erro ao carregar a base de OB de {ano}: {e}")
             return pd.DataFrame()
 
         if df.empty:
@@ -3149,20 +3150,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                 .astype(str)
                 .str.zfill(2)
             )
-            mapa_meses = {
-                "01": "Jan/2026",
-                "02": "Fev/2026",
-                "03": "Mar/2026",
-                "04": "Abr/2026",
-                "05": "Mai/2026",
-                "06": "Jun/2026",
-                "07": "Jul/2026",
-                "08": "Ago/2026",
-                "09": "Set/2026",
-                "10": "Out/2026",
-                "11": "Nov/2026",
-                "12": "Dez/2026",
-            }
+            mapa_meses = ob_base.mapa_meses(ano)
             df["Mes_Extenso"] = (
                 df["Mes_Num"].map(mapa_meses).fillna("Não Identificado")
             )
@@ -3215,28 +3203,38 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
 
         return df
 
+    # --- ANO DO EXERCÍCIO ---
+    # Fica fora do formulário: trocar o ano recarrega a base e zera os filtros
+    # que dependem do período (meses e datas do outro exercício).
+    def trocar_ano_ob():
+        ano_novo = st.session_state["w_ob_ano"]
+        st.session_state["mem_ob_ano"] = ano_novo
+        st.session_state["mem_ob_tipo_data"] = "Por Mês de Competência"
+        st.session_state["mem_ob_meses"] = []
+        st.session_state["mem_ob_dt_ini"] = datetime.date(ano_novo, 1, 1)
+        st.session_state["mem_ob_dt_fim"] = datetime.date(ano_novo, 12, 31)
+        for chave in ["mem_ob_despesa", "mem_ob_grupos", "mem_ob_tipo_item",
+                      "mem_ob_credores", "mem_ob_fontes", "mem_ob_marcadores_fonte",
+                      "mem_ob_objetos"]:
+            st.session_state[chave] = []
+        st.session_state["versao_filtros_ob"] = st.session_state.get("versao_filtros_ob", 0) + 1
+
+    st.sidebar.markdown("#### 🎯 Filtros — Pagamentos (OB)")
+    ano_ob = st.sidebar.selectbox(
+        "Ano do Exercício:",
+        options=list(ob_base.ANOS_OB),
+        index=list(ob_base.ANOS_OB).index(st.session_state["mem_ob_ano"]),
+        key="w_ob_ano",
+        on_change=trocar_ano_ob,
+    )
+
     try:
-        df_base = carregar_dados_auditoria()
+        df_base = carregar_dados_auditoria(ano_ob)
     except Exception as e:
         st.error(f"Erro ao carregar colunas do banco: {e}")
         st.stop()
 
-    ordem_meses_ano = [
-        "Jan/2026",
-        "Fev/2026",
-        "Mar/2026",
-        "Abr/2026",
-        "Mai/2026",
-        "Jun/2026",
-        "Jul/2026",
-        "Ago/2026",
-        "Set/2026",
-        "Out/2026",
-        "Nov/2026",
-        "Dez/2026",
-    ]
-
-    st.sidebar.markdown("#### 🎯 Filtros — Pagamentos (OB)")
+    ordem_meses_ano = ob_base.ordem_meses(ano_ob)
 
     coluna_data = "Data Emissão"
     coluna_objeto = "OBJETO"
@@ -3404,8 +3402,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
     def limpar_filtros_ob():
         st.session_state["mem_ob_tipo_data"] = "Por Mês de Competência"
         st.session_state["mem_ob_meses"] = []
-        st.session_state["mem_ob_dt_ini"] = datetime.date(2026, 1, 1)
-        st.session_state["mem_ob_dt_fim"] = datetime.date(2026, 12, 31)
+        st.session_state["mem_ob_dt_ini"] = datetime.date(ano_ob, 1, 1)
+        st.session_state["mem_ob_dt_fim"] = datetime.date(ano_ob, 12, 31)
         st.session_state["mem_ob_despesa"] = []
         st.session_state["mem_ob_grupos"] = []
         st.session_state["mem_ob_tipo_item"] = []
@@ -3446,11 +3444,11 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
                 datas_convertidas = pd.to_datetime(
                     df_base[coluna_data], format="mixed", dayfirst=True, errors="coerce"
                 ).dt.date.dropna()
-                data_min = datas_convertidas.min() if not datas_convertidas.empty else datetime.date(2026, 1, 1)
-                data_max = datas_convertidas.max() if not datas_convertidas.empty else datetime.date(2026, 12, 31)
+                data_min = datas_convertidas.min() if not datas_convertidas.empty else datetime.date(ano_ob, 1, 1)
+                data_max = datas_convertidas.max() if not datas_convertidas.empty else datetime.date(ano_ob, 12, 31)
             else:
-                data_min = datetime.date(2026, 1, 1)
-                data_max = datetime.date(2026, 12, 31)
+                data_min = datetime.date(ano_ob, 1, 1)
+                data_max = datetime.date(ano_ob, 12, 31)
 
             val_ini = st.session_state["mem_ob_dt_ini"] or data_min
             val_fim = st.session_state["mem_ob_dt_fim"] or data_max
@@ -3604,7 +3602,7 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     # CABEÇALHO TELA 1
     st.markdown(
-        "<h2 class='titulo-pagina'>📊 Painel de Controle de Pagamentos — Exercício 2026</h2>",
+        f"<h2 class='titulo-pagina'>📊 Painel de Controle de Pagamentos — Exercício {ano_ob}</h2>",
         unsafe_allow_html=True,
     )
     st.markdown(
