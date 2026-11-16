@@ -2772,6 +2772,7 @@ opcoes_tela = [
     "Início",
     "Liquidação (NL)",
     "Programa de Desembolso (PD)",
+    "PD Extra-Orçamentária",
     "Pagamentos (OB)",
     # "Planejar Priorização",  # Temporariamente desativada na homologação.
     "Monitoramento DEA",
@@ -2826,6 +2827,7 @@ with st.container(key="topo_navegacao"):
                 "Pagamentos (OB)": "💳 Pagamentos (OB)",
                 "Liquidação (NL)": "📑 Liquidação (NL)",
                 "Programa de Desembolso (PD)": "📅 Programa de Desembolso (PD)",
+                "PD Extra-Orçamentária": "📅 PD Extra-Orçamentária",
                 "Monitoramento DEA": "📋 Monitoramento DEA",
                 "Monitoramento PNAE": "🏦 Monitoramento PNAE",
                 "Relatório 009717": "📊 Relatório 009717",
@@ -6072,6 +6074,461 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
             st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
             renderizar_tabela_resumo_pd(
                 resumo_pd("Fonte", "Fonte"),
+                "Fonte",
+                "Fonte",
+            )
+
+elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
+    # ---------------------------------------------------------------------
+    # TELA PD — PD Extra-Orçamentária
+    # ---------------------------------------------------------------------
+    st.markdown(
+        "<h2 class='titulo-pagina'>📅 PD Extra-Orçamentária — Exercício 2026</h2>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='subtitulo-pagina'>Secretaria Executiva de Administração e Finanças (SEAF)</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown(
+        "<p class='subtitulo-pagina'>Gerência Financeira (GFIN)</p>",
+        unsafe_allow_html=True,
+    )
+    st.markdown("---")
+    _, coluna_relatorio_pd = st.columns([5, 1])
+    with coluna_relatorio_pd:
+        botao_relatorio_pd_extra_extra = st.empty()
+
+    dados_pd_extra, erro_pd_extra = carregar_dados_pd()
+    if not dados_pd_extra.empty and "Tipo de PD" in dados_pd_extra.columns:
+        tipo_pd_extra_normalizado = (
+            dados_pd_extra["Tipo de PD"]
+            .fillna("")
+            .astype(str)
+            .map(
+                lambda valor: "".join(
+                    caractere
+                    for caractere in unicodedata.normalize("NFKD", valor)
+                    if not unicodedata.combining(caractere)
+                )
+            )
+            .str.upper()
+        )
+        dados_pd_extra = dados_pd_extra[
+            tipo_pd_extra_normalizado.str.contains("EXTRA", regex=False)
+        ].copy()
+    elif not dados_pd_extra.empty:
+        erro_pd_extra = (
+            "A base PD_ABA_TRATADA não possui a coluna Tipo de PD, necessária "
+            "para separar os registros extra-orçamentários."
+        )
+        dados_pd_extra = pd.DataFrame()
+
+    if erro_pd_extra:
+        st.error(
+            "Não foi possível carregar a base de PD. "
+            "Confirme que a aba PD_ABA_TRATADA está publicada na web como CSV "
+            "ou liberada para leitura pública. Detalhe técnico: " + erro_pd_extra
+        )
+    elif dados_pd_extra.empty:
+        st.info("Ainda não há PDs tratados para os filtros selecionados.")
+    else:
+        st.sidebar.markdown("#### 📅 Filtros — PD Extra-Orçamentária")
+
+        # Competência da PD: mesmo padrão usado na tela de NL.
+        dados_pd_extra = dados_pd_extra.copy()
+        dados_pd_extra["Competencia"] = pd.to_datetime(
+            dados_pd_extra["Data Emissão"], errors="coerce"
+        ).dt.strftime("%m/%Y")
+
+        if "mem_pd_extra_tipo_periodo" not in st.session_state:
+            st.session_state["mem_pd_extra_tipo_periodo"] = "Por Mês de Competência"
+        if "mem_pd_extra_comps" not in st.session_state:
+            st.session_state["mem_pd_extra_comps"] = []
+        if "mem_pd_extra_dt_ini" not in st.session_state:
+            periodo_anterior_pd_extra = st.session_state.get("mem_pd_extra_periodo")
+            st.session_state["mem_pd_extra_dt_ini"] = (
+                periodo_anterior_pd_extra[0]
+                if isinstance(periodo_anterior_pd_extra, (tuple, list))
+                and len(periodo_anterior_pd_extra) == 2
+                else None
+            )
+        if "mem_pd_extra_dt_fim" not in st.session_state:
+            periodo_anterior_pd_extra = st.session_state.get("mem_pd_extra_periodo")
+            st.session_state["mem_pd_extra_dt_fim"] = (
+                periodo_anterior_pd_extra[1]
+                if isinstance(periodo_anterior_pd_extra, (tuple, list))
+                and len(periodo_anterior_pd_extra) == 2
+                else None
+            )
+
+        def opcoes_pd_extra(df, coluna):
+            return sorted(
+                valor for valor in df[coluna].dropna().astype(str).unique()
+                if valor and valor.upper() != "NÃO INFORMADO"
+            )
+
+        def filtrar_df_pd_extra(
+            df,
+            ign_per=False,
+            ign_ug=False,
+            ign_fonte=False,
+            ign_gd=False,
+            ign_despesa=False,
+            ign_objeto=False,
+            ign_credor=False,
+            ign_status=False,
+        ):
+            d = df.copy()
+            if d.empty:
+                return d
+
+            if not ign_per:
+                if st.session_state["mem_pd_extra_tipo_periodo"] == "Por Mês de Competência":
+                    competencias_pd = st.session_state.get("mem_pd_extra_comps", [])
+                    if competencias_pd:
+                        d = d[d["Competencia"].astype(str).isin(competencias_pd)]
+                else:
+                    inicio_pd = st.session_state.get("mem_pd_extra_dt_ini")
+                    fim_pd = st.session_state.get("mem_pd_extra_dt_fim")
+                    if inicio_pd and fim_pd:
+                        inicio_ts_pd_extra = pd.Timestamp(inicio_pd).normalize()
+                        fim_ts_pd_extra = pd.Timestamp(fim_pd).normalize()
+                        if inicio_ts_pd_extra <= fim_ts_pd_extra:
+                            datas_pd_extra = pd.to_datetime(
+                                d["Data Emissão"], errors="coerce"
+                            ).dt.normalize()
+                            d = d[
+                                (datas_pd_extra >= inicio_ts_pd_extra)
+                                & (datas_pd_extra <= fim_ts_pd_extra)
+                            ]
+
+            filtros_pd_extra = [
+                ("UG Pagadora", "mem_pd_extra_ug", ign_ug),
+                ("Fonte", "mem_pd_extra_fonte", ign_fonte),
+                ("GD", "mem_pd_extra_gd", ign_gd),
+                ("Despesa", "mem_pd_extra_despesa", ign_despesa),
+                ("Objeto da Despesa", "mem_pd_extra_objeto", ign_objeto),
+                ("Nome do Credor", "mem_pd_extra_credor", ign_credor),
+                ("Status", "mem_pd_extra_status", ign_status),
+            ]
+            for coluna_pd_extra, chave_pd_extra, ignorar_pd_extra in filtros_pd_extra:
+                selecionados_pd_extra = st.session_state.get(chave_pd_extra, [])
+                if not ignorar_pd_extra and selecionados_pd_extra:
+                    d = d[d[coluna_pd_extra].astype(str).isin(selecionados_pd_extra)]
+            return d
+
+        def exibir_competencia_pd_extra_extra(competencia):
+            data_competencia_pd_extra = pd.to_datetime(
+                f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
+            )
+            if pd.isna(data_competencia_pd_extra):
+                return competencia
+            nomes_meses_pd_extra = [
+                "Jan", "Fev", "Mar", "Abr", "Mai", "Jun",
+                "Jul", "Ago", "Set", "Out", "Nov", "Dez",
+            ]
+            return f"{nomes_meses_pd_extra[data_competencia_pd_extra.month - 1]}/{data_competencia_pd_extra.year}"
+
+        # Somente meses realmente existentes na base, respeitando os demais filtros.
+        df_para_per_pd = filtrar_df_pd_extra(dados_pd_extra, ign_per=True)
+        comps_unicas_pd_extra = (
+            df_para_per_pd["Competencia"].dropna().astype(str).unique()
+            if not df_para_per_pd.empty else []
+        )
+        comps_pd_extra = sorted(
+            [
+                competencia_pd_extra for competencia_pd_extra in comps_unicas_pd_extra
+                if competencia_pd_extra.strip() not in ["Não informada", "nan", "None", ""]
+            ],
+            key=lambda competencia_pd_extra: pd.to_datetime(
+                f"01/{competencia_pd_extra}", format="%d/%m/%Y", errors="coerce"
+            ),
+        )
+        validos_comp_pd = [
+            competencia_pd_extra
+            for competencia_pd_extra in st.session_state.get("mem_pd_extra_comps", [])
+            if competencia_pd_extra in comps_pd_extra
+        ]
+
+        datas_pd_extra_validas_extra = pd.to_datetime(
+            dados_pd_extra["Data Emissão"], errors="coerce"
+        ).dropna()
+        data_min_pd_extra = (
+            datas_pd_extra_validas_extra.min().date()
+            if not datas_pd_extra_validas_extra.empty else datetime.date(2026, 1, 1)
+        )
+        data_max_pd_extra = (
+            datas_pd_extra_validas_extra.max().date()
+            if not datas_pd_extra_validas_extra.empty else datetime.date(2026, 12, 31)
+        )
+
+        def ajustar_data_pd_extra(valor, padrao):
+            data_pd = pd.to_datetime(valor, errors="coerce")
+            if pd.isna(data_pd):
+                return padrao
+            data_pd = data_pd.date()
+            return min(max(data_pd, data_min_pd_extra), data_max_pd_extra)
+
+        data_ini_padrao_pd_extra = ajustar_data_pd_extra(
+            st.session_state.get("mem_pd_extra_dt_ini"), data_min_pd_extra
+        )
+        data_fim_padrao_pd_extra = ajustar_data_pd_extra(
+            st.session_state.get("mem_pd_extra_dt_fim"), data_max_pd_extra
+        )
+        if data_ini_padrao_pd_extra > data_fim_padrao_pd_extra:
+            data_ini_padrao_pd_extra, data_fim_padrao_pd_extra = data_min_pd_extra, data_max_pd_extra
+
+        opcoes_ug_pd_extra = opcoes_pd_extra(filtrar_df_pd_extra(dados_pd_extra, ign_ug=True), "UG Pagadora")
+        opcoes_fonte_pd_extra = opcoes_pd_extra(filtrar_df_pd_extra(dados_pd_extra, ign_fonte=True), "Fonte")
+        opcoes_gd_pd_extra = opcoes_pd_extra(filtrar_df_pd_extra(dados_pd_extra, ign_gd=True), "GD")
+        opcoes_despesa_pd_extra = opcoes_pd_extra(filtrar_df_pd_extra(dados_pd_extra, ign_despesa=True), "Despesa")
+        opcoes_objeto_pd_extra = opcoes_pd_extra(filtrar_df_pd_extra(dados_pd_extra, ign_objeto=True), "Objeto da Despesa")
+        opcoes_credor_pd_extra = opcoes_pd_extra(filtrar_df_pd_extra(dados_pd_extra, ign_credor=True), "Nome do Credor")
+        opcoes_status_pd_extra = opcoes_pd_extra(filtrar_df_pd_extra(dados_pd_extra, ign_status=True), "Status")
+
+        def validos_pd(chave, opcoes):
+            return [v for v in st.session_state.get(chave, []) if v in opcoes]
+
+        def limpar_filtros_pd_extra_extra():
+            st.session_state["mem_pd_extra_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["mem_pd_extra_comps"] = []
+            st.session_state["mem_pd_extra_periodo"] = None
+            st.session_state["mem_pd_extra_dt_ini"] = None
+            st.session_state["mem_pd_extra_dt_fim"] = None
+            st.session_state["mem_pd_extra_ug"] = []
+            st.session_state["mem_pd_extra_fonte"] = []
+            st.session_state["mem_pd_extra_gd"] = []
+            st.session_state["mem_pd_extra_despesa"] = []
+            st.session_state["mem_pd_extra_objeto"] = []
+            st.session_state["mem_pd_extra_credor"] = []
+            st.session_state["mem_pd_extra_status"] = []
+            st.session_state["w_pd_extra_tipo_periodo"] = "Por Mês de Competência"
+            st.session_state["w_pd_extra_comps"] = []
+            st.session_state["w_pd_extra_dt_ini"] = data_min_pd_extra
+            st.session_state["w_pd_extra_dt_fim"] = data_max_pd_extra
+            st.session_state["filtro_pd_extra_ug"] = []
+            st.session_state["filtro_pd_extra_fonte"] = []
+            st.session_state["filtro_pd_extra_gd"] = []
+            st.session_state["filtro_pd_extra_despesa"] = []
+            st.session_state["filtro_pd_extra_objeto"] = []
+            st.session_state["filtro_pd_extra_credor"] = []
+            st.session_state["filtro_pd_extra_status"] = []
+
+        if "w_pd_extra_tipo_periodo" not in st.session_state:
+            st.session_state["w_pd_extra_tipo_periodo"] = st.session_state["mem_pd_extra_tipo_periodo"]
+
+        tipo_periodo_pd_extra = st.sidebar.radio(
+            "Como deseja filtrar o período?",
+            options=["Por Mês de Competência", "Por Intervalo de Datas"],
+            key="w_pd_extra_tipo_periodo",
+        )
+
+        with st.sidebar.form("form_filtros_pd_extra_extra", border=False):
+            comp_sel_pd_extra = list(validos_comp_pd)
+            data_inicio_pd_extra = data_ini_padrao_pd_extra
+            data_fim_pd_extra = data_fim_padrao_pd_extra
+
+            if tipo_periodo_pd_extra == "Por Mês de Competência":
+                comp_sel_pd_extra = st.multiselect(
+                    "Filtrar Período de Competência:",
+                    options=comps_pd_extra,
+                    default=validos_comp_pd,
+                    format_func=exibir_competencia_pd_extra_extra,
+                    placeholder="Selecione as opções",
+                    key="w_pd_extra_comps",
+                )
+            else:
+                col_ini_pd_extra, col_fim_pd_extra = st.columns(2)
+                with col_ini_pd_extra:
+                    data_inicio_pd_extra = st.date_input(
+                        "Data Inicial:",
+                        value=data_ini_padrao_pd_extra,
+                        min_value=data_min_pd_extra,
+                        max_value=data_max_pd_extra,
+                        format="DD/MM/YYYY",
+                        key="w_pd_extra_dt_ini",
+                    )
+                with col_fim_pd_extra:
+                    data_fim_pd_extra = st.date_input(
+                        "Data Final:",
+                        value=data_fim_padrao_pd_extra,
+                        min_value=data_min_pd_extra,
+                        max_value=data_max_pd_extra,
+                        format="DD/MM/YYYY",
+                        key="w_pd_extra_dt_fim",
+                    )
+
+            filtro_ug_pd_extra = st.multiselect(
+                "UG pagadora", opcoes_ug_pd_extra,
+                default=validos_pd("mem_pd_extra_ug", opcoes_ug_pd_extra), key="filtro_pd_extra_ug",
+            )
+            filtro_fonte_pd_extra = st.multiselect(
+                "Fonte de recurso", opcoes_fonte_pd_extra,
+                default=validos_pd("mem_pd_extra_fonte", opcoes_fonte_pd_extra), key="filtro_pd_extra_fonte",
+            )
+            filtro_gd_pd_extra = st.multiselect(
+                "GD", opcoes_gd_pd_extra,
+                default=validos_pd("mem_pd_extra_gd", opcoes_gd_pd_extra), key="filtro_pd_extra_gd",
+            )
+            filtro_despesa_pd_extra = st.multiselect(
+                "Natureza da despesa", opcoes_despesa_pd_extra,
+                default=validos_pd("mem_pd_extra_despesa", opcoes_despesa_pd_extra), key="filtro_pd_extra_despesa",
+            )
+            filtro_objeto_pd_extra = st.multiselect(
+                "Objeto da despesa", opcoes_objeto_pd_extra,
+                default=validos_pd("mem_pd_extra_objeto", opcoes_objeto_pd_extra), key="filtro_pd_extra_objeto",
+            )
+            filtro_credor_pd_extra = st.multiselect(
+                "Credor", opcoes_credor_pd_extra,
+                default=validos_pd("mem_pd_extra_credor", opcoes_credor_pd_extra), key="filtro_pd_extra_credor",
+            )
+            filtro_status_pd_extra = st.multiselect(
+                "Status", opcoes_status_pd_extra,
+                default=validos_pd("mem_pd_extra_status", opcoes_status_pd_extra), key="filtro_pd_extra_status",
+            )
+
+            col_aplicar_pd_extra_extra, col_limpar_pd_extra_extra = st.columns(2, gap="small")
+            with col_aplicar_pd_extra_extra:
+                aplicar_pd_extra = st.form_submit_button(
+                    "✅ Aplicar filtros", use_container_width=True, type="primary"
+                )
+            with col_limpar_pd_extra_extra:
+                limpar_pd_extra = st.form_submit_button(
+                    "🧹 Limpar filtros", use_container_width=True,
+                    on_click=limpar_filtros_pd_extra_extra,
+                )
+
+        if aplicar_pd_extra:
+            if tipo_periodo_pd_extra == "Por Intervalo de Datas" and data_inicio_pd_extra > data_fim_pd_extra:
+                st.sidebar.error("A data inicial deve ser anterior ou igual à data final.")
+                st.stop()
+
+            st.session_state["mem_pd_extra_tipo_periodo"] = tipo_periodo_pd_extra
+            st.session_state["mem_pd_extra_comps"] = list(comp_sel_pd_extra)
+            st.session_state["mem_pd_extra_dt_ini"] = data_inicio_pd_extra
+            st.session_state["mem_pd_extra_dt_fim"] = data_fim_pd_extra
+            st.session_state["mem_pd_extra_periodo"] = (
+                (data_inicio_pd_extra, data_fim_pd_extra)
+                if tipo_periodo_pd_extra == "Por Intervalo de Datas" else None
+            )
+            st.session_state["mem_pd_extra_ug"] = list(filtro_ug_pd_extra)
+            st.session_state["mem_pd_extra_fonte"] = list(filtro_fonte_pd_extra)
+            st.session_state["mem_pd_extra_gd"] = list(filtro_gd_pd_extra)
+            st.session_state["mem_pd_extra_despesa"] = list(filtro_despesa_pd_extra)
+            st.session_state["mem_pd_extra_objeto"] = list(filtro_objeto_pd_extra)
+            st.session_state["mem_pd_extra_credor"] = list(filtro_credor_pd_extra)
+            st.session_state["mem_pd_extra_status"] = list(filtro_status_pd_extra)
+            st.rerun()
+
+        filtrado_pd_extra = filtrar_df_pd_extra(dados_pd_extra)
+
+        if st.sidebar.button("🔄 Atualizar dados de PD", key="atualizar_pd_extra"):
+            carregar_dados_pd_extra.clear()
+            st.rerun()
+
+        @st.dialog("Gerar Relatório de PD Extra-Orçamentária")
+        def janela_relatorio_pd_extra_extra():
+            st.caption(
+                "Escolha o GD e a fonte para o arquivo. Os demais filtros "
+                "selecionados nesta tela serão mantidos."
+            )
+            opcoes_gd_relatorio_extra = opcoes_pd_extra(filtrado_pd_extra, "GD")
+            grupos_relatorio_pd_extra_extra = st.multiselect(
+                "GD (vazio = todos)",
+                opcoes_gd_relatorio_extra,
+                key="relatorio_pd_extra_grupos",
+            )
+            base_fontes_relatorio_pd_extra_extra_extra = filtrado_pd_extra.copy()
+            if grupos_relatorio_pd_extra_extra:
+                base_fontes_relatorio_pd_extra_extra_extra = base_fontes_relatorio_pd_extra_extra_extra[
+                    base_fontes_relatorio_pd_extra_extra_extra["GD"].isin(grupos_relatorio_pd_extra_extra)
+                ]
+            fontes_relatorio_pd_extra_extra = st.multiselect(
+                "Fonte de recurso (vazio = todas)",
+                opcoes_pd_extra(base_fontes_relatorio_pd_extra_extra_extra, "Fonte"),
+                key="relatorio_pd_extra_fontes",
+            )
+            exportacao_pd_extra = base_fontes_relatorio_pd_extra_extra_extra.copy()
+            if fontes_relatorio_pd_extra_extra:
+                exportacao_pd_extra = exportacao_pd_extra[
+                    exportacao_pd_extra["Fonte"].isin(fontes_relatorio_pd_extra_extra)
+                ]
+            if exportacao_pd_extra.empty:
+                st.warning("Não há PDs para os filtros escolhidos.")
+                return
+            try:
+                relatorio_pd_extra_extra_excel = gerar_relatorio_pd_extra_extra_excel(exportacao_pd_extra)
+                st.download_button(
+                    "Baixar relatório",
+                    data=relatorio_pd_extra_extra_excel,
+                    file_name=(
+                        "Relatório PD Extra-Orçamentária "
+                        f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_baixar_relatorio_pd_extra",
+                )
+            except (ModuleNotFoundError, RuntimeError, ValueError) as erro:
+                st.error(f"Não foi possível gerar o relatório de PD: {erro}")
+
+        if botao_relatorio_pd_extra_extra.button(
+            "📊 Gerar Relatório",
+            use_container_width=True,
+            key="btn_gerar_relatorio_pd_extra",
+            type="primary",
+        ):
+            janela_relatorio_pd_extra_extra()
+
+        qtd_pds_extra = len(filtrado_pd_extra)
+        valor_pd_extra = float(filtrado_pd_extra["Valor"].sum())
+        valor_gd3_pd_extra = float(filtrado_pd_extra.loc[filtrado_pd_extra["GD"] == "GD3", "Valor"].sum())
+        valor_gd4_pd_extra = float(filtrado_pd_extra.loc[filtrado_pd_extra["GD"] == "GD4", "Valor"].sum())
+        kpi1_extra, kpi2_extra, kpi3_extra, kpi4_extra = st.columns(4)
+        with kpi1_extra:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>QTD. DE PDs</p><h3 style='color:#002b49; margin:5px 0;'>{qtd_pds_extra:,}</h3><p style='color:#28a745; font-size:11px; margin:0;'>📋 Documentos PD</p></div>".replace(",", "."),
+                unsafe_allow_html=True,
+            )
+        with kpi2_extra:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL</p><h3 style='color:#028090; margin:5px 0;'>{formatar_brl(valor_pd_extra)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Total programado</p></div>",
+                unsafe_allow_html=True,
+            )
+        with kpi3_extra:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD3</p><h3 style='color:#f77f00; margin:5px 0;'>{formatar_brl(valor_gd3_pd_extra)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD3</p></div>",
+                unsafe_allow_html=True,
+            )
+        with kpi4_extra:
+            st.markdown(
+                f"<div class='metric-card'><p style='color:#6c757d; font-size:11px; font-weight:bold; margin:0;'>VALOR TOTAL GD4</p><h3 style='color:#2563eb; margin:5px 0;'>{formatar_brl(valor_gd4_pd_extra)}</h3><p style='color:#6c757d; font-size:11px; margin:0;'>Grupo GD4</p></div>",
+                unsafe_allow_html=True,
+            )
+        st.markdown("<br>", unsafe_allow_html=True)
+
+        def resumo_pd_extra(coluna, titulo, limite=10):
+            resumo = (
+                filtrado_pd_extra.groupby(coluna, dropna=False, as_index=False)["Valor"].sum()
+                .sort_values("Valor", ascending=False)
+                .head(limite)
+            )
+            resumo.columns = [titulo, "Valor total"]
+            return resumo
+
+        coluna_credor_pd_extra, coluna_resumos_pd_extra = st.columns([1.25, 0.75])
+        with coluna_credor_pd_extra:
+            renderizar_tabela_credor_pd(filtrado_pd_extra)
+        with coluna_resumos_pd_extra:
+            renderizar_tabela_resumo_pd_extra(
+                resumo_pd_extra("UG Pagadora", "UG pagadora"),
+                "UG pagadora",
+                "UG pagadora",
+            )
+            st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+            renderizar_tabela_resumo_pd_extra(
+                resumo_pd_extra("Fonte", "Fonte"),
                 "Fonte",
                 "Fonte",
             )
