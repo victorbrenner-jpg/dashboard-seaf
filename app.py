@@ -1971,6 +1971,9 @@ def ler_csv_url(url):
 # -------------------------------------------------------------------------
 LINK_NL_DOCUMENTOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWnQkc7oF-YdXKoVTiYeUPYDHGzaeQaiEGqX6fNmB29mkzcd1kAvZVMujFDf02y7j1X8UJzqglAzTL/pub?gid=1892412645&single=true&output=csv"
 LINK_NL_RELACOES = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTDHDK6dPnS9favMwwkNSLYZ5i9yjQrJjCEGxpifdQfD9_8dAsHSVlc8TECEyKJi0hWy3Wi5gEM_tI0/pub?gid=1866981074&single=true&output=csv"
+# Base consolidada QLIKVIEW (2026 + histórico 2025).
+# BASE_TRATADA: coluna A = Fonte; B = Marcador de Fonte; H = NE.
+LINK_NL_MARCADORES = "https://docs.google.com/spreadsheets/d/1GSTLlbN1rOYJfI3AMWIODyxy53LbjiMEfoyKFnV7R_0/gviz/tq?tqx=out:csv&sheet=BASE_TRATADA"
 
 # Planilha exclusiva da priorização. A base de NL permanece somente para leitura.
 URL_API_PRIORIZACAO = "https://script.google.com/macros/s/AKfycbxJn-8aq4QgZTYj7QuJg8qgAkZOt3_88hq68UG832QUj-o22wKbmbNEGm5WsxocU9NQ/exec"
@@ -4218,6 +4221,17 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.error(f"Erro no carregamento das planilhas: {e}")
             return pd.DataFrame()
 
+        # Consulta a base consolidada do QLIKVIEW. Se estiver indisponível,
+        # mantém o funcionamento da tela com os marcadores das fontes atuais.
+        try:
+            df_marcadores_qlik = ler_csv_url(LINK_NL_MARCADORES)
+        except Exception as e:
+            df_marcadores_qlik = pd.DataFrame()
+            st.warning(
+                "Não foi possível carregar os marcadores da BASE_TRATADA "
+                f"do QLIKVIEW: {e}"
+            )
+
         if df1.empty:
             return df1
 
@@ -4369,13 +4383,66 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             how="left",
         )
 
-        # O Marcador de Fonte é atributo da própria NL (coluna da base de NL).
-        # A planilha de relação por NE serve apenas de reserva.
+        # Relaciona também com a BASE_TRATADA do QLIKVIEW pela NE:
+        # H = NE e B = Marcador de Fonte. Agrupa por NE para não duplicar NLs.
+        if not df_marcadores_qlik.empty and df_marcadores_qlik.shape[1] >= 8:
+            mapa_qlik = pd.DataFrame({
+                "NE_Chave": limpar_chave_ne(df_marcadores_qlik.iloc[:, 7]),
+                "Marcador_Fonte_QLIK": (
+                    df_marcadores_qlik.iloc[:, 1]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                ),
+            })
+            mapa_qlik = mapa_qlik[mapa_qlik["NE_Chave"] != ""].copy()
+            mapa_qlik = (
+                mapa_qlik.groupby("NE_Chave", as_index=False)["Marcador_Fonte_QLIK"]
+                .agg(lambda valores: next(
+                    (v for v in valores if v and v.upper() not in {"NAN", "NONE"}),
+                    ""
+                ))
+            )
+        else:
+            mapa_qlik = pd.DataFrame(
+                columns=["NE_Chave", "Marcador_Fonte_QLIK"]
+            )
+            if not df_marcadores_qlik.empty:
+                st.warning(
+                    "A BASE_TRATADA do QLIKVIEW não apresentou as oito colunas "
+                    "esperadas para localizar a NE na coluna H."
+                )
+
+        df_merged = pd.merge(
+            df_merged,
+            mapa_qlik,
+            on="NE_Chave",
+            how="left",
+        )
+
+        # Prioridade: QLIKVIEW/BASE_TRATADA; depois marcador já existente
+        # na base de NL; por último, marcador da planilha de relação.
         df_merged["Marcador_Fonte_Base2"] = (
             df_merged["Marcador_Fonte_Base2"].fillna("").astype(str).str.strip()
         )
-        df_merged["Marcador_Fonte_Relacao"] = df_merged["Marcador_Fonte_Base1"].where(
-            df_merged["Marcador_Fonte_Base1"] != "",
+        df_merged["Marcador_Fonte_QLIK"] = (
+            df_merged["Marcador_Fonte_QLIK"].fillna("").astype(str).str.strip()
+        )
+        df_merged["Marcador_Fonte_Base1"] = (
+            df_merged["Marcador_Fonte_Base1"].fillna("").astype(str).str.strip()
+        )
+
+        df_merged["Marcador_Fonte_Relacao"] = df_merged["Marcador_Fonte_QLIK"]
+        df_merged["Marcador_Fonte_Relacao"] = df_merged[
+            "Marcador_Fonte_Relacao"
+        ].where(
+            df_merged["Marcador_Fonte_Relacao"] != "",
+            df_merged["Marcador_Fonte_Base1"],
+        )
+        df_merged["Marcador_Fonte_Relacao"] = df_merged[
+            "Marcador_Fonte_Relacao"
+        ].where(
+            df_merged["Marcador_Fonte_Relacao"] != "",
             df_merged["Marcador_Fonte_Base2"],
         )
         df_merged["Marcador_Fonte_Relacao"] = (
@@ -5557,6 +5624,15 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             renderizar_tabela_credor_dinamica(df_filtrado)
 
         with col_resumos:
+            # Resumo financeiro por Marcador de Fonte, acima da Fonte.
+            renderizar_tabela_resumida(
+                df_filtrado,
+                "Marcador_Fonte_Relacao",
+                "MARCADOR DE FONTE",
+            )
+            st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+
+            # Mantém os resumos já existentes.
             renderizar_tabela_resumida(df_filtrado, "Fonte_Relacao", "FONTE")
             st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
             renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
