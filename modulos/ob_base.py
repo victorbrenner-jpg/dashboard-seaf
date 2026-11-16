@@ -1,13 +1,14 @@
 """Acesso à base de Pagamentos (OB) por Ano do Exercício.
 
 Origem dos dados:
-- Exercícios arquivados (hoje 2026): banco SQLite somente leitura em
+- Meses fechados de 2026 (jan a MES_FINAL_BANCO): banco SQLite somente leitura em
   dados/ob_2026.db, gerado por criar_banco_ob_2026.py.
-- Exercício em andamento (2027): aba BASE da planilha Google, publicada como CSV.
+- Demais meses de 2026 (nov e dez) e todo o exercício de 2027: aba BASE da
+  planilha Google, publicada como CSV, filtrada pela coluna "Ano".
 
-Regra de transição: para qualquer ano, se o banco tiver registros daquele ano
-ele é usado; caso contrário, o app lê a planilha e filtra pela coluna "Ano".
-Assim o painel continua funcionando em 2026 até o banco ser gerado.
+Regra: se o banco tiver registros do ano pedido, os meses até MES_FINAL_BANCO
+vêm dele e os meses seguintes vêm da planilha (nunca os dois para o mesmo mês,
+então não há risco de contar em dobro). Sem banco, tudo vem da planilha.
 """
 import datetime
 import io
@@ -18,6 +19,9 @@ from pathlib import Path
 import pandas as pd
 
 ANOS_OB = (2026, 2027)
+
+# Último mês de cada ano que está congelado no banco (2026: janeiro a outubro).
+MES_FINAL_BANCO = {2026: 10}
 
 LINK_BASE_OB = (
     "https://docs.google.com/spreadsheets/d/e/"
@@ -88,15 +92,39 @@ def _garantir_ano(df):
     return df
 
 
+def _meses(df):
+    """Mês (1-12) de cada linha, pela Data Emissão (dd/mm/aaaa)."""
+    if "Data Emissão" not in df.columns:
+        return pd.Series(float("nan"), index=df.index)
+    datas = pd.to_datetime(df["Data Emissão"], format="mixed", dayfirst=True, errors="coerce")
+    return datas.dt.month
+
+
+def _preparar(df):
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    return _garantir_ano(df)
+
+
 def carregar_base_ob(ano):
     """Base bruta de OB do Ano do Exercício informado (mesmas colunas da BASE)."""
     ano = int(ano)
-    df = _ler_banco(ano)
-    if df is None:
-        df = _ler_csv_publicado(LINK_BASE_OB)
-        if df.empty:
-            return df
-    df = df.loc[:, ~df.columns.duplicated()].copy()
-    df.columns = [str(c).strip() for c in df.columns]
-    df = _garantir_ano(df)
-    return df[df["Ano"] == ano].copy()
+    do_banco = _ler_banco(ano)
+    planilha = _ler_csv_publicado(LINK_BASE_OB)
+
+    if planilha.empty:
+        planilha = pd.DataFrame()
+    else:
+        planilha = _preparar(planilha)
+        planilha = planilha[planilha["Ano"] == ano].copy()
+
+    if do_banco is None:
+        return planilha
+
+    do_banco = _preparar(do_banco)
+    do_banco = do_banco[_meses(do_banco) <= MES_FINAL_BANCO.get(ano, 12)]
+    if planilha.empty:
+        return do_banco
+    # Da planilha, só o que vem depois dos meses congelados no banco.
+    planilha = planilha[_meses(planilha) > MES_FINAL_BANCO.get(ano, 12)]
+    return pd.concat([do_banco, planilha], ignore_index=True)

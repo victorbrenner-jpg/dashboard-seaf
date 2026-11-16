@@ -1,11 +1,12 @@
-"""Gera dados/ob_2026.db com os pagamentos de 2026 da aba BASE.
+"""Gera dados/ob_2026.db com os pagamentos de janeiro a outubro de 2026 da aba BASE.
 
 Uso (PowerShell, na pasta do repositório):
     python criar_banco_ob_2026.py                       # baixa a BASE publicada
     python criar_banco_ob_2026.py caminho\\BASE.csv      # ou usa um CSV baixado
 
-Rode somente depois de fechar o último mês de 2026. O banco é somente leitura
-para o painel; para regerar, basta rodar de novo (o arquivo é recriado).
+O corte (MES_FINAL_BANCO em modulos/ob_base.py) define o último mês congelado.
+Novembro e dezembro continuam vindo da planilha. O banco é somente leitura para
+o painel; para regerar, basta rodar de novo (o arquivo é recriado).
 """
 import sqlite3
 import sys
@@ -16,6 +17,7 @@ import pandas as pd
 from modulos import ob_base
 
 ANO = 2026
+MES_FINAL = ob_base.MES_FINAL_BANCO[ANO]
 SAIDA = ob_base.CAMINHO_DB_OB
 
 
@@ -28,8 +30,9 @@ def main():
     df.columns = [str(c).strip() for c in df.columns]
     df = ob_base._garantir_ano(df)
     df = df[df["Ano"] == ANO].copy()
+    df = df[ob_base._meses(df) <= MES_FINAL].copy()
     if df.empty:
-        sys.exit(f"Nenhum registro de {ANO} encontrado. Banco não gerado.")
+        sys.exit(f"Nenhum registro de {ANO} (jan a mês {MES_FINAL}) encontrado. Banco não gerado.")
     df["Ano"] = df["Ano"].astype(int)
 
     SAIDA.parent.mkdir(parents=True, exist_ok=True)
@@ -51,7 +54,11 @@ def main():
     valores = df["Valor"].map(_numero)
     total = pd.to_numeric(valores, errors="coerce").sum()
     print(f"Banco gerado: {SAIDA}")
-    print(f"Registros de {ANO}: {len(df)} | total (Valor): R$ {total:,.2f}")
+    print(f"Registros de {ANO} (jan a mês {MES_FINAL}): {len(df)} | total (Valor): R$ {total:,.2f}")
+    por_mes = df.assign(_m=ob_base._meses(df).astype(int), _v=df["Valor"].map(_numero)).assign(
+        _v=lambda d: pd.to_numeric(d["_v"], errors="coerce")).groupby("_m")["_v"].agg(["count", "sum"])
+    for mes, linha in por_mes.iterrows():
+        print(f"  {int(mes):02d}/{ANO}: {int(linha['count'])} registros | R$ {linha['sum']:,.2f}")
     print("Compare esses números com a BASE antes de limpar a planilha.")
 
 
