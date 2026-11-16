@@ -6097,7 +6097,7 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
     st.markdown("---")
     _, coluna_relatorio_pd = st.columns([5, 1])
     with coluna_relatorio_pd:
-        botao_relatorio_pd_extra_extra = st.empty()
+        botao_relatorio_pd_extra = st.empty()
 
     dados_pd_extra, erro_pd_extra = carregar_dados_pd()
     if not dados_pd_extra.empty and "Tipo de PD" in dados_pd_extra.columns:
@@ -6218,7 +6218,7 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
                     d = d[d[coluna_pd_extra].astype(str).isin(selecionados_pd_extra)]
             return d
 
-        def exibir_competencia_pd_extra_extra(competencia):
+        def exibir_competencia_pd_extra(competencia):
             data_competencia_pd_extra = pd.to_datetime(
                 f"01/{competencia}", format="%d/%m/%Y", errors="coerce"
             )
@@ -6290,7 +6290,7 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
         def validos_pd(chave, opcoes):
             return [v for v in st.session_state.get(chave, []) if v in opcoes]
 
-        def limpar_filtros_pd_extra_extra():
+        def limpar_filtros_pd_extra():
             st.session_state["mem_pd_extra_tipo_periodo"] = "Por Mês de Competência"
             st.session_state["mem_pd_extra_comps"] = []
             st.session_state["mem_pd_extra_periodo"] = None
@@ -6324,7 +6324,7 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
             key="w_pd_extra_tipo_periodo",
         )
 
-        with st.sidebar.form("form_filtros_pd_extra_extra", border=False):
+        with st.sidebar.form("form_filtros_pd_extra", border=False):
             comp_sel_pd_extra = list(validos_comp_pd)
             data_inicio_pd_extra = data_ini_padrao_pd_extra
             data_fim_pd_extra = data_fim_padrao_pd_extra
@@ -6334,7 +6334,7 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
                     "Filtrar Período de Competência:",
                     options=comps_pd_extra,
                     default=validos_comp_pd,
-                    format_func=exibir_competencia_pd_extra_extra,
+                    format_func=exibir_competencia_pd_extra,
                     placeholder="Selecione as opções",
                     key="w_pd_extra_comps",
                 )
@@ -6388,15 +6388,15 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
                 default=validos_pd("mem_pd_extra_status", opcoes_status_pd_extra), key="filtro_pd_extra_status",
             )
 
-            col_aplicar_pd_extra_extra, col_limpar_pd_extra_extra = st.columns(2, gap="small")
-            with col_aplicar_pd_extra_extra:
+            col_aplicar_pd_extra, col_limpar_pd_extra = st.columns(2, gap="small")
+            with col_aplicar_pd_extra:
                 aplicar_pd_extra = st.form_submit_button(
                     "✅ Aplicar filtros", use_container_width=True, type="primary"
                 )
-            with col_limpar_pd_extra_extra:
+            with col_limpar_pd_extra:
                 limpar_pd_extra = st.form_submit_button(
                     "🧹 Limpar filtros", use_container_width=True,
-                    on_click=limpar_filtros_pd_extra_extra,
+                    on_click=limpar_filtros_pd_extra,
                 )
 
         if aplicar_pd_extra:
@@ -6424,44 +6424,44 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
         filtrado_pd_extra = filtrar_df_pd_extra(dados_pd_extra)
 
         if st.sidebar.button("🔄 Atualizar dados de PD", key="atualizar_pd_extra"):
-            carregar_dados_pd_extra.clear()
+            carregar_dados_pd.clear()
             st.rerun()
 
         @st.dialog("Gerar Relatório de PD Extra-Orçamentária")
-        def janela_relatorio_pd_extra_extra():
+        def janela_relatorio_pd_extra():
             st.caption(
                 "Escolha o GD e a fonte para o arquivo. Os demais filtros "
                 "selecionados nesta tela serão mantidos."
             )
             opcoes_gd_relatorio_extra = opcoes_pd_extra(filtrado_pd_extra, "GD")
-            grupos_relatorio_pd_extra_extra = st.multiselect(
+            grupos_relatorio_pd_extra = st.multiselect(
                 "GD (vazio = todos)",
                 opcoes_gd_relatorio_extra,
                 key="relatorio_pd_extra_grupos",
             )
-            base_fontes_relatorio_pd_extra_extra_extra = filtrado_pd_extra.copy()
-            if grupos_relatorio_pd_extra_extra:
-                base_fontes_relatorio_pd_extra_extra_extra = base_fontes_relatorio_pd_extra_extra_extra[
-                    base_fontes_relatorio_pd_extra_extra_extra["GD"].isin(grupos_relatorio_pd_extra_extra)
+            base_fontes_relatorio_pd_extra = filtrado_pd_extra.copy()
+            if grupos_relatorio_pd_extra:
+                base_fontes_relatorio_pd_extra = base_fontes_relatorio_pd_extra[
+                    base_fontes_relatorio_pd_extra["GD"].isin(grupos_relatorio_pd_extra)
                 ]
-            fontes_relatorio_pd_extra_extra = st.multiselect(
+            fontes_relatorio_pd_extra = st.multiselect(
                 "Fonte de recurso (vazio = todas)",
-                opcoes_pd_extra(base_fontes_relatorio_pd_extra_extra_extra, "Fonte"),
+                opcoes_pd_extra(base_fontes_relatorio_pd_extra, "Fonte"),
                 key="relatorio_pd_extra_fontes",
             )
-            exportacao_pd_extra = base_fontes_relatorio_pd_extra_extra_extra.copy()
-            if fontes_relatorio_pd_extra_extra:
+            exportacao_pd_extra = base_fontes_relatorio_pd_extra.copy()
+            if fontes_relatorio_pd_extra:
                 exportacao_pd_extra = exportacao_pd_extra[
-                    exportacao_pd_extra["Fonte"].isin(fontes_relatorio_pd_extra_extra)
+                    exportacao_pd_extra["Fonte"].isin(fontes_relatorio_pd_extra)
                 ]
             if exportacao_pd_extra.empty:
                 st.warning("Não há PDs para os filtros escolhidos.")
                 return
             try:
-                relatorio_pd_extra_extra_excel = gerar_relatorio_pd_extra_extra_excel(exportacao_pd_extra)
+                relatorio_pd_extra_excel = gerar_relatorio_pd_excel(exportacao_pd_extra)
                 st.download_button(
                     "Baixar relatório",
-                    data=relatorio_pd_extra_extra_excel,
+                    data=relatorio_pd_extra_excel,
                     file_name=(
                         "Relatório PD Extra-Orçamentária "
                         f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
@@ -6473,13 +6473,13 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
             except (ModuleNotFoundError, RuntimeError, ValueError) as erro:
                 st.error(f"Não foi possível gerar o relatório de PD: {erro}")
 
-        if botao_relatorio_pd_extra_extra.button(
+        if botao_relatorio_pd_extra.button(
             "📊 Gerar Relatório",
             use_container_width=True,
             key="btn_gerar_relatorio_pd_extra",
             type="primary",
         ):
-            janela_relatorio_pd_extra_extra()
+            janela_relatorio_pd_extra()
 
         qtd_pds_extra = len(filtrado_pd_extra)
         valor_pd_extra = float(filtrado_pd_extra["Valor"].sum())
@@ -6521,13 +6521,13 @@ elif st.session_state["tela_atual"] == "PD Extra-Orçamentária":
         with coluna_credor_pd_extra:
             renderizar_tabela_credor_pd(filtrado_pd_extra)
         with coluna_resumos_pd_extra:
-            renderizar_tabela_resumo_pd_extra(
+            renderizar_tabela_resumo_pd(
                 resumo_pd_extra("UG Pagadora", "UG pagadora"),
                 "UG pagadora",
                 "UG pagadora",
             )
             st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
-            renderizar_tabela_resumo_pd_extra(
+            renderizar_tabela_resumo_pd(
                 resumo_pd_extra("Fonte", "Fonte"),
                 "Fonte",
                 "Fonte",
