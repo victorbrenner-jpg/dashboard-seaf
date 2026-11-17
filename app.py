@@ -201,11 +201,12 @@ st.markdown(
         /* Reserva a largura da aba lateral de filtros antes da marca. */
         padding: 10px 18px 10px 52px;
         font-family: 'Inter', 'Segoe UI', Arial, sans-serif;
-        position: fixed !important;
-        top: 0 !important;
-        left: 0 !important;
-        width: 100vw !important;
-        z-index: 100002 !important;
+        /* Cabeçalho no fluxo normal: ocupa espaço e não cobre os cards. */
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        width: 100% !important;
+        z-index: 10 !important;
         box-shadow: 0 3px 10px rgba(0, 43, 73, 0.25) !important;
     }
     .barra-sistema .marca-sistema {
@@ -225,11 +226,12 @@ st.markdown(
         border-radius: 0 0 9px 9px;
         padding: 7px 12px 8px 12px;
         margin-bottom: 18px;
-        position: fixed !important;
-        top: 41px !important;
-        left: 0 !important;
-        width: 100vw !important;
-        z-index: 100001 !important;
+        /* Menu acompanha a barra no fluxo da página, sem sobreposição. */
+        position: relative !important;
+        top: auto !important;
+        left: auto !important;
+        width: 100% !important;
+        z-index: 9 !important;
         box-shadow: 0 5px 10px rgba(15, 23, 42, 0.14) !important;
     }
     /* Cabeçalho único e fixo: a navegação nunca se separa da barra SEAF. */
@@ -286,10 +288,10 @@ st.markdown(
         background: linear-gradient(135deg, #004a7c 0%, #01757d 100%) !important;
         color: #ffffff !important;
     }
-    /* A barra SEAF e a navegação são fixas. O conteúdo começa logo abaixo
-       delas sem permitir que o wrapper flex principal seja esticado. */
+    /* O cabeçalho já ocupa seu espaço no fluxo normal; não reservar altura
+       adicional no conteúdo principal. */
     body [data-testid="stMainBlockContainer"] {
-        padding-top: 2.25rem !important;
+        padding-top: 0.75rem !important;
     }
     /* O Streamlit mantém no bloco principal vários stElementContainer vazios
        (altura 0). Como o stVerticalBlock aplica gap de 1rem entre filhos, cada
