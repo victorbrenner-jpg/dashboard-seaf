@@ -993,12 +993,44 @@ def _normalizar_numero_busca(valor) -> str:
 
 
 def buscar_por_numero(df: pd.DataFrame, coluna_numero: str, termo: str) -> pd.DataFrame:
-    """Registros cujo número contém o termo digitado, ignorando pontos, espaços e caixa."""
+    """Busca documentos pelo número, aceitando o formato completo ou só os dígitos.
+
+    - Completo (ex.: 2026OB015345): ignora pontos, espaços e caixa.
+    - Só dígitos (ex.: 015345 ou 15345): compara com o sequencial final do número,
+      ignorando zeros à esquerda; se nada coincidir, procura o trecho em qualquer
+      posição do número.
+    """
     alvo = _normalizar_numero_busca(termo)
-    if not alvo or df.empty or coluna_numero not in df.columns:
-        return df.iloc[0:0] if alvo else df
-    numeros = df[coluna_numero].fillna("").astype(str).map(_normalizar_numero_busca)
-    return df[numeros.str.contains(alvo, regex=False)]
+    if not alvo:
+        return df
+    if df.empty or coluna_numero not in df.columns:
+        return df.iloc[0:0]
+
+    numeros = (
+        df[coluna_numero].fillna("").astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .map(_normalizar_numero_busca)
+    )
+    sequencial = numeros.str.extract(r"(\d+)$", expand=False).fillna("").str.lstrip("0")
+
+    if alvo.isdigit():
+        digitos = alvo.lstrip("0")
+        if digitos:
+            exato = sequencial == digitos
+            if exato.any():
+                return df[exato]
+        return df[numeros.str.contains(alvo, regex=False)]
+
+    encontrado = numeros.str.contains(alvo, regex=False)
+    if encontrado.any():
+        return df[encontrado]
+    # Tolera diferença de zeros à esquerda: 2026OB15345 x 2026OB015345.
+    partes = re.fullmatch(r"(\d{4}[A-Z]+)(\d+)", alvo)
+    if partes:
+        prefixo, numero = partes.group(1), partes.group(2).lstrip("0")
+        mesmo_prefixo = numeros.str.replace(r"\d+$", "", regex=True) == prefixo
+        return df[mesmo_prefixo & (sequencial == numero)]
+    return df[encontrado]
 
 
 def exibir_resultado_busca_numero(df_resultado, termo, rotulo, colunas, coluna_valor):
