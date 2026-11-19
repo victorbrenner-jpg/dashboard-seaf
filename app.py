@@ -987,6 +987,86 @@ def formatar_brl(valor):
     return f"R$ {val_str}"
 
 
+def _normalizar_numero_busca(valor) -> str:
+    """Deixa só letras e números, em maiúsculas (ex.: '2026nl 010745' -> '2026NL010745')."""
+    return re.sub(r"[^0-9A-Z]", "", str(valor).upper())
+
+
+def buscar_por_numero(df: pd.DataFrame, coluna_numero: str, termo: str) -> pd.DataFrame:
+    """Busca documentos pelo número, aceitando o formato completo ou só os dígitos.
+
+    - Completo (ex.: 2026OB015345): ignora pontos, espaços e caixa.
+    - Só dígitos (ex.: 015345 ou 15345): compara com o sequencial final do número,
+      ignorando zeros à esquerda; se nada coincidir, procura o trecho em qualquer
+      posição do número.
+    """
+    alvo = _normalizar_numero_busca(termo)
+    if not alvo:
+        return df
+    if df.empty or coluna_numero not in df.columns:
+        return df.iloc[0:0]
+
+    numeros = (
+        df[coluna_numero].fillna("").astype(str)
+        .str.replace(r"\.0$", "", regex=True)
+        .map(_normalizar_numero_busca)
+    )
+    sequencial = numeros.str.extract(r"(\d+)$", expand=False).fillna("").str.lstrip("0")
+
+    if alvo.isdigit():
+        digitos = alvo.lstrip("0")
+        if digitos:
+            exato = sequencial == digitos
+            if exato.any():
+                return df[exato]
+        return df[numeros.str.contains(alvo, regex=False)]
+
+    encontrado = numeros.str.contains(alvo, regex=False)
+    if encontrado.any():
+        return df[encontrado]
+    # Tolera diferença de zeros à esquerda: 2026OB15345 x 2026OB015345.
+    partes = re.fullmatch(r"(\d{4}[A-Z]+)(\d+)", alvo)
+    if partes:
+        prefixo, numero = partes.group(1), partes.group(2).lstrip("0")
+        mesmo_prefixo = numeros.str.replace(r"\d+$", "", regex=True) == prefixo
+        return df[mesmo_prefixo & (sequencial == numero)]
+    return df[encontrado]
+
+
+def exibir_resultado_busca_numero(df_resultado, termo, rotulo, colunas, coluna_valor):
+    """Mostra a quem se refere o documento pesquisado (colunas: {título: coluna})."""
+    st.markdown(
+        f"<div style='background:#eef6fb; border-left:4px solid #005691; padding:10px 14px; "
+        f"border-radius:6px; margin:4px 0 12px 0; color:#002b49;'>"
+        f"🔎 <b>Busca por número ativa:</b> {html.escape(termo)} — "
+        f"os demais filtros foram ignorados. Apague o campo na barra lateral para voltar.</div>",
+        unsafe_allow_html=True,
+    )
+    if df_resultado.empty:
+        st.warning(f"Nenhum(a) {rotulo} encontrado(a) para “{termo}”.")
+        return
+    tabela = pd.DataFrame(
+        {
+            titulo: df_resultado[coluna]
+            for titulo, coluna in colunas.items()
+            if coluna in df_resultado.columns
+        }
+    )
+    for titulo in tabela.columns:
+        if "data" in titulo.lower():
+            datas = pd.to_datetime(tabela[titulo], errors="coerce", dayfirst=True)
+            tabela[titulo] = datas.dt.strftime("%d/%m/%Y").fillna(
+                tabela[titulo].astype(str).replace({"NaT": "", "nan": "", "None": ""})
+            )
+    total = float(pd.to_numeric(df_resultado[coluna_valor], errors="coerce").fillna(0).sum())
+    tabela["Valor"] = pd.to_numeric(df_resultado[coluna_valor], errors="coerce").fillna(0).map(formatar_brl)
+    st.markdown(
+        f"**{len(df_resultado)} registro(s)** encontrado(s) — valor total {formatar_brl(total)}"
+    )
+    st.dataframe(tabela, use_container_width=True, hide_index=True)
+    st.markdown("---")
+
+
 def renderizar_tabela_priorizacao(
     df, colunas_centralizadas=None, altura_maxima=None, template_colunas=None,
     largura_minima=780,
@@ -1971,6 +2051,9 @@ def ler_csv_url(url):
 # -------------------------------------------------------------------------
 LINK_NL_DOCUMENTOS = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTWnQkc7oF-YdXKoVTiYeUPYDHGzaeQaiEGqX6fNmB29mkzcd1kAvZVMujFDf02y7j1X8UJzqglAzTL/pub?gid=1892412645&single=true&output=csv"
 LINK_NL_RELACOES = "https://docs.google.com/spreadsheets/d/e/2PACX-1vTDHDK6dPnS9favMwwkNSLYZ5i9yjQrJjCEGxpifdQfD9_8dAsHSVlc8TECEyKJi0hWy3Wi5gEM_tI0/pub?gid=1866981074&single=true&output=csv"
+# Base consolidada QLIKVIEW (2026 + histórico 2025).
+# BASE_TRATADA: coluna A = Fonte; B = Marcador de Fonte; H = NE.
+LINK_NL_MARCADORES = "https://docs.google.com/spreadsheets/d/1GSTLlbN1rOYJfI3AMWIODyxy53LbjiMEfoyKFnV7R_0/gviz/tq?tqx=out:csv&sheet=BASE_TRATADA"
 
 # Planilha exclusiva da priorização. A base de NL permanece somente para leitura.
 URL_API_PRIORIZACAO = "https://script.google.com/macros/s/AKfycbxJn-8aq4QgZTYj7QuJg8qgAkZOt3_88hq68UG832QUj-o22wKbmbNEGm5WsxocU9NQ/exec"
@@ -3227,6 +3310,11 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         key="w_ob_ano",
         on_change=trocar_ano_ob,
     )
+    busca_ob = st.sidebar.text_input(
+        "🔎 Buscar por número da OB",
+        key="busca_ob_numero",
+        placeholder="Ex.: 2026OB000123",
+    ).strip()
 
     try:
         df_base = carregar_dados_auditoria(ano_ob)
@@ -3541,6 +3629,8 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
 
     # DATAFRAME FINAL: somente filtros que já foram confirmados em Aplicar.
     df_filtrado = filtrar_df_ob(df_base)
+    if busca_ob:
+        df_filtrado = buscar_por_numero(df_base, "Número", busca_ob)
 
     # O relatório usa exatamente o mesmo dataframe dos cards, gráficos e
     # demonstrativos da tela. Portanto, qualquer filtro aplicado ou pagamento
@@ -3614,6 +3704,23 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
         unsafe_allow_html=True,
     )
     st.markdown("---")
+
+    if busca_ob:
+        exibir_resultado_busca_numero(
+            df_filtrado, busca_ob, "OB",
+            {
+                "Número OB": "Número",
+                "Data de Emissão": "Data Emissão",
+                "Credor": "Credor_Nome_Tratado",
+                "Objeto": "OBJETO",
+                "GD": "Grupo_Tratado",
+                "Fonte": "Fonte_Tratada",
+                "Despesa": "Despesa_Tratada",
+                "Tipo de Item": "Tipo_Item_Tratado",
+                "NE": "NE",
+            },
+            "Valor_Limpo",
+        )
 
     col_kpi1, col_kpi2, col_kpi3, col_kpi4 = st.columns(4)
 
@@ -4218,6 +4325,17 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.error(f"Erro no carregamento das planilhas: {e}")
             return pd.DataFrame()
 
+        # Consulta a base consolidada do QLIKVIEW. Se estiver indisponível,
+        # mantém o funcionamento da tela com os marcadores das fontes atuais.
+        try:
+            df_marcadores_qlik = ler_csv_url(LINK_NL_MARCADORES)
+        except Exception as e:
+            df_marcadores_qlik = pd.DataFrame()
+            st.warning(
+                "Não foi possível carregar os marcadores da BASE_TRATADA "
+                f"do QLIKVIEW: {e}"
+            )
+
         if df1.empty:
             return df1
 
@@ -4369,13 +4487,66 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             how="left",
         )
 
-        # O Marcador de Fonte é atributo da própria NL (coluna da base de NL).
-        # A planilha de relação por NE serve apenas de reserva.
+        # Relaciona também com a BASE_TRATADA do QLIKVIEW pela NE:
+        # H = NE e B = Marcador de Fonte. Agrupa por NE para não duplicar NLs.
+        if not df_marcadores_qlik.empty and df_marcadores_qlik.shape[1] >= 8:
+            mapa_qlik = pd.DataFrame({
+                "NE_Chave": limpar_chave_ne(df_marcadores_qlik.iloc[:, 7]),
+                "Marcador_Fonte_QLIK": (
+                    df_marcadores_qlik.iloc[:, 1]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                ),
+            })
+            mapa_qlik = mapa_qlik[mapa_qlik["NE_Chave"] != ""].copy()
+            mapa_qlik = (
+                mapa_qlik.groupby("NE_Chave", as_index=False)["Marcador_Fonte_QLIK"]
+                .agg(lambda valores: next(
+                    (v for v in valores if v and v.upper() not in {"NAN", "NONE"}),
+                    ""
+                ))
+            )
+        else:
+            mapa_qlik = pd.DataFrame(
+                columns=["NE_Chave", "Marcador_Fonte_QLIK"]
+            )
+            if not df_marcadores_qlik.empty:
+                st.warning(
+                    "A BASE_TRATADA do QLIKVIEW não apresentou as oito colunas "
+                    "esperadas para localizar a NE na coluna H."
+                )
+
+        df_merged = pd.merge(
+            df_merged,
+            mapa_qlik,
+            on="NE_Chave",
+            how="left",
+        )
+
+        # Prioridade: QLIKVIEW/BASE_TRATADA; depois marcador já existente
+        # na base de NL; por último, marcador da planilha de relação.
         df_merged["Marcador_Fonte_Base2"] = (
             df_merged["Marcador_Fonte_Base2"].fillna("").astype(str).str.strip()
         )
-        df_merged["Marcador_Fonte_Relacao"] = df_merged["Marcador_Fonte_Base1"].where(
-            df_merged["Marcador_Fonte_Base1"] != "",
+        df_merged["Marcador_Fonte_QLIK"] = (
+            df_merged["Marcador_Fonte_QLIK"].fillna("").astype(str).str.strip()
+        )
+        df_merged["Marcador_Fonte_Base1"] = (
+            df_merged["Marcador_Fonte_Base1"].fillna("").astype(str).str.strip()
+        )
+
+        df_merged["Marcador_Fonte_Relacao"] = df_merged["Marcador_Fonte_QLIK"]
+        df_merged["Marcador_Fonte_Relacao"] = df_merged[
+            "Marcador_Fonte_Relacao"
+        ].where(
+            df_merged["Marcador_Fonte_Relacao"] != "",
+            df_merged["Marcador_Fonte_Base1"],
+        )
+        df_merged["Marcador_Fonte_Relacao"] = df_merged[
+            "Marcador_Fonte_Relacao"
+        ].where(
+            df_merged["Marcador_Fonte_Relacao"] != "",
             df_merged["Marcador_Fonte_Base2"],
         )
         df_merged["Marcador_Fonte_Relacao"] = (
@@ -5119,6 +5290,11 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
     if not df_base.empty:
         st.sidebar.markdown("#### 📑 Filtros — Liquidação (NL)")
+        busca_nl = st.sidebar.text_input(
+            "🔎 Buscar por número da NL",
+            key="busca_nl_numero",
+            placeholder="Ex.: 2026NL010745",
+        ).strip()
 
         # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA NL ---
         # A função lê exclusivamente a memória dos filtros APLICADOS.
@@ -5402,6 +5578,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         # DATAFRAME FINALMENTE FILTRADO TELA NL
         df_filtrado = filtrar_df_nl(df_base)
+        if busca_nl:
+            df_filtrado = buscar_por_numero(df_base, "NL_Numero", busca_nl)
 
         @st.dialog("Gerar Relatório de Liquidações")
         def janela_relatorio_nl():
@@ -5489,6 +5667,22 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         ):
             janela_relatorio_nl()
 
+        if busca_nl:
+            exibir_resultado_busca_numero(
+                df_filtrado, busca_nl, "NL",
+                {
+                    "Número NL": "NL_Numero",
+                    "Data": "Data_DT",
+                    "Credor": "Credor_Tratado",
+                    "Objeto": "Objeto_Relacao",
+                    "GD": "Grupo_Classificado",
+                    "Fonte": "Fonte_Relacao",
+                    "Marcador de Fonte": "Marcador_Fonte_Relacao",
+                    "Status": "Status_Filtro",
+                },
+                "Valor_Total_Limpo",
+            )
+
         qtd_liquidada = len(df_filtrado)
         valor_total = df_filtrado["Valor_Total_Limpo"].sum()
 
@@ -5557,6 +5751,15 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             renderizar_tabela_credor_dinamica(df_filtrado)
 
         with col_resumos:
+            # Resumo financeiro por Marcador de Fonte, acima da Fonte.
+            renderizar_tabela_resumida(
+                df_filtrado,
+                "Marcador_Fonte_Relacao",
+                "MARCADOR DE FONTE",
+            )
+            st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
+
+            # Mantém os resumos já existentes.
             renderizar_tabela_resumida(df_filtrado, "Fonte_Relacao", "FONTE")
             st.markdown("<div style='height: 8px;'></div>", unsafe_allow_html=True)
             renderizar_tabela_resumida(df_filtrado, "Objeto_Relacao", "OBJETO")
@@ -5601,6 +5804,11 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
         st.info("Ainda não há PDs tratados para os filtros selecionados.")
     else:
         st.sidebar.markdown("#### 📅 Filtros — Programa de Desembolso (PD)")
+        busca_pd = st.sidebar.text_input(
+            "🔎 Buscar por número da PD",
+            key="busca_pd_numero",
+            placeholder="Ex.: 2026PD000123",
+        ).strip()
 
         # Competência da PD: mesmo padrão usado na tela de NL.
         dados_pd = dados_pd.copy()
@@ -5889,6 +6097,8 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
             st.rerun()
 
         filtrado_pd = filtrar_df_pd(dados_pd)
+        if busca_pd:
+            filtrado_pd = buscar_por_numero(dados_pd, "Número PD", busca_pd)
 
         if st.sidebar.button("🔄 Atualizar dados de PD", key="atualizar_pd"):
             carregar_dados_pd.clear()
@@ -5947,6 +6157,24 @@ elif st.session_state["tela_atual"] == "Programa de Desembolso (PD)":
             type="primary",
         ):
             janela_relatorio_pd()
+
+        if busca_pd:
+            exibir_resultado_busca_numero(
+                filtrado_pd, busca_pd, "PD",
+                {
+                    "Número PD": "Número PD",
+                    "Data de Emissão": "Data Emissão",
+                    "Credor": "Nome do Credor",
+                    "Objeto da Despesa": "Objeto da Despesa",
+                    "GD": "GD",
+                    "Fonte": "Fonte",
+                    "UG Pagadora": "UG Pagadora",
+                    "NE": "NE",
+                    "Tipo de PD": "Tipo de PD",
+                    "Status": "Status",
+                },
+                "Valor",
+            )
 
         qtd_pds = len(filtrado_pd)
         valor_pd = float(filtrado_pd["Valor"].sum())
