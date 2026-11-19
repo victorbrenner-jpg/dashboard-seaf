@@ -106,25 +106,59 @@ def _preparar(df):
     return _garantir_ano(df)
 
 
+def _normalizar(df, ano):
+    """Padroniza as colunas, garante a coluna Ano e devolve so o ano pedido."""
+    df = df.loc[:, ~df.columns.duplicated()].copy()
+    df.columns = [str(c).strip() for c in df.columns]
+    df = _garantir_ano(df)
+    return df[df["Ano"] == ano].copy()
+
+
+def _numero_mes(df):
+    """Mes (1 a 12) de cada linha: de Mes_Num e, onde faltar, da Data Emissao."""
+    mes = pd.Series(float("nan"), index=df.index)
+    if "Mes_Num" in df.columns:
+        mes = pd.to_numeric(df["Mes_Num"], errors="coerce").astype("float")
+    if "Data Emiss\u00e3o" in df.columns:
+        datas = pd.to_datetime(df["Data Emiss\u00e3o"], format="mixed", dayfirst=True, errors="coerce")
+        mes = mes.fillna(datas.dt.month.astype("float"))
+    return mes
+
+
 def carregar_base_ob(ano):
-    """Base bruta de OB do Ano do Exercício informado (mesmas colunas da BASE)."""
+    """Base bruta de OB do Ano do Exercicio informado (mesmas colunas da BASE).
+
+    Com banco: usa o banco nos meses que ele contem e completa com a planilha
+    nos meses que ele ainda nao tem. Sem banco: so a planilha.
+    """
     ano = int(ano)
-    do_banco = _ler_banco(ano)
-    planilha = _ler_csv_publicado(LINK_BASE_OB)
+    df_banco = _ler_banco(ano)
+    if df_banco is not None:
+        df_banco = _normalizar(df_banco, ano)
 
-    if planilha.empty:
-        planilha = pd.DataFrame()
-    else:
-        planilha = _preparar(planilha)
-        planilha = planilha[planilha["Ano"] == ano].copy()
+    # Sem banco (ou banco sem registros do ano): so a planilha, como antes.
+    if df_banco is None or df_banco.empty:
+        df = _ler_csv_publicado(LINK_BASE_OB)
+        if df.empty:
+            return df
+        return _normalizar(df, ano)
 
-    if do_banco is None:
-        return planilha
+    # Com banco: completa com os meses que o banco ainda nao tem.
+    try:
+        df_plan = _ler_csv_publicado(LINK_BASE_OB)
+    except Exception:
+        return df_banco  # planilha indisponivel: mantem o que o banco ja tem
+    if df_plan.empty:
+        return df_banco
+    df_plan = _normalizar(df_plan, ano)
+    if df_plan.empty:
+        return df_banco
 
-    do_banco = _preparar(do_banco)
-    do_banco = do_banco[_meses(do_banco) <= MES_FINAL_BANCO.get(ano, 12)]
-    if planilha.empty:
-        return do_banco
-    # Da planilha, só o que vem depois dos meses congelados no banco.
-    planilha = planilha[_meses(planilha) > MES_FINAL_BANCO.get(ano, 12)]
-    return pd.concat([do_banco, planilha], ignore_index=True)
+    meses_banco = set(_numero_mes(df_banco).dropna().astype(int))
+    mes_plan = _numero_mes(df_plan)
+    # So entram linhas da planilha de meses ausentes no banco (e com mes conhecido),
+    # para nunca duplicar OB que ja esta no banco.
+    df_extra = df_plan[mes_plan.notna() & ~mes_plan.isin(meses_banco)]
+    if df_extra.empty:
+        return df_banco
+    return pd.concat([df_banco, df_extra], ignore_index=True)
