@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base
+from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base, ob_ritmo_fontes
 
 
 def assinatura_exportacao(df: pd.DataFrame, *contexto: object) -> tuple:
@@ -3915,45 +3915,17 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             by="Total Geral", ascending=False
         )
 
-        linhas_fonte_html = ""
-        totais_meses_fonte = {
-            m: 0.0 for m in lista_meses_fixa + ["Total Geral"]
-        }
-
-        for _, row in df_matriz_fonte.iterrows():
-            colunas_valores = ""
-            for m in lista_meses_fixa + ["Total Geral"]:
-                val = float(row[m])
-                totais_meses_fonte[m] += val
-                colunas_valores += f"<td>{formatar_brl(val)}</td>"
-            linhas_fonte_html += (
-                f"<tr><td>🏛️ {row['Fonte_Tratada']}</td>{colunas_valores}</tr>"
-            )
-
-        valores_totais_fonte = ""
-        for m in lista_meses_fixa + ["Total Geral"]:
-            valores_totais_fonte += (
-                f"<td>{formatar_brl(totais_meses_fonte[m])}</td>"
-            )
-
-        cabecalhos_meses_fonte = "".join(
-            [f"<th style='width: 10%;'>{mes}</th>" for mes in lista_meses_fixa]
+        fontes_grafico = ob_ritmo_fontes.fontes_de_pivot(
+            df_matriz_fonte,
+            col_fonte="Fonte_Tratada",
+            ordem_meses=ordem_meses_ano,
+            meses_com_dado=lista_meses_fixa,
         )
-
-        html_fontes_resumo = (
-            f"<div class='tabela-container'>"
-            f"<div class='subtitulo-tabela-html' style='background: linear-gradient(90deg, #1d3557 0%, #002b49 100%);'>💰 Origem dos Recursos e Fluxo de Saída Monetária</div>"
-            f"<table class='html-executiva'>"
-            f"<thead><tr>"
-            f"<th style='width: 30%;'>FONTE DE RECURSO</th>"
-            f"{cabecalhos_meses_fonte}"
-            f"<th style='width: 10%;'>Total Geral</th>"
-            f"</tr></thead>"
-            f"<tbody>{linhas_fonte_html}"
-            f"<tr class='linha-total-html'><td>💰 TOTAL CONSOLIDADO POR FONTE</td>{valores_totais_fonte}</tr>"
-            f"</tbody></table></div>"
+        ob_ritmo_fontes.render_ritmo_fontes(
+            fontes_grafico,
+            ano=ano_ob,
+            titulo="\U0001F4B0 Origem dos Recursos e Fluxo de Sa\u00edda Monet\u00e1ria",
         )
-        st.markdown(html_fontes_resumo, unsafe_allow_html=True)
 
     st.markdown("---")
 
