@@ -21,6 +21,7 @@ Formato de `dados` (valores em R$, uma lista por mês, Jan..último mês):
 from __future__ import annotations
 
 import json
+import re
 
 NOMES_MESES = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN",
                "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"]
@@ -64,8 +65,35 @@ def dados_de_dataframe(df, ano=2026, ultimo_mes=None,
     return saida
 
 
-def montar_html_matriz(dados, ano=2026):
-    """Devolve o HTML completo da matriz (string)."""
+def dados_de_pivot(df_matriz, meses_exibicao,
+                   col_natureza="Despesa_Tratada", col_grupo="Grupo_Tratado"):
+    """Converte o `df_matriz` do app.py (pivot natureza x grupo x meses) no dict da matriz.
+
+    Natureza: CORRENTE / RP / DEA. Grupo: texto começando em "3" ou "4".
+    Meses sem linha viram 0,00, na ordem de `meses_exibicao`.
+    """
+    mapa = {"CORRENTE": "correntes", "RP": "rp", "DEA": "dea"}
+    saida = {nat: {"gnd3": [0.0] * len(meses_exibicao), "gnd4": [0.0] * len(meses_exibicao)}
+             for nat in NATUREZAS}
+    for _, row in df_matriz.iterrows():
+        nat = mapa.get(str(row[col_natureza]).strip().upper())
+        grupo = str(row[col_grupo]).strip()[:1]
+        if nat is None or grupo not in ("3", "4"):
+            continue
+        chave = f"gnd{grupo}"
+        for i, m in enumerate(meses_exibicao):
+            try:
+                saida[nat][chave][i] += float(row.get(m, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                pass
+    return saida
+
+
+def montar_html_matriz(dados, ano=2026, meses=None):
+    """Devolve o HTML completo da matriz (string).
+
+    `meses`: rótulos das colunas (ex.: ["JAN/2026", ...]). Se omitido, usa JAN.. a partir do ano.
+    """
     n = max(len(dados[nat][g]) for nat in NATUREZAS for g in ("gnd3", "gnd4"))
     limpo = {}
     for nat in NATUREZAS:
@@ -75,8 +103,15 @@ def montar_html_matriz(dados, ano=2026):
             limpo[nat][g] = (v + [0.0] * n)[:n]
 
     ano2 = str(ano)[-2:]
-    meses = [f"{NOMES_MESES[i]}/{ano2}" for i in range(n)]
-    periodo = f"Jan–{NOMES_MESES[n-1].capitalize()}/{ano2}"
+    if meses:
+        n = len(meses)
+        for nat in NATUREZAS:
+            for g in ("gnd3", "gnd4"):
+                limpo[nat][g] = (limpo[nat][g] + [0.0] * n)[:n]
+        meses = [re.sub(r"/(\d{4})$", lambda mo: "/" + mo.group(1)[-2:], str(m)) for m in meses]
+    else:
+        meses = [f"{NOMES_MESES[i]}/{ano2}" for i in range(n)]
+    periodo = meses[0] if n == 1 else f"{meses[0]} a {meses[-1]}"
     th = "\n                        ".join(
         f'<th class="py-3.5 px-2.5 text-right min-w-[86px]">{m}</th>' for m in meses)
 
@@ -89,10 +124,10 @@ def montar_html_matriz(dados, ano=2026):
             .replace("__ANO__", str(ano)))
 
 
-def render_matriz_despesas(dados, ano=2026, altura=820):
+def render_matriz_despesas(dados, ano=2026, altura=820, meses=None):
     """Renderiza a matriz no Streamlit (iframe com rolagem própria)."""
     import streamlit.components.v1 as components
-    components.html(montar_html_matriz(dados, ano), height=altura, scrolling=True)
+    components.html(montar_html_matriz(dados, ano, meses), height=altura, scrolling=True)
 
 
 _TEMPLATE = r'''
