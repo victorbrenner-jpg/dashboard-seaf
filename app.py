@@ -19,6 +19,11 @@ import textwrap
 
 from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base, ob_ritmo_fontes
 
+try:
+    from modulos import ob_matriz_despesas
+except Exception:  # matriz nova indisponível: o app usa as tabelas antigas
+    ob_matriz_despesas = None
+
 
 def assinatura_exportacao(df: pd.DataFrame, *contexto: object) -> tuple:
     """Identifica o recorte que originou um arquivo preparado na sessão.
@@ -3864,27 +3869,39 @@ elif st.session_state["tela_atual"] == "Pagamentos (OB)":
             )
             st.markdown(html_completo, unsafe_allow_html=True)
 
-        renderizar_tabela_simetrica_html(
-            df_matriz,
-            "CORRENTE",
-            ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"],
-            "🔵 DESPESAS CORRENTES (Dotação Ordinária do Ano)",
-            "#028090",
-        )
-        renderizar_tabela_simetrica_html(
-            df_matriz,
-            "RP",
-            ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"],
-            "🟠 RESTOS A PAGAR - RP (Compromissos de Anos Anteriores)",
-            "#f77f00",
-        )
-        renderizar_tabela_simetrica_html(
-            df_matriz,
-            "DEA",
-            ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"],
-            "🔴 DESPESAS DE EXERCÍCIOS ANTERIORES - DEA (Reconhecimento de Passivo)",
-            "#d62828",
-        )
+        _matriz_ok = False
+        if ob_matriz_despesas is not None:
+            try:
+                ob_matriz_despesas.render_matriz_despesas(
+                    ob_matriz_despesas.dados_de_pivot(df_matriz, meses_exibicao),
+                    ano=ano_ob,
+                    meses=meses_exibicao,
+                )
+                _matriz_ok = True
+            except Exception as _erro_matriz:
+                st.warning(f"Matriz nova indisponível ({_erro_matriz}). Exibindo as tabelas anteriores.")
+        if not _matriz_ok:
+            renderizar_tabela_simetrica_html(
+                df_matriz,
+                "CORRENTE",
+                ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"],
+                "🔵 DESPESAS CORRENTES (Dotação Ordinária do Ano)",
+                "#028090",
+            )
+            renderizar_tabela_simetrica_html(
+                df_matriz,
+                "RP",
+                ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"],
+                "🟠 RESTOS A PAGAR - RP (Compromissos de Anos Anteriores)",
+                "#f77f00",
+            )
+            renderizar_tabela_simetrica_html(
+                df_matriz,
+                "DEA",
+                ["3 - OUTRAS DESPESAS CORRENTES", "4 - INVESTIMENTOS"],
+                "🔴 DESPESAS DE EXERCÍCIOS ANTERIORES - DEA (Reconhecimento de Passivo)",
+                "#d62828",
+            )
 
     else:
         st.info("Nenhum registro financeiro localizado. Verifique os filtros.")
