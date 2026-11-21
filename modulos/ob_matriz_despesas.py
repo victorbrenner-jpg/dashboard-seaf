@@ -146,6 +146,7 @@ _TEMPLATE = r'''
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
+        :root { --tot-w: 176px; }
         .matrix-scroll th, .matrix-scroll td { white-space: nowrap; }
         body {
             font-family: 'Inter', sans-serif;
@@ -194,7 +195,7 @@ _TEMPLATE = r'''
 <body class="antialiased py-2 px-1 sm:px-2 selection:bg-sky-100 selection:text-sky-900">
 
     <!-- Container Principal Único: Matriz Analítica por Tipo de Despesa -->
-    <main class="w-full max-w-[1560px] mx-auto bg-white rounded-2xl shadow-lg shadow-slate-200/70 border border-slate-200/90 overflow-hidden">
+    <main class="w-full bg-white rounded-2xl shadow-lg shadow-slate-200/70 border border-slate-200/90 overflow-hidden">
         
         <!-- Cabeçalho Integrado do Cartão da Matriz -->
         <header class="p-5 sm:p-6 bg-gradient-to-r from-white via-white to-slate-50/80 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
@@ -274,7 +275,7 @@ _TEMPLATE = r'''
                         <!-- Meses JAN/26 a NOV/26 -->
                         __TH_MESES__
                         <!-- Colunas Fixas à Direita: Média Mensal e Total Acumulado -->
-                        <th class="py-3.5 px-3.5 text-right bg-[#e9edfe] text-indigo-950 sticky right-[176px] z-20 w-[124px] min-w-[124px] sticky-right-shadow border-l border-slate-200/80">
+                        <th class="py-3.5 px-3.5 text-right bg-[#e9edfe] text-indigo-950 sticky right-[var(--tot-w)] z-20 w-[124px] min-w-[124px] sticky-right-shadow border-l border-slate-200/80">
                             <div class="flex flex-col items-end">
                                 <span>MÉDIA MENSAL</span>
                                 <span id="thAvgSublabel" class="text-[9px] font-semibold text-indigo-600/80 tracking-normal normal-case">Base: __NM__ meses</span>
@@ -491,7 +492,7 @@ _TEMPLATE = r'''
                             </div>
                         </div>
                     </td>
-                    <td class="py-3 px-3.5 text-right sticky right-[176px] z-10 ${cat.headerStickyBg} sticky-right-shadow border-l border-white/15 transition-colors">
+                    <td class="py-3 px-3.5 text-right sticky right-[var(--tot-w)] z-10 ${cat.headerStickyBg} sticky-right-shadow border-l border-white/15 transition-colors">
                         <span class="text-[10px] font-semibold uppercase tracking-wider text-sky-200/90">Média Mensal</span>
                     </td>
                     <td class="py-3 px-4 text-right sticky right-0 z-10 ${cat.headerStickyBg} border-l border-white/15 transition-colors">
@@ -547,7 +548,7 @@ _TEMPLATE = r'''
                             ? `Média de ${formatValue(subAvgInfo.avg, 'exact', true)}/mês (${subAvgInfo.divisor} ${subAvgInfo.divisor === 1 ? 'mês' : 'meses'})`
                             : 'Sem execução no período';
                         subHtml += `
-                            <td title="${subAvgTooltip}" class="py-2.5 px-3.5 text-right text-xs font-semibold text-indigo-900 bg-[#f5f7ff] group-hover:bg-[#e9edfe] sticky right-[176px] z-10 sticky-right-shadow border-l border-slate-200/80 transition-colors">
+                            <td title="${subAvgTooltip}" class="py-2.5 px-3.5 text-right text-xs font-semibold text-indigo-900 bg-[#f5f7ff] group-hover:bg-[#e9edfe] sticky right-[var(--tot-w)] z-10 sticky-right-shadow border-l border-slate-200/80 transition-colors">
                                 ${formatValue(subAvgInfo.avg, state.formatMode)}
                             </td>
                         `;
@@ -597,7 +598,7 @@ _TEMPLATE = r'''
                     ? `Média de ${formatValue(visibleAvgInfo.avg, 'exact', true)}/mês (${visibleAvgInfo.divisor} ${visibleAvgInfo.divisor === 1 ? 'mês' : 'meses'})`
                     : 'Sem execução no período';
                 totalHtml += `
-                    <td title="${totalAvgTooltip}" class="py-3 px-3.5 text-right text-xs sm:text-[13px] font-bold text-indigo-950 ${cat.totalAvgStickyBg} sticky right-[176px] z-10 sticky-right-shadow border-l border-slate-200/80">
+                    <td title="${totalAvgTooltip}" class="py-3 px-3.5 text-right text-xs sm:text-[13px] font-bold text-indigo-950 ${cat.totalAvgStickyBg} sticky right-[var(--tot-w)] z-10 sticky-right-shadow border-l border-slate-200/80">
                         ${formatValue(visibleAvgInfo.avg, state.formatMode, true)}
                     </td>
                 `;
@@ -696,8 +697,16 @@ _TEMPLATE = r'''
         // Inicializa a matriz ao carregar a página
         function ajustarAlturaIframe() {
             try {
-                const h = document.body.offsetHeight + 12;
-                if (window.frameElement) {
+                const th = document.querySelector('thead th:last-child');
+                if (th) {
+                    const w = Math.floor(th.getBoundingClientRect().width) - 1; // 1px de sobreposição, sem fresta
+                    const atual = document.documentElement.style.getPropertyValue('--tot-w');
+                    if (w > 0 && atual !== w + 'px') document.documentElement.style.setProperty('--tot-w', w + 'px');
+                }
+                const main = document.querySelector('main');
+                if (!main || !window.frameElement) return;
+                const h = Math.ceil(main.getBoundingClientRect().bottom + window.scrollY) + 20;
+                if (Math.abs((window.frameElement.getBoundingClientRect().height) - h) > 1) {
                     window.frameElement.style.height = h + 'px';
                     window.frameElement.setAttribute('height', h);
                 }
@@ -705,7 +714,10 @@ _TEMPLATE = r'''
         }
         window.addEventListener('load', () => {
             ajustarAlturaIframe();
-            if (window.ResizeObserver) new ResizeObserver(ajustarAlturaIframe).observe(document.body);
+            if (window.ResizeObserver) new ResizeObserver(ajustarAlturaIframe).observe(document.querySelector('main'));
+            window.addEventListener('resize', ajustarAlturaIframe);
+            document.addEventListener('click', () => setTimeout(ajustarAlturaIframe, 60));
+            setInterval(ajustarAlturaIframe, 600); // cobre fontes/estilos que carregam depois
         });
 
         window.addEventListener('DOMContentLoaded', () => {
