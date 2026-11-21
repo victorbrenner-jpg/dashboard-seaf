@@ -1,4 +1,3 @@
-
 """
 modulos/ob_matriz_despesas.py
 
@@ -196,61 +195,62 @@ _TEMPLATE = r'''
 <body class="antialiased py-2 px-1 sm:px-2 selection:bg-sky-100 selection:text-sky-900">
 
     <!-- Container Principal Único: Matriz Analítica por Tipo de Despesa -->
-    <main class="w-full bg-white rounded-2xl shadow-lg shadow-slate-200/70 border border-slate-200/90 overflow-hidden">
+    <main class="w-full bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
         
         <!-- Cabeçalho Integrado do Cartão da Matriz -->
-        <header class="px-4 py-3 sm:px-5 bg-gradient-to-r from-white via-white to-slate-50/80 border-b border-slate-200 flex items-center justify-end">
+        <header class="bg-[#0b2a4a] px-4 py-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <h2 class="text-[13px] font-bold text-white tracking-tight flex items-center gap-2"><span aria-hidden="true">📊</span><span>Execução Mensal por Natureza de Despesa</span></h2>
             
             <!-- Barra de Controles Interativos -->
-            <div class="flex flex-wrap items-center justify-end gap-2.5 sm:gap-3">
+            <div class="flex flex-wrap items-center justify-end gap-2">
                 
                 <!-- Pílulas de Filtro por Grupo de Gasto (GND) -->
-                <div class="inline-flex flex-wrap items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80" role="group" aria-label="Filtro por GND">
+                <div class="inline-flex flex-wrap items-center bg-white/10 p-0.5 rounded-lg border border-white/15" role="group" aria-label="Filtro por GND">
                     <button type="button" id="pillALL" onclick="setGndFilter('ALL')"
-                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all">
+                        class="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all">
                         Todos os GNDs
                     </button>
                     <button type="button" id="pillGND3" onclick="setGndFilter('GND3')"
-                        class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         GND 3 - Custeio
                     </button>
                     <button type="button" id="pillGND4" onclick="setGndFilter('GND4')"
-                        class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         GND 4 - Investimentos
                     </button>
                 </div>
 
                 <!-- Divisor vertical sutil -->
-                <div class="hidden sm:block h-6 w-px bg-slate-200"></div>
+                <div class="hidden sm:block h-5 w-px bg-white/20"></div>
 
                 <!-- Base de Cálculo da Média Mensal -->
-                <div class="inline-flex items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80" role="group" aria-label="Base de Cálculo da Média">
+                <div class="inline-flex items-center bg-white/10 p-0.5 rounded-lg border border-white/15" role="group" aria-label="Base de Cálculo da Média">
                     <button type="button" id="btnAvgPeriod" onclick="setAvgBasis('period')" title="Divide o total acumulado pelos __NM__ meses do período (__PERIODO__)"
-                        class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all">
+                        class="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all">
                         Média __NM__m
                     </button>
                     <button type="button" id="btnAvgActive" onclick="setAvgBasis('active')" title="Divide o total acumulado apenas pelos meses com execução (> R$ 0,00)"
-                        class="px-2.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         Meses ativos
                     </button>
                 </div>
 
                 <!-- Alternador de Escala Numérica -->
-                <div class="inline-flex items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80" role="group" aria-label="Formato Numérico">
+                <div class="inline-flex items-center bg-white/10 p-0.5 rounded-lg border border-white/15" role="group" aria-label="Formato Numérico">
                     <button type="button" id="btnFormatShort" onclick="setFormatMode('short')"
-                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-[#0f766e] shadow-sm transition-all">
+                        class="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-[#0f766e] shadow-sm transition-all">
                         Abreviado (Mi)
                     </button>
                     <button type="button" id="btnFormatExact" onclick="setFormatMode('exact')"
-                        class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         Contábil Exato (R$)
                     </button>
                 </div>
 
                 <!-- Botão Único Expandir / Recolher Todos -->
                 <button type="button" id="btnToggleAll" onclick="toggleAllCategories()"
-                    class="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-2xs transition-all cursor-pointer">
-                    <i data-lucide="chevrons-down-up" id="iconToggleAll" class="w-3.5 h-3.5 text-slate-500"></i>
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all cursor-pointer">
+                    <i data-lucide="chevrons-down-up" id="iconToggleAll" class="w-3.5 h-3.5 text-white/80"></i>
                     <span id="labelToggleAll">Recolher tudo</span>
                 </button>
             </div>
@@ -619,11 +619,11 @@ _TEMPLATE = r'''
             const btnActive = document.getElementById('btnAvgActive');
 
             if (basis === 'period') {
-                btnPeriod.className = 'px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all';
-                btnActive.className = 'px-2.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnPeriod.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all';
+                btnActive.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             } else {
-                btnActive.className = 'px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all';
-                btnPeriod.className = 'px-2.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnActive.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all';
+                btnPeriod.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             }
             renderMatrix();
         }
@@ -634,11 +634,11 @@ _TEMPLATE = r'''
             const btnExact = document.getElementById('btnFormatExact');
 
             if (mode === 'short') {
-                btnShort.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-[#0f766e] shadow-sm transition-all';
-                btnExact.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnShort.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-[#0f766e] shadow-sm transition-all';
+                btnExact.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             } else {
-                btnExact.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-[#0f766e] shadow-sm transition-all';
-                btnShort.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnExact.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-[#0f766e] shadow-sm transition-all';
+                btnShort.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             }
             renderMatrix();
         }
@@ -648,9 +648,9 @@ _TEMPLATE = r'''
             ['ALL', 'GND3', 'GND4'].forEach(key => {
                 const pill = document.getElementById(`pill${key}`);
                 if (key === filter) {
-                    pill.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all';
+                    pill.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all';
                 } else {
-                    pill.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                    pill.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
                 }
             });
             renderMatrix();
@@ -696,19 +696,17 @@ _TEMPLATE = r'''
                 }
                 const main = document.querySelector('main');
                 if (!main || !window.frameElement) return;
+                if (main.offsetHeight < 80) return; // iframe oculto/ainda sem layout: não mexe na altura
                 const h = Math.ceil(main.getBoundingClientRect().bottom + window.scrollY) + 20;
                 const antes = window.frameElement.getBoundingClientRect().height;
                 if (Math.abs(antes - h) > 1) {
                     window.frameElement.style.height = h + 'px';
                     window.frameElement.setAttribute('height', h);
-                    // contêineres do Streamlit com altura fixa (igual à antiga do iframe) também precisam crescer/encolher
-                    let a = window.frameElement.parentElement;
-                    for (let i = 0; i < 4 && a && a.tagName !== 'BODY'; i++, a = a.parentElement) {
-                        const alt = a.getBoundingClientRect().height;
-                        if (a.style.height || Math.abs(alt - antes) <= 2) {
-                            a.style.height = h + 'px';
-                            a.style.minHeight = '0px';
-                        }
+                    // só o contêiner do próprio elemento no Streamlit, e só se tinha a altura antiga do iframe
+                    const cont = window.frameElement.closest('[data-testid="stElementContainer"], .element-container, .stElementContainer')
+                        || window.frameElement.parentElement;
+                    if (cont && cont.tagName !== 'BODY' && Math.abs(cont.getBoundingClientRect().height - antes) <= 2) {
+                        cont.style.height = h + 'px';
                     }
                 }
             } catch (e) { /* sem acesso ao iframe: mantém a altura padrão */ }
