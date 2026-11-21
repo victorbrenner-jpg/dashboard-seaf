@@ -1,3 +1,4 @@
+
 """
 modulos/ob_matriz_despesas.py
 
@@ -198,20 +199,10 @@ _TEMPLATE = r'''
     <main class="w-full bg-white rounded-2xl shadow-lg shadow-slate-200/70 border border-slate-200/90 overflow-hidden">
         
         <!-- Cabeçalho Integrado do Cartão da Matriz -->
-        <header class="p-5 sm:p-6 bg-gradient-to-r from-white via-white to-slate-50/80 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+        <header class="px-4 py-3 sm:px-5 bg-gradient-to-r from-white via-white to-slate-50/80 border-b border-slate-200 flex items-center justify-end">
             
-            <!-- Título -->
-            <div class="flex items-center gap-3.5">
-                <div class="p-2.5 bg-teal-50 text-[#0f766e] rounded-xl border border-teal-100 shrink-0">
-                    <i data-lucide="layers" class="w-6 h-6"></i>
-                </div>
-                <h1 class="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
-                    Demonstrativo Analítico por Tipo de Despesa
-                </h1>
-            </div>
-
             <!-- Barra de Controles Interativos -->
-            <div class="flex flex-wrap items-center gap-2.5 sm:gap-3">
+            <div class="flex flex-wrap items-center justify-end gap-2.5 sm:gap-3">
                 
                 <!-- Pílulas de Filtro por Grupo de Gasto (GND) -->
                 <div class="inline-flex flex-wrap items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80" role="group" aria-label="Filtro por GND">
@@ -706,9 +697,19 @@ _TEMPLATE = r'''
                 const main = document.querySelector('main');
                 if (!main || !window.frameElement) return;
                 const h = Math.ceil(main.getBoundingClientRect().bottom + window.scrollY) + 20;
-                if (Math.abs((window.frameElement.getBoundingClientRect().height) - h) > 1) {
+                const antes = window.frameElement.getBoundingClientRect().height;
+                if (Math.abs(antes - h) > 1) {
                     window.frameElement.style.height = h + 'px';
                     window.frameElement.setAttribute('height', h);
+                    // contêineres do Streamlit com altura fixa (igual à antiga do iframe) também precisam crescer/encolher
+                    let a = window.frameElement.parentElement;
+                    for (let i = 0; i < 4 && a && a.tagName !== 'BODY'; i++, a = a.parentElement) {
+                        const alt = a.getBoundingClientRect().height;
+                        if (a.style.height || Math.abs(alt - antes) <= 2) {
+                            a.style.height = h + 'px';
+                            a.style.minHeight = '0px';
+                        }
+                    }
                 }
             } catch (e) { /* sem acesso ao iframe: mantém a altura padrão */ }
         }
