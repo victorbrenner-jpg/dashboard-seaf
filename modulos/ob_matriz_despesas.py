@@ -113,7 +113,7 @@ def montar_html_matriz(dados, ano=2026, meses=None):
         meses = [f"{NOMES_MESES[i]}/{ano2}" for i in range(n)]
     periodo = meses[0] if n == 1 else f"{meses[0]} a {meses[-1]}"
     th = "\n                        ".join(
-        f'<th class="py-3.5 px-2.5 text-right min-w-[86px]">{m}</th>' for m in meses)
+        f'<th class="py-3.5 px-2.5 text-right min-w-[68px]">{m}</th>' for m in meses)
 
     return (_TEMPLATE
             .replace("__MONTHS__", json.dumps(meses))
@@ -124,7 +124,7 @@ def montar_html_matriz(dados, ano=2026, meses=None):
             .replace("__ANO__", str(ano)))
 
 
-def render_matriz_despesas(dados, ano=2026, altura=820, meses=None):
+def render_matriz_despesas(dados, ano=2026, altura=560, meses=None):
     """Renderiza a matriz no Streamlit (iframe com rolagem própria)."""
     import streamlit.components.v1 as components
     components.html(montar_html_matriz(dados, ano, meses), height=altura, scrolling=True)
@@ -146,9 +146,10 @@ _TEMPLATE = r'''
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
+        .matrix-scroll th, .matrix-scroll td { white-space: nowrap; }
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f1f5f9;
+            background-color: transparent;
             color: #0f172a;
         }
         /* Alinhamento numérico tabular com JetBrains Mono para leitura contábil de alta precisão */
@@ -265,21 +266,21 @@ _TEMPLATE = r'''
 
         <!-- Área da Tabela com Rolagem Horizontal Responsiva -->
         <div class="matrix-scroll overflow-x-auto relative">
-            <table class="w-full text-left border-collapse min-w-[1360px]">
+            <table class="w-full text-left border-collapse min-w-[1100px]">
                 <thead>
                     <tr class="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500 select-none">
                         <!-- Coluna Fixa à Esquerda -->
-                        <th class="py-3.5 px-4 sticky left-0 bg-slate-50 z-20 min-w-[320px] sticky-left-shadow" aria-label="Categoria"></th>
+                        <th class="py-3.5 px-4 sticky left-0 bg-slate-50 z-20 min-w-[250px] sticky-left-shadow" aria-label="Categoria"></th>
                         <!-- Meses JAN/26 a NOV/26 -->
                         __TH_MESES__
                         <!-- Colunas Fixas à Direita: Média Mensal e Total Acumulado -->
-                        <th class="py-3.5 px-3.5 text-right bg-indigo-50/70 text-indigo-950 sticky right-[160px] z-20 min-w-[148px] sticky-right-shadow border-l border-slate-200/80">
+                        <th class="py-3.5 px-3.5 text-right bg-[#e9edfe] text-indigo-950 sticky right-[176px] z-20 w-[124px] min-w-[124px] sticky-right-shadow border-l border-slate-200/80">
                             <div class="flex flex-col items-end">
                                 <span>MÉDIA MENSAL</span>
                                 <span id="thAvgSublabel" class="text-[9px] font-semibold text-indigo-600/80 tracking-normal normal-case">Base: __NM__ meses</span>
                             </div>
                         </th>
-                        <th class="py-3.5 px-4 text-right bg-slate-100 text-slate-800 sticky right-0 z-20 min-w-[160px] border-l border-slate-200/80">
+                        <th class="py-3.5 px-4 text-right bg-slate-100 text-slate-800 sticky right-0 z-20 w-[176px] min-w-[176px] border-l border-slate-200/80">
                             TOTAL ACUMULADO
                         </th>
                     </tr>
@@ -479,7 +480,7 @@ _TEMPLATE = r'''
                 trHeader.onclick = () => toggleCategory(cat.id);
 
                 let headerHtml = `
-                    <td colspan="12" class="py-3 px-4 sticky left-0 z-10 transition-colors">
+                    <td colspan="${MONTHS.length + 1}" class="py-3 px-4 sticky left-0 z-10 transition-colors">
                         <div class="flex items-center gap-2.5">
                             <span class="w-5 h-5 rounded-md flex items-center justify-center border shrink-0 ${cat.iconBg}">
                                 <i data-lucide="${isExpanded ? 'chevron-down' : 'chevron-right'}" class="w-3.5 h-3.5"></i>
@@ -490,7 +491,7 @@ _TEMPLATE = r'''
                             </div>
                         </div>
                     </td>
-                    <td class="py-3 px-3.5 text-right sticky right-[160px] z-10 ${cat.headerStickyBg} sticky-right-shadow border-l border-white/15 transition-colors">
+                    <td class="py-3 px-3.5 text-right sticky right-[176px] z-10 ${cat.headerStickyBg} sticky-right-shadow border-l border-white/15 transition-colors">
                         <span class="text-[10px] font-semibold uppercase tracking-wider text-sky-200/90">Média Mensal</span>
                     </td>
                     <td class="py-3 px-4 text-right sticky right-0 z-10 ${cat.headerStickyBg} border-l border-white/15 transition-colors">
@@ -546,14 +547,14 @@ _TEMPLATE = r'''
                             ? `Média de ${formatValue(subAvgInfo.avg, 'exact', true)}/mês (${subAvgInfo.divisor} ${subAvgInfo.divisor === 1 ? 'mês' : 'meses'})`
                             : 'Sem execução no período';
                         subHtml += `
-                            <td title="${subAvgTooltip}" class="py-2.5 px-3.5 text-right text-xs font-semibold text-indigo-900 bg-indigo-50/35 group-hover:bg-indigo-50/70 sticky right-[160px] z-10 sticky-right-shadow border-l border-slate-200/80 transition-colors">
+                            <td title="${subAvgTooltip}" class="py-2.5 px-3.5 text-right text-xs font-semibold text-indigo-900 bg-[#f5f7ff] group-hover:bg-[#e9edfe] sticky right-[176px] z-10 sticky-right-shadow border-l border-slate-200/80 transition-colors">
                                 ${formatValue(subAvgInfo.avg, state.formatMode)}
                             </td>
                         `;
 
                         // Total da Sub-linha (Fixo à Direita)
                         subHtml += `
-                            <td class="py-2.5 px-4 text-right text-xs font-semibold text-slate-800 bg-slate-50/90 group-hover:bg-slate-100/80 sticky right-0 z-10 border-l border-slate-200/80 transition-colors">
+                            <td class="py-2.5 px-4 text-right text-xs font-semibold text-slate-800 bg-[#f8fafc] group-hover:bg-[#f1f5f9] sticky right-0 z-10 border-l border-slate-200/80 transition-colors">
                                 ${formatValue(subTotal, 'exact')}
                             </td>
                         `;
@@ -596,7 +597,7 @@ _TEMPLATE = r'''
                     ? `Média de ${formatValue(visibleAvgInfo.avg, 'exact', true)}/mês (${visibleAvgInfo.divisor} ${visibleAvgInfo.divisor === 1 ? 'mês' : 'meses'})`
                     : 'Sem execução no período';
                 totalHtml += `
-                    <td title="${totalAvgTooltip}" class="py-3 px-3.5 text-right text-xs sm:text-[13px] font-bold text-indigo-950 ${cat.totalAvgStickyBg} sticky right-[160px] z-10 sticky-right-shadow border-l border-slate-200/80">
+                    <td title="${totalAvgTooltip}" class="py-3 px-3.5 text-right text-xs sm:text-[13px] font-bold text-indigo-950 ${cat.totalAvgStickyBg} sticky right-[176px] z-10 sticky-right-shadow border-l border-slate-200/80">
                         ${formatValue(visibleAvgInfo.avg, state.formatMode, true)}
                     </td>
                 `;
@@ -693,6 +694,20 @@ _TEMPLATE = r'''
         }
 
         // Inicializa a matriz ao carregar a página
+        function ajustarAlturaIframe() {
+            try {
+                const h = document.body.offsetHeight + 12;
+                if (window.frameElement) {
+                    window.frameElement.style.height = h + 'px';
+                    window.frameElement.setAttribute('height', h);
+                }
+            } catch (e) { /* sem acesso ao iframe: mantém a altura padrão */ }
+        }
+        window.addEventListener('load', () => {
+            ajustarAlturaIframe();
+            if (window.ResizeObserver) new ResizeObserver(ajustarAlturaIframe).observe(document.body);
+        });
+
         window.addEventListener('DOMContentLoaded', () => {
             renderMatrix();
         });
