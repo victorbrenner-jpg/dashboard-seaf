@@ -276,214 +276,207 @@ def _construir_base_mensal_siafim(dados_siafim: list[dict]) -> pd.DataFrame:
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _carregar_siafim_2026() -> list[dict]:
-    """Lê a nova planilha SIAFIM 2026 (gid=1358142076) extraindo valores e quantidades mensais."""
+    """Lê a nova planilha SIAFIM 2026 (gid=1358142076) respeitando blocos paralelos e pares (Qtd, Valor)."""
     try:
         bruto = pd.read_csv(URL_BASE_SIAFIM_2026, header=None)
         if bruto.empty:
             return FALLBACK_SIAFIM_2026
 
-        # Identifica a linha de cabeçalho que contém os meses (Mar, Abr, Mai...)
-        linha_cabecalho = None
-        colunas_meses: dict[int, int] = {}
-        col_produto_idx = None
-        col_vu_idx = None
-        col_unid_idx = None
-        col_coop_idx = None
-
-        for idx, row in bruto.iterrows():
-            celulas = [_normalizar(v) for v in row.tolist()]
-            encontrados_mes: dict[int, int] = {}
-            for m_idx, (_, aliases) in enumerate(MESES_SIAFIM_MAP):
-                for c_idx, texto in enumerate(celulas):
-                    if texto in aliases or any(
-                        texto.startswith(a + " ") or texto.startswith(a + "/") or texto.startswith(a + "-")
-                        for a in aliases
-                    ):
-                        if m_idx not in encontrados_mes:
-                            encontrados_mes[m_idx] = c_idx
-            if len(encontrados_mes) >= 5:
-                linha_cabecalho = idx
-                colunas_meses = encontrados_mes
-                for c_idx, texto in enumerate(celulas):
-                    if any(k in texto for k in ("PRODUTO", "ITEM", "GENERO", "ALIMENTO")):
-                        col_produto_idx = c_idx
-                    elif texto in ("VU", "V. UNIT", "V. UNIT.", "VALOR UNITARIO", "V UNIT", "VALOR UNIT."):
-                        col_vu_idx = c_idx
-                    elif texto in ("UNID", "UNID.", "UND", "UND.", "UNIDADE"):
-                        col_unid_idx = c_idx
-                    elif "COOPERATIVA" in texto:
-                        col_coop_idx = c_idx
-                break
-
-        if linha_cabecalho is None or len(colunas_meses) < 5:
-            return FALLBACK_SIAFIM_2026
-
-        # Verifica se há subcabeçalho imediatamente abaixo (ex: "VALOR" / "QTD" por mês)
-        sub_cabecalho = (
-            [_normalizar(v) for v in bruto.iloc[linha_cabecalho + 1].tolist()]
-            if linha_cabecalho + 1 < len(bruto)
-            else []
-        )
-        tem_subcabecalho = any(
-            any(k in c for k in ("VALOR", "QTD", "QUANT", "R$"))
-            for c in sub_cabecalho
-        )
-        inicio_dados = linha_cabecalho + (2 if tem_subcabecalho else 1)
-
-        # Se a linha de cabeçalho não tinha VU/Unidade explícitos, procura nas colunas anteriores ao primeiro mês
-        primeiro_mes_col = min(colunas_meses.values())
-        if col_vu_idx is None:
-            for c_idx in range(primeiro_mes_col):
-                if c_idx not in (col_coop_idx, col_produto_idx, col_unid_idx):
-                    amostra = [
-                        _valor_numero(bruto.iloc[r, c_idx])
-                        for r in range(inicio_dados, min(inicio_dados + 25, len(bruto)))
-                    ]
-                    if any(0.5 <= v <= 100.0 for v in amostra):
-                        col_vu_idx = c_idx
-                        break
-
-        # Mapeia para cada mês a coluna de valor e a eventual coluna de quantidade
-        colunas_meses_detalhe: dict[int, tuple[int, int | None]] = {}
-        cols_ordenadas = sorted(colunas_meses.items(), key=lambda x: x[1])
-        for pos, (m_idx, c_idx) in enumerate(cols_ordenadas):
-            prox_c_idx = cols_ordenadas[pos + 1][1] if pos + 1 < len(cols_ordenadas) else len(bruto.columns)
-            col_val = c_idx
-            col_qtd = None
-            if prox_c_idx - c_idx >= 2:
-                sub_a = sub_cabecalho[c_idx] if c_idx < len(sub_cabecalho) else ""
-                if any(k in sub_a for k in ("QTD", "QUANT")):
-                    col_qtd = c_idx
-                    col_val = c_idx + 1
-                else:
-                    col_val = c_idx
-                    col_qtd = c_idx + 1
-            colunas_meses_detalhe[m_idx] = (col_val, col_qtd)
-
-        # Mapa de V.U. de referência caso a célula de V.U. da planilha venha vazia ou formatada diferente
+        # Mapeamento de referência para V.U., Unidade e Cooperativa de cada produto
+        produto_para_coop = {
+            _normalizar(p["nome"]): g["cooperativa"]
+            for g in FALLBACK_SIAFIM_2026
+            for p in g["produtos"]
+        }
         vu_referencia = {
             _normalizar(p["nome"]): (p["vu"], p["unidade"])
             for g in FALLBACK_SIAFIM_2026
             for p in g["produtos"]
         }
 
-        grupos: dict[str, dict] = {}
-        coop_atual: str | None = None
-
-        for idx in range(inicio_dados, len(bruto)):
-            row = bruto.iloc[idx].tolist()
-            textos_linha = [_normalizar(v) for v in row]
-
-            # Ignora explicitamente linhas de totalizadores/subtotais da planilha
-            eh_linha_total = any(
-                t.startswith("TOTAL") or t.startswith("SUBTOTAL") or "TOTAL GERAL" in t or "SUBTOTAL " in t
-                for t in textos_linha[:4]
-                if t
-            )
-            if eh_linha_total:
+        # Encontra todos os blocos de tabela (ex: bloco principal à esquerda e outro quadro à direita)
+        blocos_tabela = []
+        for idx, row in bruto.iterrows():
+            celulas = [_normalizar(v) for v in row.tolist()]
+            inicios_item = [
+                c_idx for c_idx, texto in enumerate(celulas)
+                if texto in ("ITEM", "PRODUTO", "GENERO", "ALIMENTO")
+            ]
+            if not inicios_item:
                 continue
 
-            # Detecta mudança de cooperativa em qualquer célula inicial (mesclada ou dedicada)
-            sigla_encontrada = None
-            if col_coop_idx is not None and col_coop_idx < len(row):
-                sigla_encontrada = _sigla_cooperativa(row[col_coop_idx])
-            if sigla_encontrada is None:
-                for t in textos_linha[:4]:
-                    s = _sigla_cooperativa(t)
+            for pos_b, col_inicio in enumerate(inicios_item):
+                col_fim = inicios_item[pos_b + 1] if pos_b + 1 < len(inicios_item) else len(celulas)
+                encontrados_mes: dict[int, int] = {}
+                col_vu_idx = None
+                col_unid_idx = None
+
+                for c_idx in range(col_inicio + 1, col_fim):
+                    texto = celulas[c_idx]
+                    if texto in ("VU", "V.U", "V.U.", "V. UNIT", "V. UNIT.", "VALOR UNITARIO", "V UNIT", "VALOR UNIT."):
+                        col_vu_idx = c_idx
+                    elif texto in ("UNID", "UNID.", "UND", "UND.", "UNIDADE"):
+                        col_unid_idx = c_idx
+                    else:
+                        for m_idx, (_, aliases) in enumerate(MESES_SIAFIM_MAP):
+                            if texto in aliases or any(
+                                texto.startswith(a + " ") or texto.startswith(a + "/") or texto.startswith(a + "-")
+                                for a in aliases
+                            ):
+                                if m_idx not in encontrados_mes:
+                                    encontrados_mes[m_idx] = c_idx
+
+                # Considera apenas o quadro que possui a série mensal (Março a Novembro)
+                if len(encontrados_mes) >= 5:
+                    blocos_tabela.append({
+                        "linha_cab": idx,
+                        "col_inicio": col_inicio,
+                        "col_fim": col_fim,
+                        "col_vu": col_vu_idx,
+                        "col_unid": col_unid_idx,
+                        "meses": encontrados_mes,
+                    })
+
+        if not blocos_tabela:
+            return FALLBACK_SIAFIM_2026
+
+        grupos: dict[str, dict] = {}
+        produtos_registrados: set[tuple[str, str]] = set()
+
+        for bloco_idx, bloco in enumerate(blocos_tabela):
+            linha_cab = bloco["linha_cab"]
+            col_inicio = bloco["col_inicio"]
+            col_fim = bloco["col_fim"]
+            col_vu_idx = bloco["col_vu"]
+            col_unid_idx = bloco["col_unid"]
+            colunas_meses = bloco["meses"]
+
+            # Limite vertical: vai até a linha anterior ao próximo cabeçalho "Item" na mesma faixa de colunas
+            prox_linhas_mesma_faixa = [
+                b["linha_cab"] for b in blocos_tabela
+                if b["linha_cab"] > linha_cab and b["col_inicio"] == col_inicio
+            ]
+            linha_fim = min(prox_linhas_mesma_faixa) if prox_linhas_mesma_faixa else len(bruto)
+
+            # Garante que os pares (Qtd, Valor) fiquem restritos às colunas deste bloco [col_inicio, col_fim)
+            colunas_meses_detalhe: dict[int, tuple[int, int | None]] = {}
+            cols_ordenadas = sorted(colunas_meses.items(), key=lambda x: x[1])
+            for pos, (m_idx, c_idx) in enumerate(cols_ordenadas):
+                prox_c_idx = cols_ordenadas[pos + 1][1] if pos + 1 < len(cols_ordenadas) else col_fim
+                if prox_c_idx - c_idx >= 2:
+                    # Na planilha: 1ª coluna do mês = Quantidade, 2ª coluna do mês = Valor R$
+                    colunas_meses_detalhe[m_idx] = (c_idx + 1, c_idx)
+                else:
+                    # Coluna única no mês (ex: Setembro com apenas R$ -)
+                    colunas_meses_detalhe[m_idx] = (c_idx, None)
+
+            coop_atual: str | None = None
+
+            # Verifica linhas imediatamente acima do cabeçalho deste bloco para detectar a cooperativa
+            for r_prev in range(max(0, linha_cab - 3), linha_cab):
+                for c_idx in range(col_inicio, min(col_inicio + 5, col_fim)):
+                    s = _sigla_cooperativa(bruto.iloc[r_prev, c_idx])
+                    if s:
+                        coop_atual = s
+
+            for idx in range(linha_cab + 1, linha_fim):
+                row = bruto.iloc[idx].tolist()
+                celula_item = str(row[col_inicio] or "").strip()
+                item_norm = _normalizar(celula_item)
+
+                # Detecta título de cooperativa nas colunas iniciais do bloco
+                sigla_encontrada = None
+                for c_idx in range(col_inicio, min(col_inicio + 4, col_fim)):
+                    s = _sigla_cooperativa(row[c_idx])
                     if s:
                         sigla_encontrada = s
                         break
 
-            if sigla_encontrada:
-                coop_atual = sigla_encontrada
-                if coop_atual not in grupos:
-                    meta = META_COOP_SIAFIM[coop_atual]
-                    grupos[coop_atual] = {
-                        "cooperativa": coop_atual,
+                if sigla_encontrada:
+                    coop_atual = sigla_encontrada
+                    continue
+
+                # Ignora linhas vazias, totais ou valores monetários soltos na coluna de item
+                if (
+                    not celula_item
+                    or celula_item.lower() == "nan"
+                    or celula_item.startswith("R$")
+                    or item_norm.startswith("TOTAL")
+                    or item_norm.startswith("SUBTOTAL")
+                    or item_norm.startswith("CONTRATO")
+                    or any(p in item_norm for p in ("TOTAL", "SUBTOTAL", "FONTE", "OBSERVA", "SALDO"))
+                ):
+                    continue
+
+                nome_padrao = _padronizar_nome_produto(celula_item)
+                chave_prod = _normalizar(nome_padrao)
+
+                # Identifica a cooperativa correta pelo nome do produto ou pelo cabeçalho ativo
+                coop_destino = produto_para_coop.get(chave_prod) or coop_atual
+                if not coop_destino:
+                    continue
+
+                if (coop_destino, chave_prod) in produtos_registrados:
+                    continue
+
+                ref_vu, ref_unid = vu_referencia.get(chave_prod, (0.0, "UND."))
+                vu = _valor_numero(row[col_vu_idx]) if (col_vu_idx is not None and col_vu_idx < col_fim) else 0.0
+                if vu <= 0:
+                    vu = ref_vu
+
+                unidade = (
+                    str(row[col_unid_idx] or "").strip().upper()
+                    if (col_unid_idx is not None and col_unid_idx < col_fim and str(row[col_unid_idx] or "").strip().lower() != "nan")
+                    else ""
+                )
+                if unidade in ("", "NAN"):
+                    unidade = ref_unid
+
+                valores = [0.0] * 9
+                qtds = [0] * 9
+                tem_dado = False
+
+                for m_idx, (c_val, c_qtd) in colunas_meses_detalhe.items():
+                    bruto_val = str(row[c_val] or "").strip() if c_val < col_fim else ""
+                    bruto_qtd = str(row[c_qtd] or "").strip() if (c_qtd is not None and c_qtd < col_fim) else ""
+
+                    val = round(_valor_numero(bruto_val), 2)
+                    qtd_planilha = int(round(_valor_numero(bruto_qtd)))
+
+                    # Caso a planilha tenha invertido Qtd e R$ em alguma coluna específica
+                    if "R$" in bruto_qtd and "R$" not in bruto_val:
+                        val, qtd_planilha = round(_valor_numero(bruto_qtd), 2), int(round(_valor_numero(bruto_val)))
+
+                    valores[m_idx] = val
+                    if val > 0:
+                        tem_dado = True
+                        qtds[m_idx] = qtd_planilha if qtd_planilha > 0 else (int(round(val / vu)) if vu > 0 else 0)
+                    elif qtd_planilha > 0 and vu > 0:
+                        tem_dado = True
+                        qtds[m_idx] = qtd_planilha
+                        valores[m_idx] = round(qtd_planilha * vu, 2)
+
+                if not tem_dado and vu == 0:
+                    continue
+
+                if coop_destino not in grupos:
+                    meta = META_COOP_SIAFIM[coop_destino]
+                    grupos[coop_destino] = {
+                        "cooperativa": coop_destino,
                         "contrato": meta["contrato"],
                         "corBadge": meta["corBadge"],
                         "produtos": [],
                     }
 
-            if not coop_atual:
-                continue
+                grupos[coop_destino]["produtos"].append({
+                    "nome": nome_padrao,
+                    "vu": vu,
+                    "unidade": unidade,
+                    "valores": valores,
+                    "qtds": qtds,
+                })
+                produtos_registrados.add((coop_destino, chave_prod))
 
-            # Extrai o nome do produto sem confundir com o nome da cooperativa ou contrato
-            nome_bruto = ""
-            if col_produto_idx is not None and col_produto_idx < len(row):
-                cand_prod = str(row[col_produto_idx] or "").strip()
-                if cand_prod and cand_prod.lower() != "nan" and _sigla_cooperativa(cand_prod) is None:
-                    nome_bruto = cand_prod
-            if not nome_bruto:
-                for c_idx in range(min(4, len(row))):
-                    cand = str(row[c_idx] or "").strip()
-                    cand_norm = _normalizar(cand)
-                    if (
-                        cand
-                        and cand.lower() != "nan"
-                        and _sigla_cooperativa(cand) is None
-                        and not cand_norm.startswith("CONTRATO")
-                    ):
-                        nome_bruto = cand
-                        break
-
-            nome_norm = _normalizar(nome_bruto)
-            if (
-                not nome_bruto
-                or nome_bruto.lower() == "nan"
-                or _sigla_cooperativa(nome_bruto) is not None
-                or any(p in nome_norm for p in ("TOTAL", "SUBTOTAL", "CONTRATO", "FONTE", "OBSERVA", "SALDO", "VALOR", "QTD"))
-            ):
-                continue
-
-            nome_padrao = _padronizar_nome_produto(nome_bruto)
-            ref_vu, ref_unid = vu_referencia.get(_normalizar(nome_padrao), (0.0, "UND."))
-
-            vu = _valor_numero(row[col_vu_idx]) if (col_vu_idx is not None and col_vu_idx < len(row)) else 0.0
-            if vu <= 0:
-                vu = ref_vu
-
-            unidade = (
-                str(row[col_unid_idx] or "").strip().upper()
-                if (col_unid_idx is not None and col_unid_idx < len(row) and str(row[col_unid_idx] or "").strip().lower() != "nan")
-                else ""
-            )
-            if unidade in ("", "NAN"):
-                unidade = ref_unid
-
-            valores = [0.0] * 9
-            qtds = [0] * 9
-            tem_valor = False
-
-            for m_idx, (c_val, c_qtd) in colunas_meses_detalhe.items():
-                val = round(_valor_numero(row[c_val]), 2) if c_val < len(row) else 0.0
-                qtd_planilha = int(round(_valor_numero(row[c_qtd]))) if (c_qtd is not None and c_qtd < len(row)) else 0
-
-                if val > 0 and qtd_planilha > 0 and vu > 0:
-                    if abs(qtd_planilha - val * vu) < abs(val - qtd_planilha * vu):
-                        val, qtd_planilha = round(float(qtd_planilha), 2), int(round(val))
-
-                valores[m_idx] = val
-                if val > 0:
-                    tem_valor = True
-                    qtds[m_idx] = qtd_planilha if qtd_planilha > 0 else (int(round(val / vu)) if vu > 0 else 0)
-                elif qtd_planilha > 0 and vu > 0:
-                    tem_valor = True
-                    qtds[m_idx] = qtd_planilha
-                    valores[m_idx] = round(qtd_planilha * vu, 2)
-
-            if not tem_valor and vu == 0:
-                continue
-
-            grupos[coop_atual]["produtos"].append({
-                "nome": nome_padrao,
-                "vu": vu,
-                "unidade": unidade,
-                "valores": valores,
-                "qtds": qtds,
-            })
-
-        # Garante que todas as 4 cooperativas sejam incluídas na ordem executiva
         ordem_coops = ["ASSOCENE", "COODAPISJG", "COOPANORTE", "COPAF"]
         resultado = []
         for coop_sigla in ordem_coops:
