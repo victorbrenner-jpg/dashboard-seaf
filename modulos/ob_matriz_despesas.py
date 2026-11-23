@@ -21,6 +21,7 @@ Formato de `dados` (valores em R$, uma lista por mês, Jan..último mês):
 from __future__ import annotations
 
 import json
+import re
 
 NOMES_MESES = ["JAN", "FEV", "MAR", "ABR", "MAI", "JUN",
                "JUL", "AGO", "SET", "OUT", "NOV", "DEZ"]
@@ -64,8 +65,35 @@ def dados_de_dataframe(df, ano=2026, ultimo_mes=None,
     return saida
 
 
-def montar_html_matriz(dados, ano=2026):
-    """Devolve o HTML completo da matriz (string)."""
+def dados_de_pivot(df_matriz, meses_exibicao,
+                   col_natureza="Despesa_Tratada", col_grupo="Grupo_Tratado"):
+    """Converte o `df_matriz` do app.py (pivot natureza x grupo x meses) no dict da matriz.
+
+    Natureza: CORRENTE / RP / DEA. Grupo: texto começando em "3" ou "4".
+    Meses sem linha viram 0,00, na ordem de `meses_exibicao`.
+    """
+    mapa = {"CORRENTE": "correntes", "RP": "rp", "DEA": "dea"}
+    saida = {nat: {"gnd3": [0.0] * len(meses_exibicao), "gnd4": [0.0] * len(meses_exibicao)}
+             for nat in NATUREZAS}
+    for _, row in df_matriz.iterrows():
+        nat = mapa.get(str(row[col_natureza]).strip().upper())
+        grupo = str(row[col_grupo]).strip()[:1]
+        if nat is None or grupo not in ("3", "4"):
+            continue
+        chave = f"gnd{grupo}"
+        for i, m in enumerate(meses_exibicao):
+            try:
+                saida[nat][chave][i] += float(row.get(m, 0.0) or 0.0)
+            except (TypeError, ValueError):
+                pass
+    return saida
+
+
+def montar_html_matriz(dados, ano=2026, meses=None):
+    """Devolve o HTML completo da matriz (string).
+
+    `meses`: rótulos das colunas (ex.: ["JAN/2026", ...]). Se omitido, usa JAN.. a partir do ano.
+    """
     n = max(len(dados[nat][g]) for nat in NATUREZAS for g in ("gnd3", "gnd4"))
     limpo = {}
     for nat in NATUREZAS:
@@ -75,10 +103,17 @@ def montar_html_matriz(dados, ano=2026):
             limpo[nat][g] = (v + [0.0] * n)[:n]
 
     ano2 = str(ano)[-2:]
-    meses = [f"{NOMES_MESES[i]}/{ano2}" for i in range(n)]
-    periodo = f"Jan–{NOMES_MESES[n-1].capitalize()}/{ano2}"
+    if meses:
+        n = len(meses)
+        for nat in NATUREZAS:
+            for g in ("gnd3", "gnd4"):
+                limpo[nat][g] = (limpo[nat][g] + [0.0] * n)[:n]
+        meses = [re.sub(r"/(\d{4})$", lambda mo: "/" + mo.group(1)[-2:], str(m)) for m in meses]
+    else:
+        meses = [f"{NOMES_MESES[i]}/{ano2}" for i in range(n)]
+    periodo = meses[0] if n == 1 else f"{meses[0]} a {meses[-1]}"
     th = "\n                        ".join(
-        f'<th class="py-3.5 px-2.5 text-right min-w-[86px]">{m}</th>' for m in meses)
+        f'<th class="py-3.5 px-2.5 text-right min-w-[68px]">{m}</th>' for m in meses)
 
     return (_TEMPLATE
             .replace("__MONTHS__", json.dumps(meses))
@@ -89,10 +124,10 @@ def montar_html_matriz(dados, ano=2026):
             .replace("__ANO__", str(ano)))
 
 
-def render_matriz_despesas(dados, ano=2026, altura=820):
+def render_matriz_despesas(dados, ano=2026, altura=560, meses=None):
     """Renderiza a matriz no Streamlit (iframe com rolagem própria)."""
     import streamlit.components.v1 as components
-    components.html(montar_html_matriz(dados, ano), height=altura, scrolling=True)
+    components.html(montar_html_matriz(dados, ano, meses), height=altura, scrolling=True)
 
 
 _TEMPLATE = r'''
@@ -111,9 +146,11 @@ _TEMPLATE = r'''
     <!-- Lucide Icons -->
     <script src="https://unpkg.com/lucide@latest"></script>
     <style>
+        :root { --tot-w: 176px; }
+        .matrix-scroll th, .matrix-scroll td { white-space: nowrap; }
         body {
             font-family: 'Inter', sans-serif;
-            background-color: #f1f5f9;
+            background-color: transparent;
             color: #0f172a;
         }
         /* Alinhamento numérico tabular com JetBrains Mono para leitura contábil de alta precisão */
@@ -158,71 +195,62 @@ _TEMPLATE = r'''
 <body class="antialiased py-2 px-1 sm:px-2 selection:bg-sky-100 selection:text-sky-900">
 
     <!-- Container Principal Único: Matriz Analítica por Tipo de Despesa -->
-    <main class="w-full max-w-[1560px] mx-auto bg-white rounded-2xl shadow-lg shadow-slate-200/70 border border-slate-200/90 overflow-hidden">
+    <main class="w-full bg-white rounded-xl shadow-md border border-slate-200 overflow-hidden">
         
         <!-- Cabeçalho Integrado do Cartão da Matriz -->
-        <header class="p-5 sm:p-6 bg-gradient-to-r from-white via-white to-slate-50/80 border-b border-slate-200 flex flex-col xl:flex-row xl:items-center xl:justify-between gap-5">
+        <header class="bg-[#0b2a4a] px-4 py-2.5 flex flex-wrap items-center justify-between gap-x-4 gap-y-2">
+            <h2 class="text-[13px] font-bold text-white tracking-tight flex items-center gap-2"><span aria-hidden="true">📊</span><span>Execução Mensal por Natureza de Despesa</span></h2>
             
-            <!-- Título -->
-            <div class="flex items-center gap-3.5">
-                <div class="p-2.5 bg-teal-50 text-[#0f766e] rounded-xl border border-teal-100 shrink-0">
-                    <i data-lucide="layers" class="w-6 h-6"></i>
-                </div>
-                <h1 class="text-lg sm:text-xl font-bold text-slate-900 tracking-tight">
-                    Demonstrativo Analítico por Tipo de Despesa
-                </h1>
-            </div>
-
             <!-- Barra de Controles Interativos -->
-            <div class="flex flex-wrap items-center gap-2.5 sm:gap-3">
+            <div class="flex flex-wrap items-center justify-end gap-2">
                 
                 <!-- Pílulas de Filtro por Grupo de Gasto (GND) -->
-                <div class="inline-flex flex-wrap items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80" role="group" aria-label="Filtro por GND">
+                <div class="inline-flex flex-wrap items-center bg-white/10 p-0.5 rounded-lg border border-white/15" role="group" aria-label="Filtro por GND">
                     <button type="button" id="pillALL" onclick="setGndFilter('ALL')"
-                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all">
+                        class="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all">
                         Todos os GNDs
                     </button>
                     <button type="button" id="pillGND3" onclick="setGndFilter('GND3')"
-                        class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         GND 3 - Custeio
                     </button>
                     <button type="button" id="pillGND4" onclick="setGndFilter('GND4')"
-                        class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         GND 4 - Investimentos
                     </button>
                 </div>
 
                 <!-- Divisor vertical sutil -->
-                <div class="hidden sm:block h-6 w-px bg-slate-200"></div>
+                <div class="hidden sm:block h-5 w-px bg-white/20"></div>
 
                 <!-- Base de Cálculo da Média Mensal -->
-                <div class="inline-flex items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80" role="group" aria-label="Base de Cálculo da Média">
+                <div class="inline-flex items-center bg-white/10 p-0.5 rounded-lg border border-white/15" role="group" aria-label="Base de Cálculo da Média">
                     <button type="button" id="btnAvgPeriod" onclick="setAvgBasis('period')" title="Divide o total acumulado pelos __NM__ meses do período (__PERIODO__)"
-                        class="px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all">
+                        class="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all">
                         Média __NM__m
                     </button>
                     <button type="button" id="btnAvgActive" onclick="setAvgBasis('active')" title="Divide o total acumulado apenas pelos meses com execução (> R$ 0,00)"
-                        class="px-2.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         Meses ativos
                     </button>
                 </div>
 
                 <!-- Alternador de Escala Numérica -->
-                <div class="inline-flex items-center bg-slate-100/90 p-1 rounded-xl border border-slate-200/80" role="group" aria-label="Formato Numérico">
+                <div class="inline-flex items-center bg-white/10 p-0.5 rounded-lg border border-white/15" role="group" aria-label="Formato Numérico">
                     <button type="button" id="btnFormatShort" onclick="setFormatMode('short')"
-                        class="px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-[#0f766e] shadow-sm transition-all">
+                        class="px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-[#0f766e] shadow-sm transition-all">
                         Abreviado (Mi)
                     </button>
                     <button type="button" id="btnFormatExact" onclick="setFormatMode('exact')"
-                        class="px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all">
+                        class="px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all">
                         Contábil Exato (R$)
                     </button>
                 </div>
 
                 <!-- Botão Único Expandir / Recolher Todos -->
                 <button type="button" id="btnToggleAll" onclick="toggleAllCategories()"
-                    class="inline-flex items-center gap-1.5 px-3.5 py-2 text-xs font-semibold rounded-xl bg-white hover:bg-slate-50 text-slate-700 border border-slate-200 shadow-2xs transition-all cursor-pointer">
-                    <i data-lucide="chevrons-down-up" id="iconToggleAll" class="w-3.5 h-3.5 text-slate-500"></i>
+                    class="inline-flex items-center gap-1.5 px-2.5 py-1 text-[11px] font-semibold rounded-lg bg-white/10 hover:bg-white/20 text-white border border-white/20 transition-all cursor-pointer">
+                    <i data-lucide="chevrons-down-up" id="iconToggleAll" class="w-3.5 h-3.5 text-white/80"></i>
                     <span id="labelToggleAll">Recolher tudo</span>
                 </button>
             </div>
@@ -230,21 +258,21 @@ _TEMPLATE = r'''
 
         <!-- Área da Tabela com Rolagem Horizontal Responsiva -->
         <div class="matrix-scroll overflow-x-auto relative">
-            <table class="w-full text-left border-collapse min-w-[1360px]">
+            <table class="w-full text-left border-collapse min-w-[1100px]">
                 <thead>
                     <tr class="bg-slate-50 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500 select-none">
                         <!-- Coluna Fixa à Esquerda -->
-                        <th class="py-3.5 px-4 sticky left-0 bg-slate-50 z-20 min-w-[320px] sticky-left-shadow" aria-label="Categoria"></th>
+                        <th class="py-3.5 px-4 sticky left-0 bg-slate-50 z-20 min-w-[250px] sticky-left-shadow" aria-label="Categoria"></th>
                         <!-- Meses JAN/26 a NOV/26 -->
                         __TH_MESES__
                         <!-- Colunas Fixas à Direita: Média Mensal e Total Acumulado -->
-                        <th class="py-3.5 px-3.5 text-right bg-indigo-50/70 text-indigo-950 sticky right-[160px] z-20 min-w-[148px] sticky-right-shadow border-l border-slate-200/80">
+                        <th class="py-3.5 px-3.5 text-right bg-[#e9edfe] text-indigo-950 sticky right-[var(--tot-w)] z-20 w-[124px] min-w-[124px] sticky-right-shadow border-l border-slate-200/80">
                             <div class="flex flex-col items-end">
                                 <span>MÉDIA MENSAL</span>
                                 <span id="thAvgSublabel" class="text-[9px] font-semibold text-indigo-600/80 tracking-normal normal-case">Base: __NM__ meses</span>
                             </div>
                         </th>
-                        <th class="py-3.5 px-4 text-right bg-slate-100 text-slate-800 sticky right-0 z-20 min-w-[160px] border-l border-slate-200/80">
+                        <th class="py-3.5 px-4 text-right bg-slate-100 text-slate-800 sticky right-0 z-20 w-[176px] min-w-[176px] border-l border-slate-200/80">
                             TOTAL ACUMULADO
                         </th>
                     </tr>
@@ -444,7 +472,7 @@ _TEMPLATE = r'''
                 trHeader.onclick = () => toggleCategory(cat.id);
 
                 let headerHtml = `
-                    <td colspan="12" class="py-3 px-4 sticky left-0 z-10 transition-colors">
+                    <td colspan="${MONTHS.length + 1}" class="py-3 px-4 sticky left-0 z-10 transition-colors">
                         <div class="flex items-center gap-2.5">
                             <span class="w-5 h-5 rounded-md flex items-center justify-center border shrink-0 ${cat.iconBg}">
                                 <i data-lucide="${isExpanded ? 'chevron-down' : 'chevron-right'}" class="w-3.5 h-3.5"></i>
@@ -455,7 +483,7 @@ _TEMPLATE = r'''
                             </div>
                         </div>
                     </td>
-                    <td class="py-3 px-3.5 text-right sticky right-[160px] z-10 ${cat.headerStickyBg} sticky-right-shadow border-l border-white/15 transition-colors">
+                    <td class="py-3 px-3.5 text-right sticky right-[var(--tot-w)] z-10 ${cat.headerStickyBg} sticky-right-shadow border-l border-white/15 transition-colors">
                         <span class="text-[10px] font-semibold uppercase tracking-wider text-sky-200/90">Média Mensal</span>
                     </td>
                     <td class="py-3 px-4 text-right sticky right-0 z-10 ${cat.headerStickyBg} border-l border-white/15 transition-colors">
@@ -511,14 +539,14 @@ _TEMPLATE = r'''
                             ? `Média de ${formatValue(subAvgInfo.avg, 'exact', true)}/mês (${subAvgInfo.divisor} ${subAvgInfo.divisor === 1 ? 'mês' : 'meses'})`
                             : 'Sem execução no período';
                         subHtml += `
-                            <td title="${subAvgTooltip}" class="py-2.5 px-3.5 text-right text-xs font-semibold text-indigo-900 bg-indigo-50/35 group-hover:bg-indigo-50/70 sticky right-[160px] z-10 sticky-right-shadow border-l border-slate-200/80 transition-colors">
+                            <td title="${subAvgTooltip}" class="py-2.5 px-3.5 text-right text-xs font-semibold text-indigo-900 bg-[#f5f7ff] group-hover:bg-[#e9edfe] sticky right-[var(--tot-w)] z-10 sticky-right-shadow border-l border-slate-200/80 transition-colors">
                                 ${formatValue(subAvgInfo.avg, state.formatMode)}
                             </td>
                         `;
 
                         // Total da Sub-linha (Fixo à Direita)
                         subHtml += `
-                            <td class="py-2.5 px-4 text-right text-xs font-semibold text-slate-800 bg-slate-50/90 group-hover:bg-slate-100/80 sticky right-0 z-10 border-l border-slate-200/80 transition-colors">
+                            <td class="py-2.5 px-4 text-right text-xs font-semibold text-slate-800 bg-[#f8fafc] group-hover:bg-[#f1f5f9] sticky right-0 z-10 border-l border-slate-200/80 transition-colors">
                                 ${formatValue(subTotal, 'exact')}
                             </td>
                         `;
@@ -561,7 +589,7 @@ _TEMPLATE = r'''
                     ? `Média de ${formatValue(visibleAvgInfo.avg, 'exact', true)}/mês (${visibleAvgInfo.divisor} ${visibleAvgInfo.divisor === 1 ? 'mês' : 'meses'})`
                     : 'Sem execução no período';
                 totalHtml += `
-                    <td title="${totalAvgTooltip}" class="py-3 px-3.5 text-right text-xs sm:text-[13px] font-bold text-indigo-950 ${cat.totalAvgStickyBg} sticky right-[160px] z-10 sticky-right-shadow border-l border-slate-200/80">
+                    <td title="${totalAvgTooltip}" class="py-3 px-3.5 text-right text-xs sm:text-[13px] font-bold text-indigo-950 ${cat.totalAvgStickyBg} sticky right-[var(--tot-w)] z-10 sticky-right-shadow border-l border-slate-200/80">
                         ${formatValue(visibleAvgInfo.avg, state.formatMode, true)}
                     </td>
                 `;
@@ -591,11 +619,11 @@ _TEMPLATE = r'''
             const btnActive = document.getElementById('btnAvgActive');
 
             if (basis === 'period') {
-                btnPeriod.className = 'px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all';
-                btnActive.className = 'px-2.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnPeriod.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all';
+                btnActive.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             } else {
-                btnActive.className = 'px-2.5 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all';
-                btnPeriod.className = 'px-2.5 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnActive.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all';
+                btnPeriod.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             }
             renderMatrix();
         }
@@ -606,11 +634,11 @@ _TEMPLATE = r'''
             const btnExact = document.getElementById('btnFormatExact');
 
             if (mode === 'short') {
-                btnShort.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-[#0f766e] shadow-sm transition-all';
-                btnExact.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnShort.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-[#0f766e] shadow-sm transition-all';
+                btnExact.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             } else {
-                btnExact.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-[#0f766e] shadow-sm transition-all';
-                btnShort.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                btnExact.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-[#0f766e] shadow-sm transition-all';
+                btnShort.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
             }
             renderMatrix();
         }
@@ -620,9 +648,9 @@ _TEMPLATE = r'''
             ['ALL', 'GND3', 'GND4'].forEach(key => {
                 const pill = document.getElementById(`pill${key}`);
                 if (key === filter) {
-                    pill.className = 'px-3 py-1.5 text-xs font-semibold rounded-lg bg-white text-slate-900 shadow-sm transition-all';
+                    pill.className = 'px-2.5 py-1 text-[11px] font-semibold rounded-md bg-white text-slate-900 shadow-sm transition-all';
                 } else {
-                    pill.className = 'px-3 py-1.5 text-xs font-medium rounded-lg text-slate-600 hover:text-slate-900 transition-all';
+                    pill.className = 'px-2.5 py-1 text-[11px] font-medium rounded-md text-white/80 hover:text-white transition-all';
                 }
             });
             renderMatrix();
@@ -658,6 +686,39 @@ _TEMPLATE = r'''
         }
 
         // Inicializa a matriz ao carregar a página
+        function ajustarAlturaIframe() {
+            try {
+                const th = document.querySelector('thead th:last-child');
+                if (th) {
+                    const w = Math.floor(th.getBoundingClientRect().width) - 1; // 1px de sobreposição, sem fresta
+                    const atual = document.documentElement.style.getPropertyValue('--tot-w');
+                    if (w > 0 && atual !== w + 'px') document.documentElement.style.setProperty('--tot-w', w + 'px');
+                }
+                const main = document.querySelector('main');
+                if (!main || !window.frameElement) return;
+                if (main.offsetHeight < 80) return; // iframe oculto/ainda sem layout: não mexe na altura
+                const h = Math.ceil(main.getBoundingClientRect().bottom + window.scrollY) + 20;
+                const antes = window.frameElement.getBoundingClientRect().height;
+                if (Math.abs(antes - h) > 1) {
+                    window.frameElement.style.height = h + 'px';
+                    window.frameElement.setAttribute('height', h);
+                    // só o contêiner do próprio elemento no Streamlit, e só se tinha a altura antiga do iframe
+                    const cont = window.frameElement.closest('[data-testid="stElementContainer"], .element-container, .stElementContainer')
+                        || window.frameElement.parentElement;
+                    if (cont && cont.tagName !== 'BODY' && Math.abs(cont.getBoundingClientRect().height - antes) <= 2) {
+                        cont.style.height = h + 'px';
+                    }
+                }
+            } catch (e) { /* sem acesso ao iframe: mantém a altura padrão */ }
+        }
+        window.addEventListener('load', () => {
+            ajustarAlturaIframe();
+            if (window.ResizeObserver) new ResizeObserver(ajustarAlturaIframe).observe(document.querySelector('main'));
+            window.addEventListener('resize', ajustarAlturaIframe);
+            document.addEventListener('click', () => setTimeout(ajustarAlturaIframe, 60));
+            setInterval(ajustarAlturaIframe, 600); // cobre fontes/estilos que carregam depois
+        });
+
         window.addEventListener('DOMContentLoaded', () => {
             renderMatrix();
         });
