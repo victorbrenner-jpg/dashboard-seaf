@@ -11,11 +11,6 @@ import streamlit as st
 import streamlit.components.v1 as components
 
 
-URL_BASE_PAGAMENTOS = (
-    "https://docs.google.com/spreadsheets/d/e/"
-    "2PACX-1vTD3b7L6byArEDgkVKOXXlc7RK0M2QKXLov83OydCaks3rDISWYWfgGNi6vG6pwy8t5Ul3Fd2wArhtT/"
-    "pub?gid=1786485134&single=true&output=csv"
-)
 # Nova base SIAFIM 2026 (aba gid=1358142076)
 URL_BASE_SIAFIM_2026 = (
     "https://docs.google.com/spreadsheets/d/"
@@ -28,8 +23,8 @@ PERCENTUAL_COOPERATIVAS = 0.45
 META_COOPERATIVAS = TOTAL_RECEBIDO * PERCENTUAL_COOPERATIVAS
 
 MESES = [
-    "Jan/2026", "Fev/2026", "Mar/2026", "Abr/2026", "Mai/2026", "Jun/2026",
-    "Jul/2026", "Ago/2026", "Set/2026", "Out/2026", "Nov/2026", "Dez/2026",
+    "Mar/2026", "Abr/2026", "Mai/2026", "Jun/2026", "Jul/2026",
+    "Ago/2026", "Set/2026", "Out/2026", "Nov/2026",
 ]
 
 MESES_SIAFIM_MAP = [
@@ -215,11 +210,6 @@ def _valor_numero(valor: object) -> float:
         return 0.0
 
 
-def _localizar_coluna(colunas: pd.Index, *nomes: str) -> str | None:
-    mapa = {_normalizar(coluna): coluna for coluna in colunas}
-    return next((mapa[_normalizar(nome)] for nome in nomes if _normalizar(nome) in mapa), None)
-
-
 def _nome_cooperativa(nome: object) -> str | None:
     texto = _normalizar(nome)
     for exibicao, termos in COOPERATIVAS.items():
@@ -256,35 +246,37 @@ def _padronizar_nome_produto(nome: str) -> str:
     return mapa_nomes.get(chave, nome.strip())
 
 
-@st.cache_data(ttl=60, show_spinner=False)
-def _carregar_pagamentos() -> pd.DataFrame:
-    dados = pd.read_csv(URL_BASE_PAGAMENTOS)
-    dados.columns = [str(coluna).strip() for coluna in dados.columns]
-    coluna_fonte = _localizar_coluna(dados.columns, "Fonte")
-    coluna_valor = _localizar_coluna(dados.columns, "Valor")
-    coluna_data = _localizar_coluna(dados.columns, "Data Emissão", "Data Emissao", "Data")
-    coluna_credor = _localizar_coluna(dados.columns, "Nome do Credor", "Credor")
-    if not all((coluna_fonte, coluna_valor, coluna_data, coluna_credor)):
-        raise ValueError("A base de pagamentos não contém as colunas necessárias para o monitoramento FNDE.")
-
-    base = dados.copy()
-    fonte = base[coluna_fonte].fillna("").astype(str)
-    base = base[fonte.str.contains(r"(?<!\d)552(?!\d)", regex=True, na=False)].copy()
-    base["Cooperativa"] = base[coluna_credor].map(_nome_cooperativa)
-    base = base[base["Cooperativa"].notna()].copy()
-    base["Valor executado"] = base[coluna_valor].map(_valor_numero)
-    base["Data"] = pd.to_datetime(base[coluna_data], errors="coerce", dayfirst=True)
-    base = base[(base["Data"].isna()) | (base["Data"].dt.year == 2026)].copy()
-    base["Mês"] = base["Data"].dt.month.map(
-        {1: "Jan/2026", 2: "Fev/2026", 3: "Mar/2026", 4: "Abr/2026", 5: "Mai/2026", 6: "Jun/2026",
-         7: "Jul/2026", 8: "Ago/2026", 9: "Set/2026", 10: "Out/2026", 11: "Nov/2026", 12: "Dez/2026"}
-    ).fillna("Sem mês informado")
-    return base
+def _construir_base_mensal_siafim(dados_siafim: list[dict]) -> pd.DataFrame:
+    """Converte os grupos da planilha SIAFIM 2026 em registros mensais por cooperativa e produto."""
+    registros = []
+    for grupo in dados_siafim:
+        sigla = grupo["cooperativa"]
+        cooperativa_exibicao = META_COOP_SIAFIM.get(sigla, {}).get("nome_completo") or _nome_cooperativa(sigla)
+        if not cooperativa_exibicao:
+            continue
+        for prod in grupo.get("produtos", []):
+            valores = prod.get("valores", [])
+            qtds = prod.get("qtds", [])
+            for idx, mes_label in enumerate(MESES):
+                val = float(valores[idx]) if idx < len(valores) else 0.0
+                qtd = int(qtds[idx]) if idx < len(qtds) else 0
+                if val > 0 or qtd > 0:
+                    registros.append({
+                        "Sigla": sigla,
+                        "Cooperativa": cooperativa_exibicao,
+                        "Produto": prod["nome"],
+                        "Mês": mes_label,
+                        "Valor executado": val,
+                        "Quantidade": qtd,
+                    })
+    if not registros:
+        return pd.DataFrame(columns=["Sigla", "Cooperativa", "Produto", "Mês", "Valor executado", "Quantidade"])
+    return pd.DataFrame(registros)
 
 
 @st.cache_data(ttl=60, show_spinner=False)
 def _carregar_siafim_2026() -> list[dict]:
-    """Lê a nova planilha SIAFIM 2026 (gid=1358142076) mantendo a estrutura da tabela interativa."""
+    """Lê a nova planilha SIAFIM 2026 (gid=1358142076) extraindo valores e quantidades mensais."""
     try:
         bruto = pd.read_csv(URL_BASE_SIAFIM_2026, header=None)
         if bruto.empty:
@@ -312,7 +304,7 @@ def _carregar_siafim_2026() -> list[dict]:
                 for c_idx, texto in enumerate(celulas):
                     if any(k in texto for k in ("PRODUTO", "ITEM", "GENERO", "ALIMENTO")):
                         col_produto_idx = c_idx
-                    elif texto in ("VU", "V. UNIT", "V. UNIT.", "VALOR UNITARIO", "V UNIT"):
+                    elif texto in ("VU", "V. UNIT", "V. UNIT.", "VALOR UNITARIO", "V UNIT", "VALOR UNIT."):
                         col_vu_idx = c_idx
                     elif texto in ("UNID", "UNID.", "UND", "UND.", "UNIDADE"):
                         col_unid_idx = c_idx
@@ -323,14 +315,64 @@ def _carregar_siafim_2026() -> list[dict]:
         if linha_cabecalho is None or len(colunas_meses) < 5:
             return FALLBACK_SIAFIM_2026
 
+        # Verifica se há subcabeçalho imediatamente abaixo (ex: "VALOR" / "QTD" por mês)
+        sub_cabecalho = (
+            [_normalizar(v) for v in bruto.iloc[linha_cabecalho + 1].tolist()]
+            if linha_cabecalho + 1 < len(bruto)
+            else []
+        )
+        tem_subcabecalho = any(
+            any(k in c for k in ("VALOR", "QTD", "QUANT", "R$"))
+            for c in sub_cabecalho
+        )
+        inicio_dados = linha_cabecalho + (2 if tem_subcabecalho else 1)
+
+        # Se a linha de cabeçalho não tinha VU/Unidade explícitos, procura nas colunas anteriores ao primeiro mês
+        primeiro_mes_col = min(colunas_meses.values())
+        if col_vu_idx is None:
+            for c_idx in range(primeiro_mes_col):
+                if c_idx not in (col_coop_idx, col_produto_idx, col_unid_idx):
+                    amostra = [
+                        _valor_numero(bruto.iloc[r, c_idx])
+                        for r in range(inicio_dados, min(inicio_dados + 15, len(bruto)))
+                    ]
+                    if any(0.5 <= v <= 100.0 for v in amostra):
+                        col_vu_idx = c_idx
+                        break
+
+        # Mapeia para cada mês a coluna de valor e a eventual coluna de quantidade
+        colunas_meses_detalhe: dict[int, tuple[int, int | None]] = {}
+        cols_ordenadas = sorted(colunas_meses.items(), key=lambda x: x[1])
+        for pos, (m_idx, c_idx) in enumerate(cols_ordenadas):
+            prox_c_idx = cols_ordenadas[pos + 1][1] if pos + 1 < len(cols_ordenadas) else len(bruto.columns)
+            col_val = c_idx
+            col_qtd = None
+            if prox_c_idx - c_idx >= 2:
+                # Verifica no subcabeçalho qual coluna é valor e qual é quantidade
+                sub_a = sub_cabecalho[c_idx] if c_idx < len(sub_cabecalho) else ""
+                sub_b = sub_cabecalho[c_idx + 1] if (c_idx + 1) < len(sub_cabecalho) else ""
+                if any(k in sub_a for k in ("QTD", "QUANT")):
+                    col_qtd = c_idx
+                    col_val = c_idx + 1
+                else:
+                    col_val = c_idx
+                    col_qtd = c_idx + 1
+            colunas_meses_detalhe[m_idx] = (col_val, col_qtd)
+
+        # Mapa de V.U. de referência caso a célula de V.U. da planilha venha vazia ou formatada diferente
+        vu_referencia = {
+            _normalizar(p["nome"]): (p["vu"], p["unidade"])
+            for g in FALLBACK_SIAFIM_2026
+            for p in g["produtos"]
+        }
+
         grupos: dict[str, dict] = {}
         coop_atual: str | None = None
 
-        for idx in range(linha_cabecalho + 1, len(bruto)):
+        for idx in range(inicio_dados, len(bruto)):
             row = bruto.iloc[idx].tolist()
             textos_linha = [_normalizar(v) for v in row]
 
-            # Verifica se a linha marca o início de uma cooperativa
             sigla_encontrada = None
             if col_coop_idx is not None and col_coop_idx < len(row):
                 sigla_encontrada = _sigla_cooperativa(row[col_coop_idx])
@@ -355,7 +397,6 @@ def _carregar_siafim_2026() -> list[dict]:
             if not coop_atual:
                 continue
 
-            # Extrai nome do produto
             nome_bruto = ""
             if col_produto_idx is not None and col_produto_idx < len(row):
                 nome_bruto = str(row[col_produto_idx] or "").strip()
@@ -371,35 +412,52 @@ def _carregar_siafim_2026() -> list[dict]:
                 not nome_bruto
                 or nome_bruto.lower() == "nan"
                 or _sigla_cooperativa(nome_bruto) is not None
-                or any(p in nome_norm for p in ("TOTAL", "SUBTOTAL", "CONTRATO", "FONTE", "OBSERVA", "SALDO"))
+                or any(p in nome_norm for p in ("TOTAL", "SUBTOTAL", "CONTRATO", "FONTE", "OBSERVA", "SALDO", "VALOR", "QTD"))
             ):
                 continue
 
+            nome_padrao = _padronizar_nome_produto(nome_bruto)
+            ref_vu, ref_unid = vu_referencia.get(_normalizar(nome_padrao), (0.0, "UND."))
+
             vu = _valor_numero(row[col_vu_idx]) if (col_vu_idx is not None and col_vu_idx < len(row)) else 0.0
+            if vu <= 0:
+                vu = ref_vu
+
             unidade = (
                 str(row[col_unid_idx] or "").strip().upper()
                 if (col_unid_idx is not None and col_unid_idx < len(row) and str(row[col_unid_idx] or "").strip().lower() != "nan")
-                else "UND."
+                else ""
             )
             if unidade in ("", "NAN"):
-                unidade = "UND."
+                unidade = ref_unid
 
             valores = [0.0] * 9
             qtds = [0] * 9
             tem_valor = False
-            for m_idx, c_idx in colunas_meses.items():
-                if c_idx < len(row):
-                    val = round(_valor_numero(row[c_idx]), 2)
-                    valores[m_idx] = val
-                    if val > 0:
-                        tem_valor = True
-                        qtds[m_idx] = int(round(val / vu)) if vu > 0 else 0
+
+            for m_idx, (c_val, c_qtd) in colunas_meses_detalhe.items():
+                val = round(_valor_numero(row[c_val]), 2) if c_val < len(row) else 0.0
+                qtd_planilha = int(round(_valor_numero(row[c_qtd]))) if (c_qtd is not None and c_qtd < len(row)) else 0
+
+                # Caso a planilha traga a quantidade na coluna principal e o valor na adjacente
+                if val > 0 and qtd_planilha > 0 and vu > 0:
+                    if abs(qtd_planilha - val * vu) < abs(val - qtd_planilha * vu):
+                        val, qtd_planilha = round(float(qtd_planilha), 2), int(round(val))
+
+                valores[m_idx] = val
+                if val > 0:
+                    tem_valor = True
+                    qtds[m_idx] = qtd_planilha if qtd_planilha > 0 else (int(round(val / vu)) if vu > 0 else 0)
+                elif qtd_planilha > 0 and vu > 0:
+                    tem_valor = True
+                    qtds[m_idx] = qtd_planilha
+                    valores[m_idx] = round(qtd_planilha * vu, 2)
 
             if not tem_valor and vu == 0:
                 continue
 
             grupos[coop_atual]["produtos"].append({
-                "nome": _padronizar_nome_produto(nome_bruto),
+                "nome": nome_padrao,
                 "vu": vu,
                 "unidade": unidade,
                 "valores": valores,
@@ -900,26 +958,17 @@ def render() -> None:
             "↻ Atualizar dados",
             key="fnde_atualizar_dados",
             use_container_width=True,
-            help="Busca novamente os pagamentos e os dados da planilha SIAFIM 2026.",
+            help="Busca novamente os dados da planilha SIAFIM 2026.",
         ):
-            _carregar_pagamentos.clear()
             _carregar_siafim_2026.clear()
             st.rerun()
-    st.caption("Atualização automática do cache: até 1 minuto. Use “Atualizar dados” para buscar as planilhas imediatamente.")
+    st.caption("Atualização automática do cache: até 1 minuto. Use “Atualizar dados” para buscar a planilha imediatamente.")
 
-    try:
-        pagamentos = _carregar_pagamentos()
-        pagamentos["Cooperativa"] = pagamentos["Cooperativa"].replace(
-            {NOME_COOPANORTE_ANTERIOR: NOME_COOPANORTE}
-        )
-    except Exception as erro:
-        st.error("Não foi possível atualizar a base de pagamentos para o Monitoramento FNDE.")
-        st.caption(f"Detalhe técnico: {erro}")
-        if st.button("Atualizar conexão", key="fnde_atualizar_conexao"):
-            _carregar_pagamentos.clear()
-            _carregar_siafim_2026.clear()
-            st.rerun()
-        return
+    dados_siafim = _carregar_siafim_2026()
+    base_mensal = _construir_base_mensal_siafim(dados_siafim)
+    base_mensal["Cooperativa"] = base_mensal["Cooperativa"].replace(
+        {NOME_COOPANORTE_ANTERIOR: NOME_COOPANORTE}
+    )
 
     if "fnde_filtros_aplicados" not in st.session_state:
         st.session_state.fnde_filtros_aplicados = {"meses": [], "credores": []}
@@ -928,7 +977,7 @@ def render() -> None:
         st.markdown("#### Filtros — Monitoramento FNDE")
         with st.form("form_filtros_fnde"):
             meses = st.multiselect(
-                "Mês de pagamento",
+                "Mês de execução",
                 MESES,
                 default=st.session_state.fnde_filtros_aplicados["meses"],
             )
@@ -939,7 +988,7 @@ def render() -> None:
             )
             aplicar = st.form_submit_button("Aplicar filtros", use_container_width=True, type="primary")
         limpar = st.button("Limpar filtros", use_container_width=True, key="limpar_filtros_fnde")
-        st.caption("Fonte fixa: 552")
+        st.caption("Base: Execução SIAFIM — Agricultura Familiar 2026")
 
     if aplicar:
         st.session_state.fnde_filtros_aplicados = {"meses": meses, "credores": credores}
@@ -949,7 +998,7 @@ def render() -> None:
         st.rerun()
 
     filtros = st.session_state.fnde_filtros_aplicados
-    filtrado = pagamentos.copy()
+    filtrado = base_mensal.copy()
     if filtros["meses"]:
         filtrado = filtrado[filtrado["Mês"].isin(filtros["meses"])]
     if filtros["credores"]:
@@ -959,16 +1008,16 @@ def render() -> None:
     saldo = max(META_COOPERATIVAS - executado, 0.0)
     percentual_executado = (executado / META_COOPERATIVAS * 100) if META_COOPERATIVAS else 0.0
 
-    # Cards fixos e totais mantidos
+    # Cards superiores: Total recebido e Meta são fixos; Executado e Saldo vêm da nova base SIAFIM 2026
     c1, c2, c3, c4 = st.columns(4)
     with c1:
         _card("Total recebido FNDE", TOTAL_RECEBIDO, "Receita anual de 2026", "azul")
     with c2:
         _card("Meta cooperativas", META_COOPERATIVAS, "45% do total recebido", "azul")
     with c3:
-        _card("Executado", executado, f"{percentual_executado:.1f}% da meta anual", "verde")
+        _card("Executado", executado, f"{percentual_executado:.1f}% da meta anual (SIAFIM)", "verde")
     with c4:
-        _card("Saldo a executar", saldo, "Meta anual ainda disponível", "laranja")
+        _card("Saldo a executar", saldo, "Diferença entre a meta e o executado", "laranja")
 
     st.markdown('<div class="fnde-box-title">Distribuição mensal de recursos por cooperativa</div>', unsafe_allow_html=True)
     matriz = pd.pivot_table(
@@ -981,6 +1030,8 @@ def render() -> None:
     ) if not filtrado.empty else pd.DataFrame()
     matriz = matriz.reindex(index=list(COOPERATIVAS), columns=MESES, fill_value=0.0)
     meses_exibidos = [mes for mes in MESES if float(matriz[mes].sum()) > 0]
+    if not meses_exibidos:
+        meses_exibidos = MESES
     matriz = matriz[meses_exibidos]
     linhas = []
     for cooperativa, valores in matriz.iterrows():
@@ -1000,9 +1051,7 @@ def render() -> None:
     )
 
     mensal = filtrado.groupby("Mês")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
-    quantidade_mensal = filtrado.groupby("Mês").size() if not filtrado.empty else pd.Series(dtype=int)
     grafico = pd.DataFrame({"Mês": MESES, "Executado no mês": [float(mensal.get(mes, 0.0)) for mes in MESES]})
-    grafico["Pagamentos"] = [int(quantidade_mensal.get(mes, 0)) for mes in MESES]
     st.markdown('<div class="fnde-analise-titulo">Análise temporal e execução mensal</div>', unsafe_allow_html=True)
     with st.container(key="analise_fnde", border=True):
         esquerda, direita = st.columns([1.18, .92], gap="large")
@@ -1028,26 +1077,25 @@ def render() -> None:
         with direita:
             st.markdown('<div class="fnde-subtitulo-grafico">Execução por cooperativa</div>', unsafe_allow_html=True)
             por_credor = filtrado.groupby("Cooperativa")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
-            qtde_pagamentos = filtrado.groupby("Cooperativa").size() if not filtrado.empty else pd.Series(dtype=int)
+            meses_ativos = filtrado.groupby("Cooperativa")["Mês"].nunique() if not filtrado.empty else pd.Series(dtype=int)
             linhas_resumo = "".join(
-                f"<tr><td>{cooperativa}</td><td>{int(qtde_pagamentos.get(cooperativa, 0))}</td>"
+                f"<tr><td>{cooperativa}</td><td>{int(meses_ativos.get(cooperativa, 0))}</td>"
                 f"<td class='fnde-valor'>{_moeda(float(por_credor.get(cooperativa, 0.0)))}</td>"
                 f"<td>{float(por_credor.get(cooperativa, 0.0)) / META_COOPERATIVAS * 100:.1f}%</td></tr>"
                 for cooperativa in COOPERATIVAS
             )
+            total_meses_ativos = int(filtrado["Mês"].nunique()) if not filtrado.empty else 0
             st.markdown(
-                "<div class='fnde-resumo-mes'><table><thead><tr><th>CREDOR</th><th>PAGAMENTOS</th><th>EXECUTADO</th><th>% DA META FNDE</th></tr></thead><tbody>"
+                "<div class='fnde-resumo-mes'><table><thead><tr><th>CREDOR</th><th>MESES C/ EXECUÇÃO</th><th>EXECUTADO</th><th>% DA META FNDE</th></tr></thead><tbody>"
                 + linhas_resumo
-                + f"<tr><td class='fnde-total'>TOTAL GERAL</td><td class='fnde-total'>{int(qtde_pagamentos.sum())}</td><td class='fnde-total'>{_moeda(float(por_credor.sum()))}</td><td class='fnde-total'>{percentual_executado:.1f}%</td></tr>"
+                + f"<tr><td class='fnde-total'>TOTAL GERAL</td><td class='fnde-total'>{total_meses_ativos}</td><td class='fnde-total'>{_moeda(float(por_credor.sum()))}</td><td class='fnde-total'>{percentual_executado:.1f}%</td></tr>"
                 + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
 
-    # Nova seção: Execução SIAFIM — Agricultura Familiar 2026 (substitui a antiga base Qlik)
+    # Nova seção: Execução SIAFIM — Agricultura Familiar 2026
     st.markdown('<div class="fnde-box-title">Produtos fornecidos por cooperativa — Execução SIAFIM 2026</div>', unsafe_allow_html=True)
     with st.container(key="produtos_fnde"):
-        dados_siafim = _carregar_siafim_2026()
-
         # Sincroniza o filtro inicial caso o usuário tenha filtrado 1 cooperativa na barra lateral
         filtro_inicial_siafim = "TODAS"
         if len(filtros["credores"]) == 1:
