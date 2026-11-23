@@ -1,0 +1,592 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Execução SIAFIM - Agricultura Familiar 2026</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <style>
+        body {
+            font-family: 'Inter', -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
+            background-color: #F8FAFC;
+            color: #0F172A;
+            font-variant-numeric: tabular-nums;
+        }
+        /* Barra superior discreta estilo Streamlit */
+        .st-top-accent {
+            background: linear-gradient(90deg, #FF4B4B 0%, #F59E0B 50%, #10B981 100%);
+        }
+        /* Scrollbar refinada para a tabela */
+        .table-wrapper::-webkit-scrollbar {
+            height: 8px;
+            width: 8px;
+        }
+        .table-wrapper::-webkit-scrollbar-track {
+            background: #F1F5F9;
+            border-radius: 4px;
+        }
+        .table-wrapper::-webkit-scrollbar-thumb {
+            background: #CBD5E1;
+            border-radius: 4px;
+        }
+        .table-wrapper::-webkit-scrollbar-thumb:hover {
+            background: #94A3B8;
+        }
+        /* Colunas fixas para leitura fluida no desktop e mobile */
+        .sticky-col-produto {
+            position: sticky;
+            left: 0;
+            z-index: 10;
+        }
+        thead .sticky-col-produto {
+            z-index: 20;
+        }
+    </style>
+</head>
+<body class="min-h-screen flex flex-col">
+
+    <!-- Linha de acento superior -->
+    <div class="h-1 w-full st-top-accent"></div>
+
+    <!-- Container Principal -->
+    <main class="w-full max-w-[1520px] mx-auto px-4 sm:px-6 lg:px-8 py-6 flex-1">
+
+        <!-- Cabeçalho Executivo e Controles Discretos -->
+        <header class="flex flex-col lg:flex-row lg:items-center lg:justify-between gap-4 mb-5">
+            <div>
+                <div class="flex items-center gap-2.5">
+                    <h1 class="text-xl sm:text-2xl font-bold text-slate-900 tracking-tight">
+                        Execução SIAFIM — Agricultura Familiar 2026
+                    </h1>
+                    <span class="hidden sm:inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-emerald-50 text-emerald-700 border border-emerald-200">
+                        Mar – Nov 2026
+                    </span>
+                </div>
+                <p class="text-xs sm:text-sm text-slate-500 mt-1">
+                    Demonstrativo mensal por cooperativa e portfólio de produtos contratados
+                </p>
+            </div>
+
+            <!-- Controles de Filtro e Métrica -->
+            <div class="flex flex-wrap items-center gap-3">
+                <!-- Filtro por Cooperativa -->
+                <div class="flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-xs overflow-x-auto max-w-full" id="coopFilterGroup">
+                    <button type="button" data-coop="TODAS" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition-all bg-slate-900 text-white shadow-xs cursor-pointer">
+                        Todas (4)
+                    </button>
+                    <button type="button" data-coop="ASSOCENE" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer">
+                        ASSOCENE
+                    </button>
+                    <button type="button" data-coop="COODAPISJG" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer">
+            <!-- Controles de Filtro por Cooperativa -->
+            <div class="flex flex-wrap items-center gap-3">
+                <div class="flex items-center bg-white border border-slate-200 rounded-xl p-1 shadow-xs overflow-x-auto max-w-full" id="coopFilterGroup">
+                    <button type="button" data-coop="TODAS" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition-all bg-slate-900 text-white shadow-xs cursor-pointer">
+                        Todas (4)
+                    </button>
+                    <button type="button" data-coop="ASSOCENE" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer">
+                        ASSOCENE
+                    </button>
+                    <button type="button" data-coop="COODAPISJG" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer">
+                        COODAPISJG
+                    </button>
+                    <button type="button" data-coop="COOPANORTE" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer">
+                        COOPANORTE
+                    </button>
+                    <button type="button" data-coop="COPAF" class="coop-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer">
+                        COPAF
+                    </button>
+                </div>
+            </div>
+        </header>
+
+        <!-- Cartão Único da Tabela Executiva -->
+        <section class="bg-white rounded-2xl border border-slate-200 shadow-sm overflow-hidden">
+            <div class="table-wrapper overflow-x-auto max-h-[78vh]">
+                <table class="w-full border-collapse text-left">
+                    <thead class="sticky top-0 z-20 bg-slate-50 border-b border-slate-200 text-[11px] font-semibold uppercase tracking-wider text-slate-500">
+                        <tr>
+                            <th class="sticky-col-produto bg-slate-50 py-3.5 pl-4 pr-3 min-w-[245px] border-r border-slate-200/80">
+                                Cooperativa / Produto
+                            </th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[82px]">V. Unit.</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Março</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Abril</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Maio</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Junho</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Julho</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Agosto</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[96px]">Setembro</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Outubro</th>
+                            <th class="py-3.5 px-2.5 text-right min-w-[116px]">Novembro</th>
+                            <th class="py-3.5 pl-3 pr-4 text-right min-w-[144px] bg-slate-100/80 text-slate-700 border-l border-slate-200">
+                                Total (Mar–Nov)
+                            </th>
+                        </tr>
+                    </thead>
+                    <tbody id="tabelaCorpo" class="divide-y divide-slate-100 text-xs sm:text-[13px]">
+                        <!-- Renderizado dinamicamente via JavaScript -->
+                    </tbody>
+                    <tfoot id="tabelaRodape" class="sticky bottom-0 z-20 bg-slate-900 text-white text-xs sm:text-[13px] font-semibold">
+                        <!-- Linha de Total Geral -->
+                    </tfoot>
+                </table>
+            </div>
+
+            <!-- Legenda discreta no rodapé do cartão -->
+            <div class="px-4 py-2.5 bg-slate-50 border-t border-slate-200 flex flex-wrap items-center justify-between gap-2 text-[11px] text-slate-500">
+                <div class="flex items-center gap-4">
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="w-2.5 h-2.5 rounded-sm bg-emerald-100 border border-emerald-400 inline-block"></span>
+                        Pico mensal de execução do produto
+                    </span>
+                    <span class="inline-flex items-center gap-1.5">
+                        <span class="text-slate-300 font-bold">—</span>
+                        Sem execução registrada no mês
+                    </span>
+                </div>
+                <span>Fonte: Planilha Execução SIAFIM — Agricultura Familiar 2026</span>
+            </div>
+        </section>
+
+    </main>
+
+    <script>
+        // Ilustrações vetoriais (SVG) nítidas e coloridas para cada alimento
+        const iconesProdutos = {
+            "Bolo": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#FEF3C7"/>
+                    <!-- Base do bolo (fatia) -->
+                    <path d="M7 18.5L28 13.5V25.5C28 26.3 27.3 27 26.5 27H8.5C7.7 27 7 26.3 7 25.5V18.5Z" fill="#D97706"/>
+                    <!-- Recheio cremoso -->
+                    <path d="M7 21.5L28 17.5V19.5L7 23.5V21.5Z" fill="#FEF08A"/>
+                    <!-- Cobertura de chocolate/glacê -->
+                    <path d="M7 18.5C7 16.5 14 11.5 21 11.5C24.5 11.5 28 12.5 28 13.5L7 18.5Z" fill="#78350F"/>
+                    <path d="M7 18.5C8.5 19.5 10 18.2 11.5 19.2C13 20.2 14.5 18 16 19C17.5 20 19 17.8 20.5 18.8C22 19.8 23.5 17.5 25 18.5C26.5 19.2 27.5 17.8 28 17.5V13.5L7 18.5Z" fill="#92400E"/>
+                    <!-- Cereja no topo -->
+                    <circle cx="19.5" cy="11" r="2.7" fill="#DC2626"/>
+                    <circle cx="18.7" cy="10.2" r="0.8" fill="#FCA5A5"/>
+                    <path d="M20 8.5C20.5 7 22 6.5 23 6.8" stroke="#15803D" stroke-width="1.3" stroke-linecap="round"/>
+                </svg>`,
+            "Pão Nutritivo": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#FFEDD5"/>
+                    <!-- Pão artesanal dourado -->
+                    <path d="M7 21.5C7 16.5 11.8 12.5 18 12.5C24.2 12.5 29 16.5 29 21.5C29 24 27.2 25.5 24.5 25.5H11.5C8.8 25.5 7 24 7 21.5Z" fill="#D97706"/>
+                    <path d="M8.5 20.5C8.5 16.5 12.6 13.5 18 13.5C23.4 13.5 27.5 16.5 27.5 20.5C27.5 22.3 26.2 23.5 24 23.5H12C9.8 23.5 8.5 22.3 8.5 20.5Z" fill="#F59E0B"/>
+                    <!-- Cortes superiores do pão -->
+                    <path d="M13 15.2C14 16.5 14.5 17.8 14.5 19" stroke="#FEF3C7" stroke-width="1.6" stroke-linecap="round"/>
+                    <path d="M18 14.5C18.8 16 19.2 17.5 19.2 18.8" stroke="#FEF3C7" stroke-width="1.6" stroke-linecap="round"/>
+                    <path d="M22.8 15.5C23.4 16.8 23.7 18 23.7 19" stroke="#FEF3C7" stroke-width="1.6" stroke-linecap="round"/>
+                </svg>`,
+            "Manga Tommy": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#FEF9C3"/>
+                    <defs>
+                        <linearGradient id="mangaGrad" x1="9" y1="10" x2="27" y2="27" gradientUnits="userSpaceOnUse">
+                            <stop offset="0%" stop-color="#EF4444"/>
+                            <stop offset="52%" stop-color="#F97316"/>
+                            <stop offset="100%" stop-color="#EAB308"/>
+                        </linearGradient>
+                    </defs>
+                    <path d="M21.5 10.5C25.5 11.5 27.5 16.2 25.8 21.2C24.2 25.8 19.2 28.2 14.8 27C10.8 25.9 9.2 22.8 10.8 19.5C12.2 16.6 13.2 13.8 15.8 11.6C17.5 10.2 19.6 10 21.5 10.5Z" fill="url(#mangaGrad)"/>
+                    <!-- Folha verde -->
+                    <path d="M20.5 10.5C21.5 7.8 24.5 7 26.8 8.2C25 10.4 22.5 11 20.5 10.5Z" fill="#16A34A"/>
+                    <ellipse cx="15.5" cy="16" rx="1.6" ry="3.2" transform="rotate(25 15.5 16)" fill="#FEF08A" fill-opacity="0.55"/>
+                </svg>`,
+            "Creme de Frutas": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#FCE7F3"/>
+                    <!-- Creme rosado/tropical -->
+                    <path d="M10.5 16C10.5 12.8 13.8 10.5 18 10.5C22.2 10.5 25.5 12.8 25.5 16H10.5Z" fill="#FB7185"/>
+                    <path d="M12.5 13.5C13.5 11.2 15.8 9.8 18 9.8C20.2 9.8 22.5 11.2 23.5 13.5H12.5Z" fill="#FDBA74"/>
+                    <!-- Taça de vidro -->
+                    <path d="M9.5 16H26.5L24 23.2C23.5 24.6 22.2 25.5 20.7 25.5H15.3C13.8 25.5 12.5 24.6 12 23.2L9.5 16Z" fill="#38BDF8" fill-opacity="0.28" stroke="#0284C7" stroke-width="1.4"/>
+                    <!-- Base da taça -->
+                    <path d="M18 25.5V28.5M13.5 28.5H22.5" stroke="#0284C7" stroke-width="1.6" stroke-linecap="round"/>
+                    <!-- Frutinha topo -->
+                    <circle cx="18" cy="8.8" r="2" fill="#E11D48"/>
+                </svg>`,
+            "Gelado de Frutas": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#E0F2FE"/>
+                    <!-- Palito -->
+                    <rect x="16.2" y="21" width="3.6" height="8.5" rx="1.8" fill="#D97706"/>
+                    <!-- Picolé colorido -->
+                    <path d="M12 13C12 9.7 14.7 7 18 7C21.3 7 24 9.7 24 13V21.5C24 22.3 23.3 23 22.5 23H13.5C12.7 23 12 22.3 12 21.5V13Z" fill="#F43F5E"/>
+                    <path d="M12 16.5H24V21.5C24 22.3 23.3 23 22.5 23H13.5C12.7 23 12 22.3 12 21.5V16.5Z" fill="#FACC15"/>
+                    <rect x="14.5" y="10.5" width="1.6" height="8" rx="0.8" fill="#FFFFFF" fill-opacity="0.6"/>
+                </svg>`,
+            "Goiaba": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#DCFCE7"/>
+                    <!-- Casca verde -->
+                    <circle cx="16.5" cy="19.5" r="8.5" fill="#22C55E"/>
+                    <!-- Polpa rosada cortada -->
+                    <circle cx="20.5" cy="20.5" r="7" fill="#86EFAC"/>
+                    <circle cx="20.5" cy="20.5" r="5.3" fill="#F43F5E"/>
+                    <!-- Sementinhas -->
+                    <circle cx="19" cy="19.5" r="0.7" fill="#FEF08A"/>
+                    <circle cx="21.5" cy="19" r="0.7" fill="#FEF08A"/>
+                    <circle cx="20.5" cy="21.8" r="0.7" fill="#FEF08A"/>
+                    <circle cx="22.2" cy="21.2" r="0.7" fill="#FEF08A"/>
+                    <!-- Folha -->
+                    <path d="M15.5 11C15.5 8.5 18 7.5 20.5 8.5C19 10.5 17 11.2 15.5 11Z" fill="#15803D"/>
+                </svg>`,
+            "Uva Itália": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#ECFCCB"/>
+                    <!-- Ramo -->
+                    <path d="M18 11V7.5M18 8.5C20.5 8 22.5 9 23.5 10.5" stroke="#15803D" stroke-width="1.6" stroke-linecap="round"/>
+                    <!-- Bagos verdes dourados (Uva Itália) -->
+                    <circle cx="14.5" cy="14" r="3.1" fill="#84CC16"/>
+                    <circle cx="18" cy="14" r="3.1" fill="#A3E635"/>
+                    <circle cx="21.5" cy="14" r="3.1" fill="#84CC16"/>
+                    <circle cx="16" cy="18.5" r="3.1" fill="#A3E635"/>
+                    <circle cx="20" cy="18.5" r="3.1" fill="#65A30D"/>
+                    <circle cx="18" cy="23" r="3.1" fill="#84CC16"/>
+                    <circle cx="18" cy="27" r="2.6" fill="#A3E635"/>
+                </svg>`,
+            "Abacaxi Pérola": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#FEF3C7"/>
+                    <!-- Coroa de folhas -->
+                    <path d="M18 7L15.5 13.5H20.5L18 7Z" fill="#16A34A"/>
+                    <path d="M13.5 9L14.5 14H17.5L13.5 9Z" fill="#15803D"/>
+                    <path d="M22.5 9L21.5 14H18.5L22.5 9Z" fill="#15803D"/>
+                    <!-- Corpo do abacaxi -->
+                    <rect x="12" y="13.5" width="12" height="15.5" rx="5.5" fill="#F59E0B"/>
+                    <!-- Textura losangos -->
+                    <path d="M14 17L22 25M22 17L14 25M13.5 21H22.5" stroke="#B45309" stroke-width="1.1" stroke-linecap="round" stroke-opacity="0.65"/>
+                </svg>`,
+            "Tangerina": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#FFEDD5"/>
+                    <!-- Fruta cítrica -->
+                    <ellipse cx="18" cy="19.5" rx="9.2" ry="8" fill="#F97316"/>
+                    <ellipse cx="18" cy="19" rx="8.2" ry="6.8" fill="#FB923C"/>
+                    <!-- Folha e cabinho -->
+                    <path d="M18 11.5V9.5" stroke="#15803D" stroke-width="1.6" stroke-linecap="round"/>
+                    <path d="M18 10.5C19.5 8 22.8 8 24.5 9.8C22.5 11.4 19.8 11.4 18 10.5Z" fill="#16A34A"/>
+                    <circle cx="14.5" cy="16.5" r="1.2" fill="#FED7AA" fill-opacity="0.7"/>
+                </svg>`,
+            "Graviola": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#D1FAE5"/>
+                    <!-- Formato ovalado verde com espinhos suaves -->
+                    <path d="M18 9.5C22.8 9.5 25.5 14 25 19.5C24.5 24.8 21.2 28 17.5 27.8C13.8 27.6 11 24 11.2 18.8C11.4 13.8 14 9.5 18 9.5Z" fill="#16A34A"/>
+                    <!-- Textura característica -->
+                    <circle cx="15.5" cy="15.5" r="0.9" fill="#065F46"/>
+                    <circle cx="20.5" cy="15" r="0.9" fill="#065F46"/>
+                    <circle cx="18" cy="19" r="0.9" fill="#065F46"/>
+                    <circle cx="14.5" cy="21.5" r="0.9" fill="#065F46"/>
+                    <circle cx="21" cy="22" r="0.9" fill="#065F46"/>
+                    <path d="M18 9.5V7.2" stroke="#78350F" stroke-width="1.8" stroke-linecap="round"/>
+                </svg>`,
+            "Abacate": `
+                <svg viewBox="0 0 36 36" class="w-7 h-7" fill="none" xmlns="http://www.w3.org/2000/svg">
+                    <rect width="36" height="36" rx="9" fill="#ECFCCB"/>
+                    <!-- Casca verde escura -->
+                    <path d="M18 8C21.5 8 25.5 14.5 25.5 20.5C25.5 25.2 22.2 28.5 18 28.5C13.8 28.5 10.5 25.2 10.5 20.5C10.5 14.5 14.5 8 18 8Z" fill="#15803D"/>
+                    <!-- Polpa verde-clara -->
+                    <path d="M18 10C20.6 10 23.8 15.3 23.8 20.3C23.8 24.1 21.2 26.8 18 26.8C14.8 26.8 12.2 24.1 12.2 20.3C12.2 15.3 15.4 10 18 10Z" fill="#BEF264"/>
+                    <!-- Caroço marrom -->
+                    <circle cx="18" cy="21.2" r="4" fill="#78350F"/>
+                    <circle cx="16.8" cy="20" r="1.1" fill="#B45309"/>
+                </svg>`
+        };
+
+        // Dados exatos da aba Execução SIAFIM 2026
+        const mesesLabels = ["Mar", "Abr", "Mai", "Jun", "Jul", "Ago", "Set", "Out", "Nov"];
+
+        const cooperativasData = [
+            {
+                cooperativa: "ASSOCENE",
+                contrato: "Contrato 1401.4086.2025",
+                corBadge: "bg-indigo-50 text-indigo-700 border-indigo-200",
+                produtos: [
+                    {
+                        nome: "Bolo",
+                        vu: 6.59,
+                        unidade: "UND.",
+                        valores: [513782.76, 526448.74, 514646.05, 79053.64, 0, 0, 0, 0, 0],
+                        qtds: [77964, 79886, 78095, 11996, 0, 0, 0, 0, 0]
+                    },
+                    {
+                        nome: "Pão Nutritivo",
+                        vu: 3.72,
+                        unidade: "UND.",
+                        valores: [61324.20, 93033.48, 89250.24, 44662.32, 59572.08, 14262.48, 0, 0, 0],
+                        qtds: [16485, 25009, 23992, 12006, 16014, 3834, 0, 0, 0]
+                    }
+                ]
+            },
+            {
+                cooperativa: "COODAPISJG",
+                contrato: "Contrato 1401.4088.2025",
+                corBadge: "bg-amber-50 text-amber-800 border-amber-200",
+                produtos: [
+                    {
+                        nome: "Manga Tommy",
+                        vu: 9.49,
+                        unidade: "KG",
+                        valores: [57148.78, 302275.48, 342266.34, 228215.52, 72266.35, 54377.70, 0, 110643.91, 105253.59],
+                        qtds: [6022, 31852, 36066, 24048, 7615, 5730, 0, 11659, 11091]
+                    },
+                    {
+                        nome: "Creme de Frutas",
+                        vu: 3.65,
+                        unidade: "UND.",
+                        valores: [97871.10, 199052.75, 183310.30, 183310.30, 84811.40, 0, 0, 84811.40, 106671.25],
+                        qtds: [26814, 54535, 50222, 50222, 23236, 0, 0, 23236, 29225]
+                    },
+                    {
+                        nome: "Gelado de Frutas",
+                        vu: 3.27,
+                        unidade: "UND.",
+                        valores: [40263.51, 121774.80, 78453.84, 78496.35, 39828.60, 79657.20, 0, 39828.60, 27706.71],
+                        qtds: [12313, 37240, 23992, 24005, 12180, 24360, 0, 12180, 8473]
+                    }
+                ]
+            },
+            {
+                cooperativa: "COOPANORTE",
+                contrato: "Contrato 1401.4089.2025",
+                corBadge: "bg-emerald-50 text-emerald-700 border-emerald-200",
+                produtos: [
+                    {
+                        nome: "Goiaba",
+                        vu: 1.21,
+                        unidade: "KG",
+                        valores: [98980.42, 96662.06, 93806.46, 93379.33, 0, 190306.38, 0, 95153.19, 161283.32],
+                        qtds: [81802, 79886, 77526, 77173, 0, 157278, 0, 78639, 133292]
+                    },
+                    {
+                        nome: "Abacaxi Pérola",
+                        vu: 9.70,
+                        unidade: "KG",
+                        valores: [34367.10, 105215.90, 101035.20, 90287.60, 34241.00, 91568.00, 0, 34211.90, 69878.80],
+                        qtds: [3543, 10847, 10416, 9308, 3530, 9440, 0, 3527, 7204]
+                    },
+                    {
+                        nome: "Uva Itália",
+                        vu: 16.26,
+                        unidade: "UND.",
+                        valores: [0, 197672.82, 0, 162014.64, 0, 20292.48, 0, 0, 87804.00],
+                        qtds: [0, 12157, 0, 9964, 0, 1248, 0, 0, 5400]
+                    },
+                    {
+                        nome: "Tangerina",
+                        vu: 1.50,
+                        unidade: "UND.",
+                        valores: [0, 18768.00, 53982.00, 40834.50, 117958.50, 30789.00, 0, 18270.00, 25218.00],
+                        qtds: [0, 12512, 35988, 27223, 78639, 20526, 0, 12180, 16812]
+                    }
+                ]
+            },
+            {
+                cooperativa: "COPAF",
+                contrato: "Contrato 1401.4087.2025",
+                corBadge: "bg-teal-50 text-teal-700 border-teal-200",
+                produtos: [
+                    {
+                        nome: "Graviola",
+                        vu: 15.66,
+                        unidade: "KG",
+                        valores: [54387.18, 84376.08, 51020.28, 25619.76, 0, 0, 0, 23677.92, 29221.56],
+                        qtds: [3473, 5388, 3258, 1636, 0, 0, 0, 1512, 1866]
+                    },
+                    {
+                        nome: "Abacate",
+                        vu: 12.24,
+                        unidade: "KG",
+                        valores: [46756.80, 71420.40, 43488.72, 21836.16, 0, 0, 0, 20159.28, 25055.28],
+                        qtds: [3820, 5835, 3553, 1784, 0, 0, 0, 1647, 2047]
+                    }
+                ]
+            }
+        ];
+
+        // Formatadores brasileiros
+        const fmtBRL = new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' });
+        const fmtInt = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
+
+        let filtroCoopAtual = "TODAS";
+
+        // Formata célula com Valor (R$) na linha principal e Quantidade logo abaixo
+        function formatarCelulaDupla(valor, qtd, unidade = "", isDestaque = false) {
+            if (!valor || valor === 0) {
+                return '<span class="text-slate-300 font-normal">—</span>';
+            }
+            const suf = unidade ? ` ${unidade.toLowerCase()}` : " itens";
+            const corQtd = isDestaque ? "text-emerald-700/80" : "text-slate-400";
+            return `
+                <div class="leading-tight">
+                    <div>${fmtBRL.format(valor)}</div>
+                    <div class="text-[11px] font-normal ${corQtd} mt-0.5">${fmtInt.format(qtd)}${suf}</div>
+                </div>
+            `;
+        }
+
+        function renderizarTabela() {
+            const tbody = document.getElementById("tabelaCorpo");
+            const tfoot = document.getElementById("tabelaRodape");
+
+            const gruposVisiveis = filtroCoopAtual === "TODAS"
+                ? cooperativasData
+                : cooperativasData.filter(g => g.cooperativa === filtroCoopAtual);
+
+            // Calcula o total geral financeiro e quantitativo do recorte
+            let totalGeralMesesVal = Array(9).fill(0);
+            let totalGeralMesesQtd = Array(9).fill(0);
+            let totalGeralPeriodoVal = 0;
+            let totalGeralPeriodoQtd = 0;
+
+            gruposVisiveis.forEach(grupo => {
+                grupo.produtos.forEach(prod => {
+                    prod.valores.forEach((v, idx) => {
+                        totalGeralMesesVal[idx] += v;
+                        totalGeralPeriodoVal += v;
+                    });
+                    prod.qtds.forEach((q, idx) => {
+                        totalGeralMesesQtd[idx] += q;
+                        totalGeralPeriodoQtd += q;
+                    });
+                });
+            });
+
+            let htmlBody = "";
+
+            gruposVisiveis.forEach(grupo => {
+                let subMesesVal = Array(9).fill(0);
+                let subMesesQtd = Array(9).fill(0);
+                let subTotalCoopVal = 0;
+                let subTotalCoopQtd = 0;
+
+                grupo.produtos.forEach(prod => {
+                    prod.valores.forEach((v, idx) => {
+                        subMesesVal[idx] += v;
+                        subTotalCoopVal += v;
+                    });
+                    prod.qtds.forEach((q, idx) => {
+                        subMesesQtd[idx] += q;
+                        subTotalCoopQtd += q;
+                    });
+                });
+
+                // Linha de Cabeçalho / Subtotal da Cooperativa
+                htmlBody += `
+                    <tr class="bg-slate-100/90 border-t-2 border-slate-200 font-semibold text-slate-800">
+                        <td class="sticky-col-produto bg-slate-100 py-2.5 pl-4 pr-3 border-r border-slate-200/80">
+                            <div class="flex flex-wrap items-center gap-2">
+                                <span class="text-xs sm:text-sm font-bold tracking-tight text-slate-900">${grupo.cooperativa}</span>
+                                <span class="text-[10px] font-medium px-2 py-0.5 rounded-md border ${grupo.corBadge}">
+                                    ${grupo.contrato}
+                                </span>
+                            </div>
+                        </td>
+                        <td class="py-2.5 px-2.5 text-right text-[11px] text-slate-400 font-normal">Subtotal</td>
+                        ${subMesesVal.map((val, idx) => `
+                            <td class="py-2.5 px-2.5 text-right text-slate-800">
+                                ${formatarCelulaDupla(val, subMesesQtd[idx], "itens")}
+                            </td>
+                        `).join('')}
+                        <td class="py-2.5 pl-3 pr-4 text-right font-bold text-slate-900 bg-slate-200/60 border-l border-slate-200">
+                            ${formatarCelulaDupla(subTotalCoopVal, subTotalCoopQtd, "itens")}
+                        </td>
+                    </tr>
+                `;
+
+                // Linhas de Produtos da Cooperativa com Ilustração SVG, Valor e Quantidade
+                grupo.produtos.forEach(prod => {
+                    const totalProdVal = prod.valores.reduce((a, b) => a + b, 0);
+                    const totalProdQtd = prod.qtds.reduce((a, b) => a + b, 0);
+                    const maxMesProd = Math.max(...prod.valores);
+                    const iconeSvg = iconesProdutos[prod.nome] || "";
+
+                    htmlBody += `
+                        <tr class="hover:bg-slate-50/90 transition-colors group">
+                            <td class="sticky-col-produto bg-white group-hover:bg-slate-50 py-2.5 pl-5 pr-3 border-r border-slate-200/80">
+                                <div class="flex items-center gap-3">
+                                    <div class="flex-shrink-0 shadow-2xs rounded-[9px]">
+                                        ${iconeSvg}
+                                    </div>
+                                    <div class="min-w-0">
+                                        <p class="font-medium text-slate-800 truncate leading-tight">${prod.nome}</p>
+                                        <p class="text-[11px] text-slate-400 mt-0.5">${prod.unidade}</p>
+                                    </div>
+                                </div>
+                            </td>
+                            <td class="py-2.5 px-2.5 text-right text-slate-600 font-medium text-xs">
+                                ${fmtBRL.format(prod.vu)}
+                            </td>
+                            ${prod.valores.map((val, idx) => {
+                                const qtd = prod.qtds[idx];
+                                const isPico = val > 0 && val === maxMesProd;
+                                const classeCelula = isPico
+                                    ? "bg-emerald-50/85 text-emerald-800 font-semibold"
+                                    : (val > 0 ? "text-slate-800 font-medium" : "text-slate-300");
+                                return `
+                                    <td class="py-2.5 px-2.5 text-right ${classeCelula}">
+                                        ${formatarCelulaDupla(val, qtd, prod.unidade, isPico)}
+                                    </td>
+                                `;
+                            }).join('')}
+                            <td class="py-2.5 pl-3 pr-4 text-right font-semibold text-slate-900 bg-slate-50/80 border-l border-slate-200">
+                                ${formatarCelulaDupla(totalProdVal, totalProdQtd, prod.unidade)}
+                            </td>
+                        </tr>
+                    `;
+                });
+            });
+
+            tbody.innerHTML = htmlBody;
+
+            // Renderiza Rodapé com Total Geral (R$ e Quantidade)
+            tfoot.innerHTML = `
+                <tr>
+                    <td class="sticky-col-produto bg-slate-900 py-3 pl-4 pr-3 border-r border-slate-700">
+                        TOTAL GERAL EXECUTADO
+                    </td>
+                    <td class="py-3 px-2.5 text-right text-slate-400 font-normal">—</td>
+                    ${totalGeralMesesVal.map((val, idx) => `
+                        <td class="py-3 px-2.5 text-right">
+                            ${val === 0 ? '<span class="text-slate-500">—</span>' : `
+                                <div class="leading-tight">
+                                    <div>${fmtBRL.format(val)}</div>
+                                    <div class="text-[11px] font-normal text-slate-400 mt-0.5">${fmtInt.format(totalGeralMesesQtd[idx])} itens</div>
+                                </div>
+                            `}
+                        </td>
+                    `).join('')}
+                    <td class="py-3 pl-3 pr-4 text-right text-emerald-300 font-bold bg-slate-800 border-l border-slate-700">
+                        <div class="leading-tight">
+                            <div>${fmtBRL.format(totalGeralPeriodoVal)}</div>
+                            <div class="text-[11px] font-normal text-emerald-200/80 mt-0.5">${fmtInt.format(totalGeralPeriodoQtd)} itens</div>
+                        </div>
+                    </td>
+                </tr>
+            `;
+        }
+
+        // Eventos dos botões de filtro de Cooperativa
+        document.querySelectorAll('.coop-btn').forEach(btn => {
+            btn.addEventListener('click', () => {
+                filtroCoopAtual = btn.getAttribute('data-coop');
+                document.querySelectorAll('.coop-btn').forEach(b => {
+                    b.className = "coop-btn px-3 py-1.5 rounded-lg text-xs font-medium text-slate-600 hover:text-slate-900 transition-all cursor-pointer";
+                });
+                btn.className = "coop-btn px-3 py-1.5 rounded-lg text-xs font-semibold transition-all bg-slate-900 text-white shadow-xs cursor-pointer";
+                renderizarTabela();
+            });
+        });
+
+        // Inicialização
+        window.addEventListener('load', renderizarTabela);
+    </script>
+</body>
+</html>
