@@ -27,7 +27,7 @@ _CSS = r"""
      font-family:Inter,-apple-system,"Segoe UI",Roboto,sans-serif}
 .obr *{box-sizing:border-box}
 .obr-head{display:flex;flex-wrap:wrap;gap:10px;align-items:center;justify-content:space-between;
-          padding:12px 18px;background:#092c4c;color:#fff;font-weight:700;font-size:14px}
+          padding:12px 18px;background:#092c4c;color:#fff;font-weight:700;font-size:15px}
 .obr-ctl{display:flex;flex-wrap:wrap;gap:8px}
 .obr-seg{display:inline-flex;background:#051b30;border:1px solid rgba(255,255,255,.15);border-radius:8px;padding:2px}
 .obr-seg button{border:0;background:transparent;color:#cbd5e1;font-family:inherit;font-weight:500;font-size:11px;
@@ -35,49 +35,45 @@ _CSS = r"""
 .obr-seg button:hover{color:#fff}
 .obr-seg button.on{background:#fff;color:#092c4c;font-weight:600}
 .obr-scroll{overflow-x:auto}
-.obr-in{min-width:1440px}
-.obr-row{display:grid;grid-template-columns:minmax(240px,20%) 1fr 150px 84px;align-items:center}
-.obr-hd{background:#f8fafc;border-bottom:1px solid var(--line);font-size:10px;font-weight:700;color:#94a3b8;
-        text-transform:uppercase;letter-spacing:.06em;min-height:42px}
-.obr-hd .r{text-align:right}
+.obr-in{min-width:1520px}
+.obr-row{display:grid;grid-template-columns:minmax(270px,21%) 1fr 180px;align-items:center}
+.obr-hd{background:#f8fafc;border-bottom:1px solid var(--line);font-size:11.5px;font-weight:700;color:#94a3b8;
+        text-transform:uppercase;letter-spacing:.06em;min-height:48px}
+.obr-hd .st.v{text-align:center;padding:0 20px 0 0;white-space:nowrap}
 .obr-hd .vh.hv{color:var(--hv)}
 .st{position:sticky;z-index:2;background:#fff}
 .obr-hd .st{background:#f8fafc}
 .st.l{left:0;padding-left:18px;box-shadow:4px 0 8px -4px rgba(15,23,42,.08)}
-.st.v{right:84px;box-shadow:-4px 0 8px -4px rgba(15,23,42,.08)}
-.st.p{right:0;padding-right:18px}
+.st.v{right:0;box-shadow:-4px 0 8px -4px rgba(15,23,42,.08)}
 .obr-mm{display:grid;grid-template-columns:repeat(12,1fr)}
 .obr-ax{text-align:center;padding:6px 0;cursor:default;user-select:none;border-radius:4px}
 .obr-ax.off{opacity:.35}
 .obr-ax.hv{background:var(--hv);color:#fff}
-.obr-line{min-height:74px;border-bottom:1px solid #f1f5f9}
+.obr-line{min-height:84px;border-bottom:1px solid #f1f5f9}
 .obr-line:hover,.obr-line:hover .st{background:#f8fafc}
 .obr-src{display:flex;align-items:center;gap:10px;min-width:0;padding-right:14px}
-.obr-code{flex:none;font-size:11px;font-weight:700;color:#475569;background:#f1f5f9;border:1px solid var(--line);
+.obr-code{flex:none;font-size:12.5px;font-weight:700;color:#475569;background:#f1f5f9;border:1px solid var(--line);
           border-radius:6px;padding:2px 7px;font-variant-numeric:tabular-nums}
-.obr-nm{font-size:11px;font-weight:700;line-height:1.3;color:#1e293b;text-transform:uppercase;
+.obr-nm{font-size:13px;font-weight:700;line-height:1.3;color:#1e293b;text-transform:uppercase;
         display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical;overflow:hidden}
-.obr-sub{font-size:10px;color:#94a3b8;margin-top:3px;font-weight:500}
+.obr-sub{font-size:11.5px;color:#94a3b8;margin-top:3px;font-weight:500}
 .obr-sub b{color:#64748b;font-weight:600}
-.obr-c{height:60px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;cursor:default}
+.obr-c{height:70px;display:flex;flex-direction:column;justify-content:flex-end;align-items:center;cursor:default}
 .obr-dot{display:block;width:6px;height:6px;border-radius:50%;background:var(--amb);margin-bottom:2px;flex:none}
-.obr-lb{font-family:"JetBrains Mono",ui-monospace,Consolas,"Liberation Mono",monospace;font-size:9.5px;line-height:1;
+.obr-lb{font-family:"JetBrains Mono",ui-monospace,Consolas,"Liberation Mono",monospace;font-size:12.5px;line-height:1;
         margin-bottom:4px;white-space:nowrap;color:#475569;font-weight:500;font-variant-numeric:tabular-nums}
-.obr.ex .obr-lb{font-size:8px;letter-spacing:-.03em}
+.obr.ex .obr-lb{font-size:10.5px;letter-spacing:-.04em}
 .obr-lb.pk{color:var(--peak);font-weight:700}
-.obr-b{display:block;width:32px;flex:none;background:var(--bar);border-radius:3px 3px 0 0;
+.obr-b{display:block;width:40px;flex:none;background:var(--bar);border-radius:3px 3px 0 0;
        transition:height .3s cubic-bezier(.16,1,.3,1),background .12s}
 .obr-b.pk{background:var(--peak)}
 .obr-b.nul{height:0;border-bottom:1px dotted #cbd5e1;border-radius:0;background:transparent;margin-bottom:3px}
 .obr-c.hv .obr-b:not(.nul){background:var(--hv)}
 .obr-c.hv .obr-lb{color:var(--hv);font-weight:700}
-.obr-val{text-align:right;padding-right:14px;font-size:12px;font-weight:700;font-variant-numeric:tabular-nums;
+.obr-val{text-align:right;padding-right:20px;font-size:15px;font-weight:700;font-variant-numeric:tabular-nums;
          font-family:"JetBrains Mono",ui-monospace,Consolas,monospace}
 .obr-val.hv{color:var(--hv)}
-.obr-pct{text-align:right;font-size:11px;font-weight:600;color:#475569;font-variant-numeric:tabular-nums}
-.obr-pbar{height:5px;width:56px;margin:4px 0 0 auto;background:#f1f5f9;border-radius:3px;overflow:hidden}
-.obr-pbar i{display:block;height:100%;background:#2563eb;border-radius:3px;transition:width .25s}
-.obr-foot{background:#081f37;color:#fff;min-height:80px;font-size:11px;font-weight:700;letter-spacing:.04em}
+.obr-foot{background:#081f37;color:#fff;min-height:92px;font-size:12.5px;font-weight:700;letter-spacing:.04em}
 .obr-foot .st{background:#081f37}
 .obr-foot .st.l{box-shadow:4px 0 10px -2px rgba(0,0,0,.35)}
 .obr-foot .obr-b{background:#60a5fa}
@@ -88,9 +84,8 @@ _CSS = r"""
 .obr-foot .obr-dot{background:#fbbf24}
 .obr-foot .obr-c.hv .obr-b:not(.nul){background:#fff}
 .obr-foot .obr-c.hv .obr-lb{color:#fff}
-.obr-foot .obr-fval{text-align:right;padding-right:14px;font-size:13px;color:#fbbf24;font-variant-numeric:tabular-nums;
+.obr-foot .obr-fval{text-align:right;padding-right:20px;font-size:16px;color:#fbbf24;font-variant-numeric:tabular-nums;
                     font-family:"JetBrains Mono",ui-monospace,Consolas,monospace}
-.obr-foot .obr-pct{color:#fff}
 .obr-empty{padding:30px;text-align:center;color:var(--mut);font-size:13px}
 """
 
@@ -101,7 +96,7 @@ _JS = r"""
   var N2 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
   var N1 = new Intl.NumberFormat('pt-BR', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   var N0 = new Intl.NumberFormat('pt-BR', { maximumFractionDigits: 0 });
-  var BAR_PX = 34;
+  var BAR_PX = 40;
 
   function esc(s) {
     return String(s == null ? '' : s).replace(/[&<>"']/g, function (c) {
@@ -195,7 +190,6 @@ _JS = r"""
             '<div class="obr-sub">' + (r.peak >= 0 ? 'Pico: <b>' + MESES[r.peak] + '</b>' : 'Sem movimento') + '</div></div></div>' +
           '<div>' + barsHTML(r.vals, maxRef, r.peak) + '</div>' +
           '<div class="st v obr-val"></div>' +
-          '<div class="st p"><div class="obr-pct"></div><div class="obr-pbar"><i></i></div></div>' +
         '</div>';
       }).join('');
 
@@ -204,7 +198,6 @@ _JS = r"""
         '<div class="st l obr-flabel"></div>' +
         '<div>' + barsHTML(monthTotals, footerMax, footPeak) + '</div>' +
         '<div class="st v obr-fval"></div>' +
-        '<div class="st p obr-pct">100,0%</div>' +
       '</div>';
 
       function seg(group, list) {
@@ -222,7 +215,7 @@ _JS = r"""
             '</div></div>' +
           '<div class="obr-scroll"><div class="obr-in">' +
             '<div class="obr-row obr-hd"><div class="st l">Fonte de recurso</div><div>' + axis + '</div>' +
-              '<div class="st v r vh">Total ' + ano + '</div><div class="st p r">% Part.</div></div>' +
+              '<div class="st v r vh">Total ' + ano + '</div></div>' +
             body + foot +
           '</div></div>' +
         '</div>';
@@ -242,14 +235,9 @@ _JS = r"""
         vh.classList.toggle('hv', m !== null);
       }
       var vals = container.querySelectorAll('.obr-line .obr-val');
-      var pcts = container.querySelectorAll('.obr-line .obr-pct');
-      var pbars = container.querySelectorAll('.obr-line .obr-pbar i');
       rows.forEach(function (r, i) {
         var v = m === null ? r.total : r.vals[m];
-        var share = m === null ? r.share : (v != null && monthTotals[m] > 0 ? (v / monthTotals[m]) * 100 : 0);
         if (vals[i]) { vals[i].textContent = fmt(v); vals[i].classList.toggle('hv', m !== null); }
-        if (pcts[i]) pcts[i].textContent = pct(share);
-        if (pbars[i]) pbars[i].style.width = Math.min(100, share) + '%';
       });
       var fl = container.querySelector('.obr-flabel'), fv = container.querySelector('.obr-fval');
       if (fl) fl.textContent = m === null ? 'TOTAL GERAL CONSOLIDADO (' + rows.length + ' FONTES)'
@@ -343,8 +331,8 @@ def render_ritmo_fontes(fontes, ano=2026,
         ensure_ascii=False,
     ).replace("</", "<\\/")  # evita fechar a tag <script> por acidente
 
-    # cabeçalho (~56) + eixo (~44) + linhas (~74 cada) + rodapé (~80) + folga
-    altura = 56 + 44 + 74 * max(len(fontes), 1) + 80 + 24
+    # cabeçalho (~60) + eixo (~50) + linhas (~84 cada) + rodapé (~92) + folga
+    altura = 60 + 50 + 84 * max(len(fontes), 1) + 92 + 24
 
     html = (
         _FONTES_WEB
