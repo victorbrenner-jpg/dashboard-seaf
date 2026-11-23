@@ -295,7 +295,10 @@ def _carregar_siafim_2026() -> list[dict]:
             encontrados_mes: dict[int, int] = {}
             for m_idx, (_, aliases) in enumerate(MESES_SIAFIM_MAP):
                 for c_idx, texto in enumerate(celulas):
-                    if texto in aliases or any(texto.startswith(a + " ") or texto.startswith(a + "/") for a in aliases):
+                    if texto in aliases or any(
+                        texto.startswith(a + " ") or texto.startswith(a + "/") or texto.startswith(a + "-")
+                        for a in aliases
+                    ):
                         if m_idx not in encontrados_mes:
                             encontrados_mes[m_idx] = c_idx
             if len(encontrados_mes) >= 5:
@@ -334,7 +337,7 @@ def _carregar_siafim_2026() -> list[dict]:
                 if c_idx not in (col_coop_idx, col_produto_idx, col_unid_idx):
                     amostra = [
                         _valor_numero(bruto.iloc[r, c_idx])
-                        for r in range(inicio_dados, min(inicio_dados + 15, len(bruto)))
+                        for r in range(inicio_dados, min(inicio_dados + 25, len(bruto)))
                     ]
                     if any(0.5 <= v <= 100.0 for v in amostra):
                         col_vu_idx = c_idx
@@ -348,9 +351,7 @@ def _carregar_siafim_2026() -> list[dict]:
             col_val = c_idx
             col_qtd = None
             if prox_c_idx - c_idx >= 2:
-                # Verifica no subcabeçalho qual coluna é valor e qual é quantidade
                 sub_a = sub_cabecalho[c_idx] if c_idx < len(sub_cabecalho) else ""
-                sub_b = sub_cabecalho[c_idx + 1] if (c_idx + 1) < len(sub_cabecalho) else ""
                 if any(k in sub_a for k in ("QTD", "QUANT")):
                     col_qtd = c_idx
                     col_val = c_idx + 1
@@ -373,13 +374,23 @@ def _carregar_siafim_2026() -> list[dict]:
             row = bruto.iloc[idx].tolist()
             textos_linha = [_normalizar(v) for v in row]
 
+            # Ignora explicitamente linhas de totalizadores/subtotais da planilha
+            eh_linha_total = any(
+                t.startswith("TOTAL") or t.startswith("SUBTOTAL") or "TOTAL GERAL" in t or "SUBTOTAL " in t
+                for t in textos_linha[:4]
+                if t
+            )
+            if eh_linha_total:
+                continue
+
+            # Detecta mudança de cooperativa em qualquer célula inicial (mesclada ou dedicada)
             sigla_encontrada = None
             if col_coop_idx is not None and col_coop_idx < len(row):
                 sigla_encontrada = _sigla_cooperativa(row[col_coop_idx])
             if sigla_encontrada is None:
-                for t in textos_linha[:3]:
+                for t in textos_linha[:4]:
                     s = _sigla_cooperativa(t)
-                    if s and not any(x in t for x in ("TOTAL", "SUBTOTAL")):
+                    if s:
                         sigla_encontrada = s
                         break
 
@@ -397,13 +408,22 @@ def _carregar_siafim_2026() -> list[dict]:
             if not coop_atual:
                 continue
 
+            # Extrai o nome do produto sem confundir com o nome da cooperativa ou contrato
             nome_bruto = ""
             if col_produto_idx is not None and col_produto_idx < len(row):
-                nome_bruto = str(row[col_produto_idx] or "").strip()
-            else:
-                for c_idx in range(min(3, len(row))):
+                cand_prod = str(row[col_produto_idx] or "").strip()
+                if cand_prod and cand_prod.lower() != "nan" and _sigla_cooperativa(cand_prod) is None:
+                    nome_bruto = cand_prod
+            if not nome_bruto:
+                for c_idx in range(min(4, len(row))):
                     cand = str(row[c_idx] or "").strip()
-                    if cand and cand.lower() != "nan" and _sigla_cooperativa(cand) is None:
+                    cand_norm = _normalizar(cand)
+                    if (
+                        cand
+                        and cand.lower() != "nan"
+                        and _sigla_cooperativa(cand) is None
+                        and not cand_norm.startswith("CONTRATO")
+                    ):
                         nome_bruto = cand
                         break
 
@@ -439,7 +459,6 @@ def _carregar_siafim_2026() -> list[dict]:
                 val = round(_valor_numero(row[c_val]), 2) if c_val < len(row) else 0.0
                 qtd_planilha = int(round(_valor_numero(row[c_qtd]))) if (c_qtd is not None and c_qtd < len(row)) else 0
 
-                # Caso a planilha traga a quantidade na coluna principal e o valor na adjacente
                 if val > 0 and qtd_planilha > 0 and vu > 0:
                     if abs(qtd_planilha - val * vu) < abs(val - qtd_planilha * vu):
                         val, qtd_planilha = round(float(qtd_planilha), 2), int(round(val))
@@ -464,9 +483,17 @@ def _carregar_siafim_2026() -> list[dict]:
                 "qtds": qtds,
             })
 
+        # Garante que todas as 4 cooperativas sejam incluídas na ordem executiva
         ordem_coops = ["ASSOCENE", "COODAPISJG", "COOPANORTE", "COPAF"]
-        resultado = [grupos[c] for c in ordem_coops if c in grupos and grupos[c]["produtos"]]
-        return resultado if resultado else FALLBACK_SIAFIM_2026
+        resultado = []
+        for coop_sigla in ordem_coops:
+            if coop_sigla in grupos and grupos[coop_sigla]["produtos"]:
+                resultado.append(grupos[coop_sigla])
+            else:
+                fallback_coop = next((g for g in FALLBACK_SIAFIM_2026 if g["cooperativa"] == coop_sigla), None)
+                if fallback_coop:
+                    resultado.append(fallback_coop)
+        return resultado
     except Exception:
         return FALLBACK_SIAFIM_2026
 
@@ -1019,35 +1046,15 @@ def render() -> None:
     with c4:
         _card("Saldo a executar", saldo, "Diferença entre a meta e o executado", "laranja")
 
-    st.markdown('<div class="fnde-box-title">Distribuição mensal de recursos por cooperativa</div>', unsafe_allow_html=True)
-    matriz = pd.pivot_table(
-        filtrado,
-        index="Cooperativa",
-        columns="Mês",
-        values="Valor executado",
-        aggfunc="sum",
-        fill_value=0.0,
-    ) if not filtrado.empty else pd.DataFrame()
-    matriz = matriz.reindex(index=list(COOPERATIVAS), columns=MESES, fill_value=0.0)
-    meses_exibidos = [mes for mes in MESES if float(matriz[mes].sum()) > 0]
-    if not meses_exibidos:
-        meses_exibidos = MESES
-    matriz = matriz[meses_exibidos]
-    linhas = []
-    for cooperativa, valores in matriz.iterrows():
-        total_credor = float(valores.sum())
-        celulas = "".join(f"<td>{_moeda(valor)}</td>" for valor in valores)
-        linhas.append(f"<tr><td class='fnde-credor'>{cooperativa}</td>{celulas}<td class='fnde-total'>{_moeda(total_credor)}</td></tr>")
-    totais_mes = matriz.sum(axis=0)
-    total_geral = float(totais_mes.sum())
-    rodape = "".join(f"<td class='fnde-total'>{_moeda(valor)}</td>" for valor in totais_mes)
-    st.markdown(
-        "<div class='fnde-tabela'><table><thead><tr><th>RAZÃO SOCIAL / CREDOR</th>"
-        + "".join(f"<th>{mes.upper()}</th>" for mes in meses_exibidos)
-        + "<th>TOTAL GERAL</th></tr></thead><tbody>" + "".join(linhas)
-        + f"<tr><td class='fnde-total'>TOTAL CONSOLIDADO DO FILTRO</td>{rodape}<td class='fnde-total'>{_moeda(total_geral)}</td></tr>"
-        + "</tbody></table></div>",
-        unsafe_allow_html=True,
+    # Resumo conferido das 4 cooperativas e totais consolidados
+    totais_conferencia = {
+        g["cooperativa"]: sum(sum(p["valores"]) for p in g["produtos"])
+        for g in dados_siafim
+    }
+    st.caption(
+        "Conferência SIAFIM 2026 (4 cooperativas): "
+        + " • ".join(f"{coop}: {_moeda(totais_conferencia.get(coop, 0.0))}" for coop in ["ASSOCENE", "COODAPISJG", "COOPANORTE", "COPAF"])
+        + f" • Total Base: {_moeda(sum(totais_conferencia.values()))}"
     )
 
     mensal = filtrado.groupby("Mês")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
