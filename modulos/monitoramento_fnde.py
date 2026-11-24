@@ -310,7 +310,7 @@ def _baixar_planilha_siafim(origem: str = URL_BASE_SIAFIM_2026) -> pd.DataFrame:
 @st.cache_data(ttl=60, show_spinner=False)
 def _carregar_siafim_2026() -> tuple[list[dict], dict]:
     """Lê a planilha SIAFIM 2026 e devolve (dados, info). info["origem"] é "planilha" ou "contingencia"."""
-    info = {"origem": "planilha", "motivo": "", "avisos": [], "hora": _agora_br()}
+    info = {"origem": "planilha", "motivo": "", "avisos": [], "hora": _agora_br(), "resumo_mensal": {}}
 
     def _contingencia(motivo: str):
         info["origem"] = "contingencia"
@@ -321,6 +321,40 @@ def _carregar_siafim_2026() -> tuple[list[dict], dict]:
         bruto = _baixar_planilha_siafim()
         if bruto.empty:
             return _contingencia("a planilha veio vazia")
+
+        # O quadro da esquerda contém a linha "Total Mensal" de cada contrato.
+        # Ela é a fonte oficial dos cards e gráficos; o quadro da direita é
+        # apenas o detalhamento por produto e não deve ser somado novamente.
+        cooperativa_atual = None
+        resumo_mensal = {}
+        for linha_idx in range(len(bruto)):
+            linha = bruto.iloc[linha_idx].tolist()
+            for coluna in range(min(3, len(linha))):
+                sigla = _sigla_cooperativa(linha[coluna])
+                if sigla:
+                    cooperativa_atual = sigla
+                    break
+
+            texto_linha = " ".join(_normalizar(v) for v in linha[:3])
+            if "TOTAL MENSAL" in texto_linha and cooperativa_atual:
+                valores_mensais = [
+                    round(_valor_numero(bruto.iloc[linha_idx, coluna]), 2)
+                    for coluna in range(2, min(11, bruto.shape[1]))
+                ]
+                valores_mensais += [0.0] * (9 - len(valores_mensais))
+                resumo_mensal[cooperativa_atual] = valores_mensais[:9]
+
+        info["resumo_mensal"] = resumo_mensal
+        cooperativas_sem_resumo = [
+            sigla for sigla in ("ASSOCENE", "COPAF", "COODAPISJG", "COOPANORTE")
+            if sigla not in resumo_mensal
+        ]
+        if cooperativas_sem_resumo:
+            info["avisos"].append(
+                "Não foi localizada a linha 'Total Mensal' para: "
+                + ", ".join(cooperativas_sem_resumo)
+                + ". Os cards usarão o detalhamento disponível apenas como contingência de cálculo."
+            )
 
         # Mapeamento de referência para V.U., Unidade e Cooperativa de cada produto
         produto_para_coop = {
@@ -527,12 +561,10 @@ def _carregar_siafim_2026() -> tuple[list[dict], dict]:
             if coop_sigla in grupos and grupos[coop_sigla]["produtos"]:
                 resultado.append(grupos[coop_sigla])
             else:
-                fallback_coop = next((g for g in FALLBACK_SIAFIM_2026 if g["cooperativa"] == coop_sigla), None)
-                if fallback_coop:
-                    resultado.append(fallback_coop)
-                    info["avisos"].append(
-                        f"{coop_sigla} não foi encontrada na planilha — exibindo os dados de contingência dela."
-                    )
+                info["avisos"].append(
+                    f"{coop_sigla} não foi identificada no detalhamento por produto da planilha. "
+                    "Nenhum dado antigo de contingência foi misturado à leitura atual."
+                )
         return resultado, info
     except Exception as erro:
         return _contingencia(f"{type(erro).__name__}: {erro}")
@@ -1042,7 +1074,26 @@ def render() -> None:
         )
     for aviso in info_siafim["avisos"]:
         st.warning(aviso)
-    base_mensal = _construir_base_mensal_siafim(dados_siafim)
+    # Cards, resumo e gráfico usam o consolidado oficial "Total Mensal" do
+    # quadro esquerdo. O detalhamento por produto permanece separado na tabela HTML.
+    resumo_mensal = info_siafim.get("resumo_mensal", {})
+    if len(resumo_mensal) == 4:
+        registros_resumo = []
+        for sigla, valores in resumo_mensal.items():
+            nome_cooperativa = META_COOP_SIAFIM[sigla]["nome_completo"]
+            for idx, mes_label in enumerate(MESES):
+                registros_resumo.append({
+                    "Sigla": sigla,
+                    "Cooperativa": nome_cooperativa,
+                    "Produto": "Total consolidado",
+                    "Mês": mes_label,
+                    "Valor executado": float(valores[idx]),
+                    "Quantidade": 0,
+                })
+        base_mensal = pd.DataFrame(registros_resumo)
+    else:
+        base_mensal = _construir_base_mensal_siafim(dados_siafim)
+
     base_mensal["Cooperativa"] = base_mensal["Cooperativa"].replace(
         {NOME_COOPANORTE_ANTERIOR: NOME_COOPANORTE}
     )
