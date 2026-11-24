@@ -1148,10 +1148,15 @@ def render() -> None:
         _card("Saldo a executar", saldo, "Diferença entre a meta e o executado", "laranja")
 
     # Resumo conferido das 4 cooperativas e totais consolidados
-    totais_conferencia = {
-        g["cooperativa"]: sum(sum(p["valores"]) for p in g["produtos"])
-        for g in dados_siafim
-    }
+    if len(resumo_mensal) == 4:
+        totais_conferencia = {
+            sigla: sum(valores) for sigla, valores in resumo_mensal.items()
+        }
+    else:
+        totais_conferencia = {
+            g["cooperativa"]: sum(sum(p["valores"]) for p in g["produtos"])
+            for g in dados_siafim
+        }
     st.caption(
         "Conferência SIAFIM 2026 (4 cooperativas): "
         + " • ".join(f"{coop}: {_moeda(totais_conferencia.get(coop, 0.0))}" for coop in ["ASSOCENE", "COODAPISJG", "COOPANORTE", "COPAF"])
