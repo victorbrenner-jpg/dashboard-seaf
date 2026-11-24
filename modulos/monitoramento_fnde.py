@@ -2,8 +2,13 @@
 
 from __future__ import annotations
 
+import csv
+import io
 import json
+import math
 import unicodedata
+import urllib.request
+from datetime import datetime, timedelta, timezone
 
 import pandas as pd
 import plotly.graph_objects as go
@@ -103,22 +108,22 @@ FALLBACK_SIAFIM_2026 = [
                 "nome": "Manga Tommy",
                 "vu": 9.49,
                 "unidade": "KG",
-                "valores": [57148.78, 302275.48, 342266.34, 228215.52, 72266.35, 54377.70, 0, 110643.91, 105253.59],
-                "qtds": [6022, 31852, 36066, 24048, 7615, 5730, 0, 11659, 11091],
+                "valores": [57148.78, 302275.48, 342266.34, 228215.52, 72266.35, 54377.70, 0, 110643.91, 174454.67],
+                "qtds": [6022, 31852, 36066, 24048, 7615, 5730, 0, 11659, 18383],
             },
             {
                 "nome": "Creme de Frutas",
                 "vu": 3.65,
                 "unidade": "UND.",
-                "valores": [97871.10, 199052.75, 183310.30, 183310.30, 84811.40, 0, 0, 84811.40, 106671.25],
-                "qtds": [26814, 54535, 50222, 50222, 23236, 0, 0, 23236, 29225],
+                "valores": [97871.10, 199052.75, 183310.30, 183310.30, 84811.40, 0, 0, 84811.40, 164567.55],
+                "qtds": [26814, 54535, 50222, 50222, 23236, 0, 0, 23236, 45087],
             },
             {
                 "nome": "Gelado de Frutas",
                 "vu": 3.27,
                 "unidade": "UND.",
-                "valores": [40263.51, 121774.80, 78453.84, 78496.35, 39828.60, 79657.20, 0, 39828.60, 27706.71],
-                "qtds": [12313, 37240, 23992, 24005, 12180, 24360, 0, 12180, 8473],
+                "valores": [40263.51, 121774.80, 78453.84, 78496.35, 39828.60, 79657.20, 0, 39828.60, 68441.10],
+                "qtds": [12313, 37240, 23992, 24005, 12180, 24360, 0, 12180, 20930],
             },
         ],
     },
@@ -192,11 +197,15 @@ def _moeda(valor: float) -> str:
 
 
 def _valor_numero(valor: object) -> float:
-    if pd.isna(valor) or str(valor).strip() in ("", "-", "—"):
+    """Converte texto/número da planilha em float. Célula vazia, '-', 'nan' ou inválida vira 0."""
+    if valor is None:
         return 0.0
     if isinstance(valor, (int, float)) and not isinstance(valor, bool):
-        return float(valor)
-    texto = str(valor).replace("R$", "").replace(" ", "").strip()
+        numero = float(valor)
+        return numero if math.isfinite(numero) else 0.0
+    texto = str(valor).replace("R$", "").replace("\xa0", "").replace(" ", "").strip()
+    if texto.lower() in ("", "-", "—", "–", "nan", "none", "null"):
+        return 0.0
     if "," in texto and "." in texto:
         if texto.rfind(",") > texto.rfind("."):
             texto = texto.replace(".", "").replace(",", ".")
@@ -205,9 +214,10 @@ def _valor_numero(valor: object) -> float:
     elif "," in texto:
         texto = texto.replace(",", ".")
     try:
-        return float(texto)
+        numero = float(texto)
     except (TypeError, ValueError):
         return 0.0
+    return numero if math.isfinite(numero) else 0.0
 
 
 def _nome_cooperativa(nome: object) -> str | None:
@@ -274,13 +284,43 @@ def _construir_base_mensal_siafim(dados_siafim: list[dict]) -> pd.DataFrame:
     return pd.DataFrame(registros)
 
 
+def _agora_br() -> str:
+    return datetime.now(timezone(timedelta(hours=-3))).strftime("%d/%m/%Y %H:%M:%S")
+
+
+def _baixar_planilha_siafim(origem: str = URL_BASE_SIAFIM_2026) -> pd.DataFrame:
+    """Baixa o CSV da planilha como texto puro (sem converter nada) e completa linhas curtas."""
+    if origem.startswith("http"):
+        pedido = urllib.request.Request(origem, headers={"User-Agent": "Mozilla/5.0"})
+        with urllib.request.urlopen(pedido, timeout=25) as resposta:
+            conteudo = resposta.read()
+    else:
+        with open(origem, "rb") as arquivo:
+            conteudo = arquivo.read()
+    texto = conteudo.decode("utf-8-sig", errors="replace")
+    if texto.lstrip()[:15].lower().startswith(("<!doctype", "<html")):
+        raise ValueError("o Google devolveu uma página de login/erro em vez do CSV — confira o compartilhamento da planilha (qualquer pessoa com o link como leitor)")
+    linhas = list(csv.reader(io.StringIO(texto)))
+    if not linhas:
+        raise ValueError("a planilha veio vazia")
+    largura = max(len(linha) for linha in linhas)
+    return pd.DataFrame([linha + [""] * (largura - len(linha)) for linha in linhas])
+
+
 @st.cache_data(ttl=60, show_spinner=False)
-def _carregar_siafim_2026() -> list[dict]:
-    """Lê a nova planilha SIAFIM 2026 (gid=1358142076) respeitando blocos paralelos e pares (Qtd, Valor)."""
+def _carregar_siafim_2026() -> tuple[list[dict], dict]:
+    """Lê a planilha SIAFIM 2026 e devolve (dados, info). info["origem"] é "planilha" ou "contingencia"."""
+    info = {"origem": "planilha", "motivo": "", "avisos": [], "hora": _agora_br()}
+
+    def _contingencia(motivo: str):
+        info["origem"] = "contingencia"
+        info["motivo"] = motivo
+        return FALLBACK_SIAFIM_2026, info
+
     try:
-        bruto = pd.read_csv(URL_BASE_SIAFIM_2026, header=None)
+        bruto = _baixar_planilha_siafim()
         if bruto.empty:
-            return FALLBACK_SIAFIM_2026
+            return _contingencia("a planilha veio vazia")
 
         # Mapeamento de referência para V.U., Unidade e Cooperativa de cada produto
         produto_para_coop = {
@@ -338,7 +378,7 @@ def _carregar_siafim_2026() -> list[dict]:
                     })
 
         if not blocos_tabela:
-            return FALLBACK_SIAFIM_2026
+            return _contingencia("não encontrei na aba o cabeçalho com Item/Produto e os meses (Mar, Abr, Mai...). Confira se a aba (gid) e os títulos das colunas não foram alterados")
 
         grupos: dict[str, dict] = {}
         produtos_registrados: set[tuple[str, str]] = set()
@@ -408,74 +448,78 @@ def _carregar_siafim_2026() -> list[dict]:
                 ):
                     continue
 
-                nome_padrao = _padronizar_nome_produto(celula_item)
-                chave_prod = _normalizar(nome_padrao)
+                try:
+                    nome_padrao = _padronizar_nome_produto(celula_item)
+                    chave_prod = _normalizar(nome_padrao)
 
-                # Identifica a cooperativa correta pelo nome do produto ou pelo cabeçalho ativo
-                coop_destino = produto_para_coop.get(chave_prod) or coop_atual
-                if not coop_destino:
+                    # Identifica a cooperativa correta pelo nome do produto ou pelo cabeçalho ativo
+                    coop_destino = produto_para_coop.get(chave_prod) or coop_atual
+                    if not coop_destino:
+                        continue
+
+                    if (coop_destino, chave_prod) in produtos_registrados:
+                        continue
+
+                    ref_vu, ref_unid = vu_referencia.get(chave_prod, (0.0, "UND."))
+                    vu = _valor_numero(row[col_vu_idx]) if (col_vu_idx is not None and col_vu_idx < col_fim) else 0.0
+                    if vu <= 0:
+                        vu = ref_vu
+
+                    unidade = (
+                        str(row[col_unid_idx] or "").strip().upper()
+                        if (col_unid_idx is not None and col_unid_idx < col_fim and str(row[col_unid_idx] or "").strip().lower() != "nan")
+                        else ""
+                    )
+                    if unidade in ("", "NAN"):
+                        unidade = ref_unid
+
+                    valores = [0.0] * 9
+                    qtds = [0] * 9
+                    tem_dado = False
+
+                    for m_idx, (c_val, c_qtd) in colunas_meses_detalhe.items():
+                        bruto_val = str(row[c_val] or "").strip() if c_val < col_fim else ""
+                        bruto_qtd = str(row[c_qtd] or "").strip() if (c_qtd is not None and c_qtd < col_fim) else ""
+
+                        val = round(_valor_numero(bruto_val), 2)
+                        qtd_planilha = int(round(_valor_numero(bruto_qtd)))
+
+                        # Caso a planilha tenha invertido Qtd e R$ em alguma coluna específica
+                        if "R$" in bruto_qtd and "R$" not in bruto_val:
+                            val, qtd_planilha = round(_valor_numero(bruto_qtd), 2), int(round(_valor_numero(bruto_val)))
+
+                        valores[m_idx] = val
+                        if val > 0:
+                            tem_dado = True
+                            qtds[m_idx] = qtd_planilha if qtd_planilha > 0 else (int(round(val / vu)) if vu > 0 else 0)
+                        elif qtd_planilha > 0 and vu > 0:
+                            tem_dado = True
+                            qtds[m_idx] = qtd_planilha
+                            valores[m_idx] = round(qtd_planilha * vu, 2)
+
+                    if not tem_dado and vu == 0:
+                        continue
+
+                    if coop_destino not in grupos:
+                        meta = META_COOP_SIAFIM[coop_destino]
+                        grupos[coop_destino] = {
+                            "cooperativa": coop_destino,
+                            "contrato": meta["contrato"],
+                            "corBadge": meta["corBadge"],
+                            "produtos": [],
+                        }
+
+                    grupos[coop_destino]["produtos"].append({
+                        "nome": nome_padrao,
+                        "vu": vu,
+                        "unidade": unidade,
+                        "valores": valores,
+                        "qtds": qtds,
+                    })
+                    produtos_registrados.add((coop_destino, chave_prod))
+                except Exception as erro_linha:
+                    info["avisos"].append(f"Linha {idx + 1} ('{celula_item}') foi ignorada: {erro_linha}")
                     continue
-
-                if (coop_destino, chave_prod) in produtos_registrados:
-                    continue
-
-                ref_vu, ref_unid = vu_referencia.get(chave_prod, (0.0, "UND."))
-                vu = _valor_numero(row[col_vu_idx]) if (col_vu_idx is not None and col_vu_idx < col_fim) else 0.0
-                if vu <= 0:
-                    vu = ref_vu
-
-                unidade = (
-                    str(row[col_unid_idx] or "").strip().upper()
-                    if (col_unid_idx is not None and col_unid_idx < col_fim and str(row[col_unid_idx] or "").strip().lower() != "nan")
-                    else ""
-                )
-                if unidade in ("", "NAN"):
-                    unidade = ref_unid
-
-                valores = [0.0] * 9
-                qtds = [0] * 9
-                tem_dado = False
-
-                for m_idx, (c_val, c_qtd) in colunas_meses_detalhe.items():
-                    bruto_val = str(row[c_val] or "").strip() if c_val < col_fim else ""
-                    bruto_qtd = str(row[c_qtd] or "").strip() if (c_qtd is not None and c_qtd < col_fim) else ""
-
-                    val = round(_valor_numero(bruto_val), 2)
-                    qtd_planilha = int(round(_valor_numero(bruto_qtd)))
-
-                    # Caso a planilha tenha invertido Qtd e R$ em alguma coluna específica
-                    if "R$" in bruto_qtd and "R$" not in bruto_val:
-                        val, qtd_planilha = round(_valor_numero(bruto_qtd), 2), int(round(_valor_numero(bruto_val)))
-
-                    valores[m_idx] = val
-                    if val > 0:
-                        tem_dado = True
-                        qtds[m_idx] = qtd_planilha if qtd_planilha > 0 else (int(round(val / vu)) if vu > 0 else 0)
-                    elif qtd_planilha > 0 and vu > 0:
-                        tem_dado = True
-                        qtds[m_idx] = qtd_planilha
-                        valores[m_idx] = round(qtd_planilha * vu, 2)
-
-                if not tem_dado and vu == 0:
-                    continue
-
-                if coop_destino not in grupos:
-                    meta = META_COOP_SIAFIM[coop_destino]
-                    grupos[coop_destino] = {
-                        "cooperativa": coop_destino,
-                        "contrato": meta["contrato"],
-                        "corBadge": meta["corBadge"],
-                        "produtos": [],
-                    }
-
-                grupos[coop_destino]["produtos"].append({
-                    "nome": nome_padrao,
-                    "vu": vu,
-                    "unidade": unidade,
-                    "valores": valores,
-                    "qtds": qtds,
-                })
-                produtos_registrados.add((coop_destino, chave_prod))
 
         ordem_coops = ["ASSOCENE", "COODAPISJG", "COOPANORTE", "COPAF"]
         resultado = []
@@ -486,9 +530,12 @@ def _carregar_siafim_2026() -> list[dict]:
                 fallback_coop = next((g for g in FALLBACK_SIAFIM_2026 if g["cooperativa"] == coop_sigla), None)
                 if fallback_coop:
                     resultado.append(fallback_coop)
-        return resultado
-    except Exception:
-        return FALLBACK_SIAFIM_2026
+                    info["avisos"].append(
+                        f"{coop_sigla} não foi encontrada na planilha — exibindo os dados de contingência dela."
+                    )
+        return resultado, info
+    except Exception as erro:
+        return _contingencia(f"{type(erro).__name__}: {erro}")
 
 
 def _card(titulo: str, valor: float, detalhe: str, classe: str) -> None:
@@ -984,7 +1031,17 @@ def render() -> None:
             st.rerun()
     st.caption("Atualização automática do cache: até 1 minuto. Use “Atualizar dados” para buscar a planilha imediatamente.")
 
-    dados_siafim = _carregar_siafim_2026()
+    dados_siafim, info_siafim = _carregar_siafim_2026()
+    if info_siafim["origem"] == "planilha":
+        st.success(f"Dados lidos da planilha SIAFIM em {info_siafim['hora']}.", icon="✅")
+    else:
+        st.error(
+            "ATENÇÃO: não foi possível ler a planilha. Os valores abaixo são dados de contingência "
+            f"gravados no código e podem estar desatualizados. Motivo: {info_siafim['motivo']}",
+            icon="⚠️",
+        )
+    for aviso in info_siafim["avisos"]:
+        st.warning(aviso)
     base_mensal = _construir_base_mensal_siafim(dados_siafim)
     base_mensal["Cooperativa"] = base_mensal["Cooperativa"].replace(
         {NOME_COOPANORTE_ANTERIOR: NOME_COOPANORTE}
