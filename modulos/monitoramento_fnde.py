@@ -1039,7 +1039,7 @@ def render() -> None:
         .fnde-analise{border:1px solid #d7e3ee;border-radius:8px;padding:14px 16px 12px;margin-top:14px;background:#fff}.fnde-analise-titulo{font-size:1rem;font-weight:700;color:#fff;margin:28px 0 0;padding:8px 11px;border:0;border-radius:7px 7px 0 0;background:linear-gradient(90deg,#075b88,#08749a)}
         .st-key-analise_fnde{margin-top:-1rem!important;border-radius:0 0 8px 8px!important}
         .fnde-subtitulo-grafico{font-size:.9rem;font-weight:800;color:#073b61;margin:0 0 13px}
-        .fnde-resumo-mes{border:1px solid #d7e3ee;border-radius:7px;overflow:hidden;background:#fff;height:fit-content!important;min-height:0!important;padding:0!important;margin:0!important}.fnde-resumo-mes table,body .fnde-resumo-mes table{width:100%;border-collapse:collapse;font-size:.75rem;color:#163b5b;margin:0!important;margin-bottom:0!important}.fnde-resumo-mes th{background:#edf4f8;padding:9px;text-align:left;font-size:.64rem}.fnde-resumo-mes td{padding:9px;border-top:1px solid #e1eaf1}.fnde-resumo-mes td:not(:first-child),.fnde-resumo-mes th:not(:first-child){text-align:center}.fnde-resumo-mes td:not(:first-child){font-weight:700;color:#063b70}.fnde-resumo-mes .fnde-total{font-weight:800;background:#f4f9fc;color:#073b61}
+        .fnde-resumo-mes{border:1px solid #d7e3ee;border-radius:9px;overflow:hidden;background:#fff;height:fit-content!important;min-height:0!important;padding:0!important;margin:0!important}.fnde-resumo-mes table,body .fnde-resumo-mes table{width:100%;border-collapse:collapse;font-size:.72rem;color:#163b5b;margin:0!important;margin-bottom:0!important}.fnde-resumo-mes th{background:#f1f5f9;padding:11px 9px;text-align:left;font-size:.63rem;font-weight:800;letter-spacing:.035em;color:#526477;white-space:nowrap}.fnde-resumo-mes td{padding:11px 9px;border-top:1px solid #e8eef3;vertical-align:middle}.fnde-resumo-mes td:not(:first-child),.fnde-resumo-mes th:not(:first-child){text-align:right}.fnde-resumo-mes td:not(:first-child){font-weight:700;color:#063b70}.fnde-resumo-mes .fnde-coop-nome{font-weight:800;color:#0f2942;line-height:1.25}.fnde-resumo-mes .fnde-coop-razao{font-size:.65rem;color:#718096;margin-top:3px;line-height:1.3}.fnde-resumo-mes .fnde-meses{display:inline-flex;align-items:center;justify-content:center;min-width:27px;height:23px;padding:0 8px;border-radius:99px;background:#f1f5f9;color:#334155;font-weight:800}.fnde-resumo-mes .fnde-percentual{font-weight:800;color:#0f2942}.fnde-resumo-mes .fnde-barra{width:74px;height:6px;margin:5px 0 0 auto;border-radius:99px;background:#e2e8f0;overflow:hidden}.fnde-resumo-mes .fnde-barra span{display:block;height:100%;border-radius:99px;background:linear-gradient(90deg,#0284c7,#0d9488)}.fnde-resumo-mes .fnde-total{font-weight:800;background:#0f172a;color:#fff!important}.fnde-resumo-mes .fnde-total-destaque{color:#6ee7b7!important}
         .st-key-produtos_fnde{border:1px solid #d7e3ee!important;border-top:0!important;border-radius:0 0 8px 8px!important;padding:18px 16px 14px!important;margin-top:-1rem!important;background:#fff}
         </style>""",
         unsafe_allow_html=True,
@@ -1170,38 +1170,91 @@ def render() -> None:
         esquerda, direita = st.columns([1.18, .92], gap="large")
         with esquerda:
             st.markdown('<div class="fnde-subtitulo-grafico">Curva de execução mensal das cooperativas</div>', unsafe_allow_html=True)
+            st.caption("Evolução dos desembolsos consolidados por competência (Mar – Nov/2026)")
             grafico_visual = grafico[grafico["Executado no mês"] > 0].copy()
             figura = go.Figure()
-            figura.add_bar(
-                name="Executado no mês",
-                x=grafico_visual["Mês"],
-                y=grafico_visual["Executado no mês"],
-                text=[f"<b>{_moeda(valor)}</b>" for valor in grafico_visual["Executado no mês"]],
-                textposition="outside",
-                textfont=dict(family="Arial Black, Arial, sans-serif", size=12, color="#002b49"),
-                cliponaxis=False,
-                marker_color="#07879b",
-                hovertemplate="<b>%{x}</b><br>Executado: R$ %{y:,.2f}<extra></extra>",
-            )
-            figura.update_layout(height=310, margin=dict(l=10, r=10, t=42, b=10), showlegend=False, bargap=.34, yaxis_tickprefix="R$ ", yaxis_tickformat=",.0f", plot_bgcolor="#fff", paper_bgcolor="#fff")
-            figura.update_xaxes(showgrid=False, tickangle=0, tickfont=dict(size=11, color="#244b69"))
-            figura.update_yaxes(gridcolor="#dce8ef", zerolinecolor="#dce8ef", rangemode="tozero", tickfont=dict(size=11, color="#244b69"))
+            if not grafico_visual.empty:
+                pico_mensal = float(grafico_visual["Executado no mês"].max())
+                cores_barras = [
+                    "#065f46" if float(valor) == pico_mensal else "#08749a"
+                    for valor in grafico_visual["Executado no mês"]
+                ]
+                figura.add_bar(
+                    name="Executado no mês",
+                    x=grafico_visual["Mês"],
+                    y=grafico_visual["Executado no mês"],
+                    text=[_moeda(valor) for valor in grafico_visual["Executado no mês"]],
+                    textposition="outside",
+                    textfont=dict(family="Arial, sans-serif", size=11, color="#0f2942"),
+                    cliponaxis=False,
+                    marker=dict(color=cores_barras, line=dict(width=0)),
+                    hovertemplate="<b>%{x}</b><br>Executado: R$ %{y:,.2f}<extra></extra>",
+                )
+                maior_valor = pico_mensal
+                figura.update_layout(
+                    height=300,
+                    margin=dict(l=8, r=8, t=48, b=12),
+                    showlegend=False,
+                    bargap=.38,
+                    plot_bgcolor="#f8fafc",
+                    paper_bgcolor="#fff",
+                    yaxis=dict(
+                        showticklabels=False,
+                        showgrid=False,
+                        zeroline=False,
+                        rangemode="tozero",
+                        range=[0, maior_valor * 1.24],
+                    ),
+                    xaxis=dict(
+                        showgrid=False,
+                        tickfont=dict(size=10, color="#526477"),
+                        linecolor="#e2e8f0",
+                        tickangle=0,
+                    ),
+                )
+            else:
+                figura.update_layout(
+                    height=300,
+                    margin=dict(l=8, r=8, t=20, b=12),
+                    plot_bgcolor="#f8fafc",
+                    paper_bgcolor="#fff",
+                    xaxis=dict(visible=False),
+                    yaxis=dict(visible=False),
+                    annotations=[dict(text="Sem execução para os filtros selecionados", x=.5, y=.5, xref="paper", yref="paper", showarrow=False, font=dict(size=12, color="#64748b"))],
+                )
             st.plotly_chart(figura, use_container_width=True, config={"displayModeBar": False})
         with direita:
             st.markdown('<div class="fnde-subtitulo-grafico">Execução por cooperativa</div>', unsafe_allow_html=True)
+            st.caption("Participação acumulada sobre a meta anual de 45% do FNDE")
             por_credor = filtrado.groupby("Cooperativa")["Valor executado"].sum() if not filtrado.empty else pd.Series(dtype=float)
-            meses_ativos = filtrado.groupby("Cooperativa")["Mês"].nunique() if not filtrado.empty else pd.Series(dtype=int)
-            linhas_resumo = "".join(
-                f"<tr><td>{cooperativa}</td><td>{int(meses_ativos.get(cooperativa, 0))}</td>"
-                f"<td class='fnde-valor'>{_moeda(float(por_credor.get(cooperativa, 0.0)))}</td>"
-                f"<td>{float(por_credor.get(cooperativa, 0.0)) / META_COOPERATIVAS * 100:.1f}%</td></tr>"
-                for cooperativa in COOPERATIVAS
-            )
-            total_meses_ativos = int(filtrado["Mês"].nunique()) if not filtrado.empty else 0
+            meses_ativos = filtrado[filtrado["Valor executado"] > 0].groupby("Cooperativa")["Mês"].nunique() if not filtrado.empty else pd.Series(dtype=int)
+            ordem_cooperativas = [
+                "ASSOCENE — Associação de Orientação às Cooperativas do Nordeste",
+                "COODAPISJG — Cooperativa de Jaboatão dos Guararapes",
+                "COOPANORTE — Cooperativa dos Pequenos Agricultores Familiares da Mata Norte",
+                "COPAF — Cooperativa da Agricultura Familiar de Pernambuco",
+            ]
+            linhas_resumo = []
+            for cooperativa in ordem_cooperativas:
+                valor_coop = float(por_credor.get(cooperativa, 0.0))
+                percentual_coop = valor_coop / META_COOPERATIVAS * 100 if META_COOPERATIVAS else 0.0
+                largura_barra = min(percentual_coop / 40 * 100, 100)
+                nome_curto, _, razao = cooperativa.partition(" — ")
+                linhas_resumo.append(
+                    f"<tr><td><div class='fnde-coop-nome'>{nome_curto}</div>"
+                    f"<div class='fnde-coop-razao'>{razao}</div></td>"
+                    f"<td><span class='fnde-meses'>{int(meses_ativos.get(cooperativa, 0))}</span></td>"
+                    f"<td class='fnde-valor'>{_moeda(valor_coop)}</td>"
+                    f"<td><div class='fnde-percentual'>{percentual_coop:.1f}%</div>"
+                    f"<div class='fnde-barra'><span style='width:{largura_barra:.1f}%'></span></div></td></tr>"
+                )
+            total_meses_ativos = int(filtrado[filtrado["Valor executado"] > 0]["Mês"].nunique()) if not filtrado.empty else 0
             st.markdown(
-                "<div class='fnde-resumo-mes'><table><thead><tr><th>CREDOR</th><th>MESES C/ EXECUÇÃO</th><th>EXECUTADO</th><th>% DA META FNDE</th></tr></thead><tbody>"
-                + linhas_resumo
-                + f"<tr><td class='fnde-total'>TOTAL GERAL</td><td class='fnde-total'>{total_meses_ativos}</td><td class='fnde-total'>{_moeda(float(por_credor.sum()))}</td><td class='fnde-total'>{percentual_executado:.1f}%</td></tr>"
+                "<div class='fnde-resumo-mes'><table><thead><tr><th>COOPERATIVA / CREDOR</th><th>MESES</th><th>EXECUTADO</th><th>% META FNDE</th></tr></thead><tbody>"
+                + "".join(linhas_resumo)
+                + f"<tr><td class='fnde-total'>TOTAL GERAL</td><td class='fnde-total'>{total_meses_ativos}</td>"
+                + f"<td class='fnde-total fnde-total-destaque'>{_moeda(float(por_credor.sum()))}</td>"
+                + f"<td class='fnde-total'>{percentual_executado:.1f}%</td></tr>"
                 + "</tbody></table></div>",
                 unsafe_allow_html=True,
             )
