@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Prévia UI/UX - Tabela de Credores Expansível</title>
+    <!-- Carregando Tailwind CSS -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <!-- Carregando Fonte Inter -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    
+    <script>
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                    colors: {
+                        navy: {
+                            900: '#0F172A',
+                            800: '#002855',
+                            700: '#00356B',
+                        }
+                    }
+                }
+            }
+        }
+    </script>
+
+    <style>
+        /* Garante que números e valores monetários fiquem perfeitamente alinhados na vertical */
+        .tabular-nums {
+            font-variant-numeric: tabular-nums;
+        }
+
+        /* Animação suave de abertura e fechamento da gaveta (Accordion) usando CSS Grid */
+        .accordion-content {
+            display: grid;
+            grid-template-rows: 0fr;
+            transition: grid-template-rows 0.28s cubic-bezier(0.4, 0, 0.2, 1);
+        }
+
+        .accordion-content.is-open {
+            grid-template-rows: 1fr;
+        }
+
+        .accordion-inner {
+            overflow: hidden;
+        }
+
+        /* Sombra interna sutil para dar profundidade de gaveta aberta */
+        .drawer-shadow {
+            box-shadow: inset 0 6px 10px -6px rgba(0, 40, 85, 0.14);
+        }
+
+        /* Rotação suave da seta indicadora */
+        .chevron-icon {
+            transition: transform 0.25s cubic-bezier(0.4, 0, 0.2, 1), color 0.2s ease;
+        }
+
+        .is-expanded .chevron-icon {
+            transform: rotate(90deg);
+            color: #002855;
+        }
+    </style>
+</head>
+<body class="bg-[#F4F6F9] text-slate-800 min-h-screen py-6 px-3 sm:px-6 lg:px-8 antialiased">
+
+    <div class="max-w-6xl mx-auto">
+        
+        <!-- Barra Superior de Controle e Contexto -->
+        <div class="bg-white rounded-xl shadow-sm border border-slate-200/80 p-2.5 sm:p-3 mb-3 flex flex-col lg:flex-row lg:items-center lg:justify-end gap-3">
+
+            <!-- Filtros por Natureza + Botão Expandir Todos -->
+            <div class="flex flex-wrap items-center gap-2">
+                <div id="filterBar" class="inline-flex flex-wrap items-center bg-slate-100 p-1 rounded-lg border border-slate-200/80 gap-1">
+                    <!-- Botões de filtro renderizados via JS -->
+                </div>
+
+                <button 
+                    id="toggleAllBtn"
+                    onclick="toggleAllRows()"
+                    class="inline-flex items-center gap-1.5 px-3 py-1.5 text-xs font-semibold text-navy-800 bg-white hover:bg-blue-50 border border-slate-200 hover:border-blue-200 rounded-lg transition-colors cursor-pointer shadow-2xs"
+                >
+                    <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                    </svg>
+                    <span id="toggleAllText">Expandir Todos</span>
+                </button>
+            </div>
+        </div>
+
+        <!-- Container Principal da Tabela -->
+        <div class="bg-white rounded-xl shadow-md border border-slate-200 overflow-clip">
+            
+            <!-- Cabeçalho Principal -->
+            <div class="sticky top-0 z-20 shadow-md bg-navy-800 text-white px-4 sm:px-6 py-3.5 grid grid-cols-12 items-center text-xs font-bold uppercase tracking-wider select-none">
+                <div class="col-span-6 sm:col-span-7 pl-7">Credor / Natureza</div>
+                <div class="col-span-3 sm:col-span-2 text-right">Val. Ret.</div>
+                <div class="col-span-3 text-right">Valor Total</div>
+            </div>
+
+            <!-- Lista de Credores (Renderizada via JS) -->
+            <div id="creditorsList" class="divide-y divide-slate-200">
+                <!-- Os itens serão inseridos aqui -->
+            </div>
+
+            <!-- Rodapé de Resumo Dinâmico -->
+            <div id="tableFooter" class="sticky bottom-0 z-20 bg-slate-50 px-4 sm:px-6 py-3 border-t border-slate-200 flex flex-col sm:flex-row sm:items-center justify-between gap-2 text-xs text-slate-500">
+                <!-- Atualizado via JS -->
+            </div>
+        </div>
+
+        <!-- Toast de feedback ao clicar em uma NL -->
+        <div id="toast" class="fixed bottom-5 right-5 bg-navy-900 text-white text-xs sm:text-sm px-4 py-3 rounded-xl shadow-lg transform translate-y-20 opacity-0 transition-all duration-300 flex items-center gap-2.5 z-50 pointer-events-none">
+            <svg class="w-4 h-4 text-blue-300 shrink-0" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M13 16h-1v-4h-1m1-4h.01M21 12a9 9 0 11-18 0 9 9 0 0118 0z" />
+            </svg>
+            <span id="toastMessage">Abrindo detalhes da NL...</span>
+        </div>
+
+    </div>
+
+    <script>
+        // Configuração visual semântica para cada tipo de natureza orçamentária
+        const NATUREZA_CONFIG = {
+            CORRENTE: {
+                label: 'CORRENTE',
+                title: 'Exercício Corrente',
+                classes: 'bg-[#DBEAFE] text-[#1E40AF] border-[#BFDBFE]'
+            },
+            RP: {
+                label: 'RP',
+                title: 'Restos a Pagar Processados',
+                classes: 'bg-[#D1FAE5] text-[#065F46] border-[#A7F3D0]'
+            },
+            RPNP: {
+                label: 'RPNP',
+                title: 'Restos a Pagar Não Processados',
+                classes: 'bg-[#FEF3C7] text-[#92400E] border-[#FDE68A]'
+            },
+            SEM_CLASSE: {
+                label: 'N/C',
+                title: 'Não classificado (NE não encontrada na base do QlikView)',
+                classes: 'bg-[#F1F5F9] text-[#475569] border-[#CBD5E1]'
+            },
+            DEA: {
+                label: 'DEA',
+                title: 'Despesas de Exercícios Anteriores',
+                classes: 'bg-[#EDE9FE] text-[#5B21B6] border-[#DDD6FE]'
+            }
+        };
+
+        // Ordem padrão para exibir as badges no cabeçalho do credor
+        const NATUREZA_ORDER = ['CORRENTE', 'RP', 'RPNP', 'DEA', 'SEM_CLASSE'];
+
+        // Dados baseados na imagem original com classificação por liquidação (NL)
+        const creditorsData = __DADOS_JSON__;
+
+        let activeFilter = 'TODOS';
+
+        // Gera o HTML de uma badge semântica com tooltip
+        function renderNaturezaBadge(tipo, size = 'sm') {
+            const cfg = NATUREZA_CONFIG[tipo];
+            if (!cfg) return '';
+            const sizeClasses = size === 'xs' 
+                ? 'px-1.5 py-0.5 text-[10px]' 
+                : 'px-2 py-0.5 text-[11px]';
+            return `<span title="${cfg.title}" class="inline-flex items-center rounded border font-bold tracking-wide shrink-0 cursor-help ${sizeClasses} ${cfg.classes}">${cfg.label}</span>`;
+        }
+
+        // Converte string monetária BR ("R$ 1.234,56") para float
+        function parseCurrency(str) {
+            return parseFloat(str.replace('R$', '').replace(/\./g, '').replace(',', '.').trim()) || 0;
+        }
+
+        // Formata float para moeda BR
+        function formatCurrency(val) {
+            return val.toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+        }
+
+        // Renderiza a barra de filtros rápidos
+        function renderFilters() {
+            const filterBar = document.getElementById('filterBar');
+            const options = [
+                { key: 'TODOS', label: 'Todos' },
+                { key: 'CORRENTE', label: 'CORRENTE' },
+                { key: 'RP', label: 'RP' },
+                { key: 'RPNP', label: 'RPNP' },
+                { key: 'DEA', label: 'DEA' },
+                { key: 'SEM_CLASSE', label: 'N/C' }
+            ];
+
+            filterBar.innerHTML = options.map(opt => {
+                const isActive = activeFilter === opt.key;
+                return `
+                    <button 
+                        onclick="setFilter('${opt.key}')"
+                        class="px-2.5 py-1 rounded-md text-xs font-semibold transition-all cursor-pointer ${
+                            isActive 
+                                ? 'bg-navy-800 text-white shadow-2xs' 
+                                : 'text-slate-600 hover:text-navy-800 hover:bg-white/70'
+                        }"
+                    >
+                        ${opt.label}
+                    </button>
+                `;
+            }).join('');
+        }
+
+        function setFilter(filterKey) {
+            activeFilter = filterKey;
+            renderFilters();
+            renderTable();
+        }
+
+        // Renderiza toda a lista filtrada
+        function renderTable() {
+            const container = document.getElementById('creditorsList');
+            container.innerHTML = '';
+
+            // Filtra credores que possuem ao menos 1 liquidação do tipo selecionado
+            const filteredCreditors = creditorsData.filter(creditor => {
+                if (activeFilter === 'TODOS') return true;
+                return creditor.items.some(item => item.tipo === activeFilter);
+            });
+
+            let sumRet = 0;
+            let sumTotal = 0;
+
+            filteredCreditors.forEach(creditor => {
+                sumRet += parseCurrency(creditor.valRet);
+                sumTotal += parseCurrency(creditor.valTotal);
+
+                // Descobre os tipos únicos de natureza presentes nas liquidações deste credor
+                const uniqueTypes = NATUREZA_ORDER.filter(tipo => 
+                    creditor.items.some(item => item.tipo === tipo)
+                );
+
+                const badgesHtml = uniqueTypes.map(tipo => renderNaturezaBadge(tipo, 'xs')).join('');
+
+                const count = creditor.items.length;
+                const countLabel = count === 1 ? '1 liquidação' : `${count} liquidações`;
+
+                const rowWrapper = document.createElement('div');
+                rowWrapper.className = `transition-colors ${creditor.expanded ? 'is-expanded' : ''}`;
+                rowWrapper.id = `row-wrapper-${creditor.id}`;
+
+                // Linha Principal do Credor (Clicável)
+                const parentRow = document.createElement('div');
+                parentRow.setAttribute('role', 'button');
+                parentRow.setAttribute('tabindex', '0');
+                parentRow.setAttribute('aria-expanded', creditor.expanded);
+                parentRow.onclick = () => toggleRow(creditor.id);
+                parentRow.onkeydown = (e) => {
+                    if (e.key === 'Enter' || e.key === ' ') {
+                        e.preventDefault();
+                        toggleRow(creditor.id);
+                    }
+                };
+
+                parentRow.className = `
+                    group px-4 sm:px-6 py-3.5 grid grid-cols-12 items-center cursor-pointer select-none transition-all duration-150
+                    ${creditor.expanded 
+                        ? 'bg-blue-50/80 hover:bg-blue-50' 
+                        : 'bg-white hover:bg-slate-50/90'}
+                `;
+
+                parentRow.innerHTML = `
+                    <!-- Coluna Nome + Seta + Badges de Natureza + Contador -->
+                    <div class="col-span-6 sm:col-span-7 flex items-start sm:items-center gap-2.5 pr-3">
+                        <span class="mt-0.5 sm:mt-0 w-5 h-5 rounded-md flex items-center justify-center shrink-0 transition-colors ${creditor.expanded ? 'bg-blue-100/80 text-navy-800' : 'text-slate-400 group-hover:text-navy-800 group-hover:bg-slate-200/60'}">
+                            <svg class="chevron-icon w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24">
+                                <path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" />
+                            </svg>
+                        </span>
+                        
+                        <div class="flex flex-col gap-1 min-w-0">
+                            <span class="text-xs sm:text-sm tracking-tight leading-snug ${creditor.expanded ? 'font-bold text-navy-900' : 'font-semibold text-navy-800 group-hover:text-navy-900'}" title="${creditor.name}">
+                                ${creditor.name}
+                            </span>
+                            
+                            <!-- Linha de Metadados: Badges de Natureza + Quantidade de Liquidações -->
+                            <div class="flex flex-wrap items-center gap-1.5">
+                                ${badgesHtml}
+                                <span class="text-slate-300 text-[10px] select-none">•</span>
+                                <span class="inline-flex items-center px-2 py-0.5 rounded-full text-[11px] font-medium transition-colors ${creditor.expanded ? 'bg-navy-800 text-white' : 'bg-slate-100 text-slate-600 group-hover:bg-blue-100/70 group-hover:text-navy-800'}">
+                                    ${countLabel}
+                                </span>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Coluna Valor Retido -->
+                    <div class="col-span-3 sm:col-span-2 text-right tabular-nums text-xs sm:text-sm font-semibold text-[#C27803]">
+                        ${creditor.valRet}
+                    </div>
+
+                    <!-- Coluna Valor Total -->
+                    <div class="col-span-3 text-right tabular-nums text-xs sm:text-sm font-bold text-navy-900">
+                        ${creditor.valTotal}
+                    </div>
+                `;
+
+                // Área Expansível (Subtabela com hierarquia visual)
+                const accordionContent = document.createElement('div');
+                accordionContent.className = `accordion-content ${creditor.expanded ? 'is-open' : ''}`;
+                accordionContent.id = `accordion-${creditor.id}`;
+
+                const subRowsHtml = creditor.items.map(item => {
+                    const isHighlighted = activeFilter !== 'TODOS' && item.tipo === activeFilter;
+                    return `
+                        <tr class="transition-colors border-b border-slate-200/70 last:border-b-0 ${isHighlighted ? 'bg-blue-50/60' : 'hover:bg-slate-50'}">
+                            <td class="py-2.5 px-3 sm:px-4 text-left">
+                                <a href="javascript:void(0)" onclick="event.stopPropagation(); showToast('Visualizando Nota de Liquidação: ${item.nl} (${item.tipo})')" class="font-semibold text-blue-700 hover:text-navy-900 hover:underline inline-flex items-center gap-1">
+                                    ${item.nl}
+                                    <svg class="w-3 h-3 opacity-60" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                                        <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10 6H6a2 2 0 00-2 2v10a2 2 0 002 2h10a2 2 0 002-2v-4M14 4h6m0 0v6m0-6L10 14" />
+                                    </svg>
+                                </a>
+                            </td>
+                            <td class="py-2.5 px-3 sm:px-4 text-left text-slate-600 font-medium">
+                                ${item.ne}
+                            </td>
+                            <td class="py-2.5 px-3 sm:px-4 text-center text-slate-600 tabular-nums">
+                                ${item.emissao}
+                            </td>
+                            <td class="py-2.5 px-3 sm:px-4 text-center">
+                                ${renderNaturezaBadge(item.tipo, 'xs')}
+                            </td>
+                            <td class="py-2.5 px-3 sm:px-4 text-right text-[#C27803] font-medium tabular-nums">
+                                ${item.ret}
+                            </td>
+                            <td class="py-2.5 px-3 sm:px-4 text-right text-navy-900 font-semibold tabular-nums">
+                                ${item.total}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+
+                accordionContent.innerHTML = `
+                    <div class="accordion-inner">
+                        <!-- Container com borda lateral forte, recuo e sombra interna -->
+                        <div class="bg-slate-50/90 drawer-shadow border-t border-slate-200/80 pl-5 sm:pl-11 pr-3 sm:pr-6 py-3.5 relative">
+                            <!-- Guia vertical azul conectando ao credor pai -->
+                            <div class="absolute left-0 top-0 bottom-0 w-1 bg-navy-800"></div>
+
+                            <div class="bg-white rounded-lg border border-slate-200/90 shadow-2xs overflow-x-auto">
+                                <table class="w-full text-xs border-collapse min-w-[620px]">
+                                    <thead>
+                                        <tr class="bg-slate-100/80 border-b border-slate-200 text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                            <th class="py-2 px-3 sm:px-4 text-left">NL</th>
+                                            <th class="py-2 px-3 sm:px-4 text-left">NE</th>
+                                            <th class="py-2 px-3 sm:px-4 text-center">Emissão</th>
+                                            <th class="py-2 px-3 sm:px-4 text-center">Natureza</th>
+                                            <th class="py-2 px-3 sm:px-4 text-right">Val. Ret.</th>
+                                            <th class="py-2 px-3 sm:px-4 text-right">Valor Total</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody>
+                                        ${subRowsHtml}
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                `;
+
+                rowWrapper.appendChild(parentRow);
+                rowWrapper.appendChild(accordionContent);
+                container.appendChild(rowWrapper);
+            });
+
+            // Atualiza rodapé dinâmico
+            const footer = document.getElementById('tableFooter');
+            const filterSuffix = activeFilter !== 'TODOS' ? ` com liquidações em <strong>${activeFilter}</strong>` : '';
+            footer.innerHTML = `
+                <span>Exibindo <strong>${filteredCreditors.length}</strong> ${filteredCreditors.length === 1 ? 'credor' : 'credores'}${filterSuffix}</span>
+                <div class="flex flex-wrap items-center gap-4 tabular-nums">
+                    <span>Total Retido: <strong class="text-[#C27803] font-semibold">${formatCurrency(sumRet)}</strong></span>
+                    <span>Total Geral: <strong class="text-navy-800 font-bold">${formatCurrency(sumTotal)}</strong></span>
+                </div>
+            `;
+
+            updateToggleAllButton(filteredCreditors);
+        }
+
+        // Alterna uma linha específica
+        function toggleRow(id) {
+            const creditor = creditorsData.find(c => c.id === id);
+            if (!creditor) return;
+
+            creditor.expanded = !creditor.expanded;
+            renderTable();
+        }
+
+        // Expande ou recolhe todas as linhas visíveis de uma vez
+        function toggleAllRows() {
+            const visibleCreditors = creditorsData.filter(creditor => 
+                activeFilter === 'TODOS' || creditor.items.some(item => item.tipo === activeFilter)
+            );
+            const anyClosed = visibleCreditors.some(c => !c.expanded);
+            visibleCreditors.forEach(c => c.expanded = anyClosed);
+            renderTable();
+        }
+
+        // Atualiza o texto do botão superior
+        function updateToggleAllButton(visibleCreditors) {
+            const list = visibleCreditors || creditorsData;
+            const allOpen = list.length > 0 && list.every(c => c.expanded);
+            const btnText = document.getElementById('toggleAllText');
+            btnText.textContent = allOpen ? 'Recolher Todos' : 'Expandir Todos';
+        }
+
+        // Feedback visual ao clicar no link da NL
+        let toastTimeout;
+        function showToast(msg) {
+            const toast = document.getElementById('toast');
+            const toastMsg = document.getElementById('toastMessage');
+            toastMsg.textContent = msg;
+
+            toast.classList.remove('translate-y-20', 'opacity-0');
+            toast.classList.add('translate-y-0', 'opacity-100');
+
+            clearTimeout(toastTimeout);
+            toastTimeout = setTimeout(() => {
+                toast.classList.remove('translate-y-0', 'opacity-100');
+                toast.classList.add('translate-y-20', 'opacity-0');
+            }, 2600);
+        }
+
+        // Inicializa filtros e tabela ao carregar a página
+        window.addEventListener('DOMContentLoaded', () => {
+            renderFilters();
+            renderTable();
+        });
+    </script>
+</body>
+</html>

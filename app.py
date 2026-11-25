@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base, ob_ritmo_fontes
+from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base, ob_ritmo_fontes, tabela_credores
 
 try:
     from modulos import ob_matriz_despesas
@@ -4479,6 +4479,14 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         # Relaciona também com a BASE_TRATADA do QLIKVIEW pela NE:
         # H = NE e B = Marcador de Fonte. Agrupa por NE para não duplicar NLs.
         if not df_marcadores_qlik.empty and df_marcadores_qlik.shape[1] >= 8:
+            # Elemento da despesa (coluna F da BASE_TRATADA; usa o nome
+            # "Elemento" quando existir). Serve para classificar a NL em
+            # CORRENTE / RP / RPNP / DEA, pois a base de NL não traz elemento.
+            _col_elemento_qlik = next(
+                (c for c in df_marcadores_qlik.columns
+                 if str(c).strip().upper() == "ELEMENTO"),
+                df_marcadores_qlik.columns[5],
+            )
             mapa_qlik = pd.DataFrame({
                 "NE_Chave": limpar_chave_ne(df_marcadores_qlik.iloc[:, 7]),
                 "Marcador_Fonte_QLIK": (
@@ -4487,10 +4495,18 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     .astype(str)
                     .str.strip()
                 ),
+                "Elemento_QLIK": (
+                    df_marcadores_qlik[_col_elemento_qlik]
+                    .fillna("")
+                    .astype(str)
+                    .str.strip()
+                ),
             })
             mapa_qlik = mapa_qlik[mapa_qlik["NE_Chave"] != ""].copy()
             mapa_qlik = (
-                mapa_qlik.groupby("NE_Chave", as_index=False)["Marcador_Fonte_QLIK"]
+                mapa_qlik.groupby("NE_Chave", as_index=False)[
+                    ["Marcador_Fonte_QLIK", "Elemento_QLIK"]
+                ]
                 .agg(lambda valores: next(
                     (v for v in valores if v and v.upper() not in {"NAN", "NONE"}),
                     ""
@@ -4498,7 +4514,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             )
         else:
             mapa_qlik = pd.DataFrame(
-                columns=["NE_Chave", "Marcador_Fonte_QLIK"]
+                columns=["NE_Chave", "Marcador_Fonte_QLIK", "Elemento_QLIK"]
             )
             if not df_marcadores_qlik.empty:
                 st.warning(
@@ -4563,86 +4579,37 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             .apply(classificar_grupo_nl)
         )
 
+        # Natureza da NL (CORRENTE / RP / RPNP / DEA) pela NE, via Elemento do
+        # QLIKVIEW. NE sem correspondência fica como SEM_CLASSE (chip N/C).
+        if "Elemento_QLIK" not in df_merged.columns:
+            df_merged["Elemento_QLIK"] = ""
+        df_merged["Elemento_Cod"] = df_merged["Elemento_QLIK"].map(
+            tabela_credores.codigo_elemento
+        )
+        _texto_status_nl = df_merged["Status_Filtro"].fillna("").astype(str)
+        if "Tipo de NL" in df_merged.columns:
+            _texto_status_nl = _texto_status_nl + " " + df_merged["Tipo de NL"].fillna("").astype(str)
+        df_merged["Natureza_NL"] = [
+            tabela_credores.classificar_natureza_nl(
+                ne,
+                None if pd.isna(el) else int(el),
+                None if pd.isna(dt) else int(dt.year),
+                st_txt,
+            )
+            for ne, el, dt, st_txt in zip(
+                df_merged["NE_Chave"],
+                df_merged["Elemento_Cod"],
+                df_merged["Data_DT"],
+                _texto_status_nl,
+            )
+        ]
+
         return df_merged
 
     def renderizar_tabela_credor_dinamica(df_filtrado):
-        totais_credor = (
-            df_filtrado.groupby("Credor_Tratado")
-            .agg({"Valor_Retido_Limpo": "sum", "Valor_Total_Limpo": "sum"})
-            .sort_values(by="Valor_Total_Limpo", ascending=False)
-        )
-
-        tot_retido_geral = totais_credor["Valor_Retido_Limpo"].sum()
-        tot_valor_geral = totais_credor["Valor_Total_Limpo"].sum()
-
-        html_grupos = ""
-
-        for credor, row_tot in totais_credor.iterrows():
-            v_ret_credor = row_tot["Valor_Retido_Limpo"]
-            v_tot_credor = row_tot["Valor_Total_Limpo"]
-
-            df_cred = df_filtrado[df_filtrado["Credor_Tratado"] == credor]
-            df_sub = (
-                df_cred.groupby(["NL_Numero", "NE_Chave", "Data_Emissao_Exibicao"], as_index=False)
-                .agg({"Valor_Retido_Limpo": "sum", "Valor_Total_Limpo": "sum"})
-                .sort_values(by="NL_Numero", ascending=True)
-            )
-
-            linhas_subtabela = ""
-            for _, r in df_sub.iterrows():
-                linhas_subtabela += f"""
-<tr>
-    <td style='width: 20%; text-align: center; font-family: monospace; font-weight: 600; color: #005691;'>{r['NL_Numero']}</td>
-    <td style='width: 20%; text-align: center; font-family: monospace; color: #475569;'>{r['NE_Chave']}</td>
-    <td style='width: 20%; text-align: center; color: #475569;'>{r['Data_Emissao_Exibicao']}</td>
-    <td style='width: 20%; text-align: center; color: #d97706;'>{formatar_brl(r['Valor_Retido_Limpo'])}</td>
-    <td style='width: 20%; text-align: center; font-weight: 600; color: #002b49;'>{formatar_brl(r['Valor_Total_Limpo'])}</td>
-</tr>"""
-
-            html_grupos += f"""
-<details class='credor-group'>
-    <summary class='credor-summary'>
-        <span>{credor}</span>
-        <span style='text-align: right; color: #d97706;'>{formatar_brl(v_ret_credor)}</span>
-        <span style='text-align: right; color: #002b49;'>{formatar_brl(v_tot_credor)}</span>
-    </summary>
-    <div class='subtabela-container'>
-        <table class='subtabela-detalhe'>
-            <thead>
-                <tr>
-                    <th style='width: 20%; text-align: center;'>NL</th>
-                    <th style='width: 20%; text-align: center;'>NE</th>
-                    <th style='width: 20%; text-align: center;'>EMISSÃO</th>
-                    <th style='width: 20%; text-align: center;'>VAL. RET.</th>
-                    <th style='width: 20%; text-align: center;'>VALOR TOTAL</th>
-                </tr>
-            </thead>
-            <tbody>
-                {linhas_subtabela}
-            </tbody>
-        </table>
-    </div>
-</details>"""
-
-        html_final = f"""
-<div class='tabela-dinamica-container'>
-    <div class='tabela-dinamica-header'>
-        <div>CREDOR</div>
-        <div style='text-align: right;'>VAL. RET.</div>
-        <div style='text-align: right;'>VALOR TOTAL</div>
-    </div>
-    {html_grupos}
-    <div class='tabela-dinamica-header' style='background: #f1f5f9; border-top: 2px solid #005691; border-bottom: none;'>
-        <div style='color: #002b49; font-weight: 800; text-transform: uppercase; letter-spacing: 0.5px;'>TOTAL GERAL</div>
-        <div style='text-align: right; color: #f77f00; font-weight: 800;'>{formatar_brl(tot_retido_geral)}</div>
-        <div style='text-align: right; color: #028090; font-weight: 800;'>{formatar_brl(tot_valor_geral)}</div>
-    </div>
-</div>"""
-
-        if hasattr(st, "html"):
-            st.html(html_final)
-        else:
-            st.markdown(html_final, unsafe_allow_html=True)
+        # Layout novo (credor expansível + chips de natureza). A classificação
+        # CORRENTE / RP / RPNP / DEA vem de Natureza_NL, calculada pela NE.
+        tabela_credores.exibir_tabela_credores(df_filtrado, altura=820)
 
     def gerar_relatorio_nl_excel(df_filtrado):
         """Preenche o modelo oficial de NL preservando integralmente a Tabela Dinâmica.
