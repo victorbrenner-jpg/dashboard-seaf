@@ -186,113 +186,224 @@ _COLUNAS_DETALHE = [
 
 
 def gerar_relatorio_excel(df: pd.DataFrame, recorte: str = "") -> bytes:
-    """Excel com: (1) resumo Ação x Subação com subtotais; (2) detalhe das NLs."""
+    """Preenche uma cópia do modelo oficial, preservando a Tabela Dinâmica."""
+    import zipfile
+    import html
+    import datetime as dt
+
     if df.empty:
         raise ValueError("Não há liquidações para o recorte escolhido.")
-    import xlsxwriter
+
+    modelo = Path(__file__).resolve().parent.parent / "modelos" / "modelo_Relatorio_por_ Ação_ e_Subação.xlsx"
+
+    if not modelo.exists():
+        raise FileNotFoundError(f"Modelo oficial não encontrado: {modelo}")
+
+    colunas = _COLUNAS_DETALHE
+    ultima_coluna = "N"
+
+    chaves_ordenacao = [
+        c for c in [
+            "Acao_Relacao",
+            "SubAcao_Relacao",
+            "Credor_Tratado",
+            "NL_Numero",
+        ] if c in df.columns
+    ]
+
+    base = df.copy()
+
+    if chaves_ordenacao:
+        base = base.sort_values(chaves_ordenacao, kind="stable")
+
+    def texto_xml(valor):
+        if pd.isna(valor):
+            valor = ""
+        valor = str(valor)
+        valor = re.sub(r"[\x00-\x08\x0B\x0C\x0E-\x1F]", "", valor)
+        return html.escape(valor, quote=False)
+
+    def celula_texto(referencia, valor, estilo):
+        conteudo = texto_xml(valor)
+        return (
+            f'<c r="{referencia}" s="{estilo}" t="inlineStr">'
+            f'<is><t xml:space="preserve">{conteudo}</t></is></c>'
+        )
+
+    def celula_numero(referencia, valor, estilo):
+        numero = float(valor) if pd.notna(valor) else 0.0
+        return f'<c r="{referencia}" s="{estilo}"><v>{numero:.15g}</v></c>'
+
+    estilos = {
+        0: 2, 1: 4, 2: 2, 3: 2,
+        4: 4, 5: 4, 6: 4, 7: 5,
+        8: 6, 9: 4, 10: 4, 11: 4,
+        12: 3, 13: 3,
+    }
+
+    linhas_xml = []
+
+    for numero_linha, registro in enumerate(base.to_dict("records"), start=2):
+        celulas = []
+
+        for indice, (campo, titulo, tipo) in enumerate(colunas):
+            referencia = f"{chr(65 + indice)}{numero_linha}"
+            valor = registro.get(campo)
+            estilo = estilos[indice]
+
+            if tipo == "moeda":
+                celulas.append(celula_numero(referencia, valor, estilo))
+
+            elif tipo == "data":
+                data = pd.to_datetime(valor, errors="coerce")
+
+                if pd.isna(data):
+                    celulas.append(celula_texto(referencia, "", estilo))
+                else:
+                    data = data.to_pydatetime()
+                    serial = (data - dt.datetime(1899, 12, 30)).total_seconds() / 86400
+                    celulas.append(celula_numero(referencia, serial, estilo))
+
+            elif tipo == "natureza":
+                exibicao = "" if pd.isna(valor) else _NATUREZA_EXIBICAO.get(str(valor), str(valor))
+                celulas.append(celula_texto(referencia, exibicao, estilo))
+
+            else:
+                celulas.append(celula_texto(referencia, valor, estilo))
+
+        linhas_xml.append(
+            f'<row r="{numero_linha}" ht="20.1" customHeight="1">'
+            + "".join(celulas)
+            + "</row>"
+        )
+
+    ultima_linha = len(base) + 1
+    novo_intervalo = f"A1:{ultima_coluna}{ultima_linha}"
 
     saida = io.BytesIO()
-    wb = xlsxwriter.Workbook(saida, {"in_memory": True, "nan_inf_to_errors": True})
 
-    azul = "#002855"
-    f_titulo = wb.add_format({"bold": True, "font_size": 14, "font_color": azul})
-    f_sub = wb.add_format({"italic": True, "font_color": "#64748B"})
-    f_cab = wb.add_format({"bold": True, "font_color": "#FFFFFF", "bg_color": azul,
-                           "border": 1, "align": "center", "valign": "vcenter", "text_wrap": True})
-    f_txt = wb.add_format({"border": 1, "valign": "top", "text_wrap": True})
-    f_int = wb.add_format({"border": 1, "num_format": "#,##0", "align": "center"})
-    f_moeda = wb.add_format({"border": 1, "num_format": 'R$ #,##0.00'})
-    f_data = wb.add_format({"border": 1, "num_format": "dd/mm/yyyy", "align": "center"})
-    f_centro = wb.add_format({"border": 1, "align": "center"})
-    f_st_txt = wb.add_format({"bold": True, "border": 1, "bg_color": "#E2E8F0", "text_wrap": True})
-    f_st_int = wb.add_format({"bold": True, "border": 1, "bg_color": "#E2E8F0",
-                              "num_format": "#,##0", "align": "center"})
-    f_st_moeda = wb.add_format({"bold": True, "border": 1, "bg_color": "#E2E8F0",
-                                "num_format": 'R$ #,##0.00'})
-    f_tg_txt = wb.add_format({"bold": True, "border": 1, "bg_color": "#CBD5E1", "font_color": azul})
-    f_tg_int = wb.add_format({"bold": True, "border": 1, "bg_color": "#CBD5E1", "font_color": azul,
-                              "num_format": "#,##0", "align": "center"})
-    f_tg_moeda = wb.add_format({"bold": True, "border": 1, "bg_color": "#CBD5E1", "font_color": azul,
-                                "num_format": 'R$ #,##0.00'})
+    with zipfile.ZipFile(modelo, "r") as origem:
+        arquivos = {item.filename: origem.read(item.filename) for item in origem.infolist()}
+        informacoes = {item.filename: item for item in origem.infolist()}
 
-    # ---------------- Aba 1: resumo ----------------
-    ws = wb.add_worksheet("Resumo Ação e Subação")
-    ws.write(0, 0, "Relatório por Ação e Subação", f_titulo)
-    ws.write(1, 0, f"{recorte + ' · ' if recorte else ''}gerado em "
-                   f"{datetime.date.today().strftime('%d/%m/%Y')}", f_sub)
-    cab = ["Ação", "Subação", "Qtd. NL", "Valor Retido", "Valor Total"]
-    for c, t in enumerate(cab):
-        ws.write(3, c, t, f_cab)
+    caminho_detalhe = "xl/worksheets/sheet2.xml"
+    caminho_cache = "xl/pivotCache/pivotCacheDefinition1.xml"
+    caminho_workbook = "xl/workbook.xml"
 
-    agg = (
-        df.groupby(["Acao_Relacao", "SubAcao_Relacao"], as_index=False)
-        .agg(qtd=("NL_Numero", "nunique"), ret=("Valor_Retido_Limpo", "sum"), tot=("Valor_Total_Limpo", "sum"))
+    for caminho in [caminho_detalhe, caminho_cache, caminho_workbook]:
+        if caminho not in arquivos:
+            raise ValueError(f"Componente esperado não encontrado no modelo: {caminho}")
+
+    # Atualiza somente as linhas de dados da aba Detalhe NL.
+    detalhe = arquivos[caminho_detalhe].decode("utf-8")
+
+    padrao_sheetdata = r"(<sheetData\b[^>]*>)(.*?)(</sheetData>)"
+    correspondencia = re.search(padrao_sheetdata, detalhe, flags=re.S)
+
+    if not correspondencia:
+        raise ValueError("Não foi possível localizar a área de dados da aba Detalhe NL.")
+
+    conteudo_antigo = correspondencia.group(2)
+    cabecalho = re.search(
+        r'<row\b[^>]*\br="1"[^>]*>.*?</row>',
+        conteudo_antigo,
+        flags=re.S,
     )
-    ordem = (
-        df.groupby("Acao_Relacao")["Valor_Total_Limpo"].sum().sort_values(ascending=False).index.tolist()
+
+    if not cabecalho:
+        raise ValueError("Não foi possível preservar o cabeçalho da aba Detalhe NL.")
+
+    novo_conteudo = cabecalho.group(0) + "".join(linhas_xml)
+
+    detalhe = (
+        detalhe[:correspondencia.start()]
+        + correspondencia.group(1)
+        + novo_conteudo
+        + correspondencia.group(3)
+        + detalhe[correspondencia.end():]
     )
-    linha = 4
-    for acao in ordem:
-        subs = agg[agg["Acao_Relacao"] == acao].sort_values("tot", ascending=False)
-        for r in subs.itertuples(index=False):
-            ws.write(linha, 0, r.Acao_Relacao, f_txt)
-            ws.write(linha, 1, r.SubAcao_Relacao, f_txt)
-            ws.write_number(linha, 2, int(r.qtd), f_int)
-            ws.write_number(linha, 3, float(r.ret), f_moeda)
-            ws.write_number(linha, 4, float(r.tot), f_moeda)
-            linha += 1
-        sub_df = df[df["Acao_Relacao"] == acao]
-        ws.write(linha, 0, f"Subtotal — {acao}", f_st_txt)
-        ws.write(linha, 1, "", f_st_txt)
-        ws.write_number(linha, 2, int(sub_df["NL_Numero"].nunique()), f_st_int)
-        ws.write_number(linha, 3, float(sub_df["Valor_Retido_Limpo"].sum()), f_st_moeda)
-        ws.write_number(linha, 4, float(sub_df["Valor_Total_Limpo"].sum()), f_st_moeda)
-        linha += 1
-    ws.write(linha, 0, "TOTAL GERAL", f_tg_txt)
-    ws.write(linha, 1, "", f_tg_txt)
-    ws.write_number(linha, 2, int(df["NL_Numero"].nunique()), f_tg_int)
-    ws.write_number(linha, 3, float(df["Valor_Retido_Limpo"].sum()), f_tg_moeda)
-    ws.write_number(linha, 4, float(df["Valor_Total_Limpo"].sum()), f_tg_moeda)
-    ws.set_column(0, 0, 62)
-    ws.set_column(1, 1, 34)
-    ws.set_column(2, 2, 10)
-    ws.set_column(3, 4, 18)
-    ws.freeze_panes(4, 0)
-    ws.set_landscape()
-    ws.fit_to_pages(1, 0)
-    ws.repeat_rows(3)
 
-    # ---------------- Aba 2: detalhe ----------------
-    wd = wb.add_worksheet("Detalhe NL")
-    colunas = [c for c in _COLUNAS_DETALHE if c[0] in df.columns]
-    base = df.sort_values(["Acao_Relacao", "SubAcao_Relacao", "Credor_Tratado", "NL_Numero"], kind="stable")
-    for c, (_, titulo, _) in enumerate(colunas):
-        wd.write(0, c, titulo, f_cab)
-    for i, reg in enumerate(base.to_dict("records"), start=1):
-        for c, (campo, _, tipo) in enumerate(colunas):
-            v = reg.get(campo)
-            if tipo == "moeda":
-                wd.write_number(i, c, float(v) if pd.notna(v) else 0.0, f_moeda)
-            elif tipo == "data":
-                d = pd.to_datetime(v, errors="coerce")
-                if pd.isna(d):
-                    wd.write(i, c, "", f_data)
-                else:
-                    wd.write_datetime(i, c, d.to_pydatetime(), f_data)
-            elif tipo == "natureza":
-                wd.write(i, c, _NATUREZA_EXIBICAO.get(str(v), "" if pd.isna(v) else str(v)), f_centro)
-            else:
-                wd.write(i, c, "" if pd.isna(v) else str(v), f_txt)
-    larguras = {"Ação": 52, "Subação": 30, "Nome do Credor": 44, "Objeto Despesa": 40, "GD": 6,
-                "Número NL": 17, "NE": 16, "Emissão": 12, "Natureza": 11, "Status": 22,
-                "Fonte": 36, "Marcador de Fonte": 36, "Valor Retido": 17, "Valor": 17}
-    for c, (_, titulo, _) in enumerate(colunas):
-        wd.set_column(c, c, larguras.get(titulo, 18))
-    wd.autofilter(0, 0, len(base), len(colunas) - 1)
-    wd.freeze_panes(1, 0)
-    wd.set_landscape()
-    wd.fit_to_pages(1, 0)
-    wd.repeat_rows(0)
+    detalhe = re.sub(
+        r'<dimension\b[^>]*/>',
+        f'<dimension ref="{novo_intervalo}"/>',
+        detalhe,
+        count=1,
+    )
 
-    wb.close()
-    return saida.getvalue()
+    detalhe = re.sub(
+        r'ref="A1:N\d+"',
+        f'ref="{novo_intervalo}"',
+        detalhe,
+    )
+
+    arquivos[caminho_detalhe] = detalhe.encode("utf-8")
+
+    # Atualiza a origem da Tabela Dinâmica.
+    cache = arquivos[caminho_cache].decode("utf-8")
+
+    cache = re.sub(
+        r'(<pivotCacheDefinition\b[^>]*?)\srefreshOnLoad="[^"]*"',
+        r'\1',
+        cache,
+    )
+    cache = re.sub(
+        r'(<pivotCacheDefinition\b[^>]*?)\senableRefresh="[^"]*"',
+        r'\1',
+        cache,
+    )
+
+    cache = re.sub(
+        r'<pivotCacheDefinition\b',
+        '<pivotCacheDefinition refreshOnLoad="1" enableRefresh="1"',
+        cache,
+        count=1,
+    )
+
+    cache, quantidade = re.subn(
+        r'(<worksheetSource\b[^>]*\bref=")[^"]*(")',
+        rf'\g<1>{novo_intervalo}\g<2>',
+        cache,
+        count=1,
+    )
+
+    if quantidade == 0:
+        raise ValueError("Não foi possível atualizar a origem da Tabela Dinâmica.")
+
+    arquivos[caminho_cache] = cache.encode("utf-8")
+
+    # Atualiza o intervalo do filtro definido para Detalhe NL.
+    workbook = arquivos[caminho_workbook].decode("utf-8")
+
+    workbook, quantidade = re.subn(
+        r'(<definedName\b[^>]*name="_xlnm\._FilterDatabase"[^>]*>).*?(</definedName>)',
+        rf"\g<1>'Detalhe NL'!$A$1:$N${ultima_linha}\g<2>",
+        workbook,
+        count=1,
+        flags=re.S,
+    )
+
+    if quantidade == 0:
+        raise ValueError("Não foi possível atualizar o intervalo do filtro do modelo.")
+
+    arquivos[caminho_workbook] = workbook.encode("utf-8")
+
+    # Monta uma cópia em memória, mantendo os demais componentes do modelo.
+    with zipfile.ZipFile(saida, "w", compression=zipfile.ZIP_DEFLATED) as destino:
+        for nome, conteudo in arquivos.items():
+            destino.writestr(informacoes[nome], conteudo)
+
+    resultado = saida.getvalue()
+
+    # Valida o arquivo gerado antes de entregá-lo ao aplicativo.
+    with zipfile.ZipFile(io.BytesIO(resultado), "r") as teste:
+        erro = teste.testzip()
+
+        if erro:
+            raise ValueError(f"Falha na validação do arquivo Excel: {erro}")
+
+        import xml.etree.ElementTree as ET
+        ET.fromstring(teste.read(caminho_detalhe))
+        ET.fromstring(teste.read(caminho_cache))
+        ET.fromstring(teste.read(caminho_workbook))
+
+    return resultado
