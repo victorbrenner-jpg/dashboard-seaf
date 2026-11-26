@@ -17,7 +17,7 @@ import streamlit as st
 import streamlit.components.v1 as components
 import textwrap
 
-from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base, ob_ritmo_fontes, tabela_credores
+from modulos import conferencia, home, monitoramento_dea, monitoramento_fnde, relatorio_mde, relatorio_credores, ob_base, ob_ritmo_fontes, tabela_credores, tabela_acoes
 
 try:
     from modulos import ob_matriz_despesas
@@ -151,6 +151,10 @@ if "mem_nl_marcador_fonte" not in st.session_state:
     st.session_state["mem_nl_marcador_fonte"] = []
 if "mem_nl_objetos" not in st.session_state:
     st.session_state["mem_nl_objetos"] = []
+if "mem_nl_acoes" not in st.session_state:
+    st.session_state["mem_nl_acoes"] = []
+if "mem_nl_subacoes" not in st.session_state:
+    st.session_state["mem_nl_subacoes"] = []
 
 # --- MEMÓRIA DA TELA PD (filtros aplicados) ---
 # Os widgets ficam em modo de edição dentro de um formulário. Somente ao
@@ -4330,6 +4334,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         df1.columns = [str(c).strip() for c in df1.columns]
         df2.columns = [str(c).strip() for c in df2.columns]
+        df1 = tabela_acoes.extrair_acao_subacao_base(df1)
 
         col_nl = "Número" if "Número" in df1.columns else df1.columns[0]
         col_ne1 = next(
@@ -4577,6 +4582,12 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
         df_merged.loc[mask_grupo_indisponivel, "Grupo_Classificado"] = (
             df_merged.loc[mask_grupo_indisponivel, "Grupo_Filtro"]
             .apply(classificar_grupo_nl)
+        )
+
+        # Ação e Subação: usa o que já vem na planilha de NL; se estiver vazio,
+        # busca na base do QLIKVIEW pela NE. Sem valor -> NÃO INFORMADA.
+        df_merged = tabela_acoes.completar_acao_subacao(
+            df_merged, df_marcadores_qlik, limpar_chave_ne
         )
 
         # Natureza da NL (CORRENTE / RP / RPNP / DEA) pela NE, via Elemento do
@@ -5254,7 +5265,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         # --- FUNÇÃO AUXILIAR DE FILTRAGEM DINÂMICA DADOS - TELA NL ---
         # A função lê exclusivamente a memória dos filtros APLICADOS.
-        def filtrar_df_nl(df, ign_per=False, ign_grp=False, ign_sts=False, ign_cred=False, ign_fnt=False, ign_obj=False, ign_mrc=False):
+        def filtrar_df_nl(df, ign_per=False, ign_grp=False, ign_sts=False, ign_cred=False, ign_fnt=False, ign_obj=False, ign_mrc=False, ign_acao=False, ign_sub=False):
             d = df.copy()
             if d.empty:
                 return d
@@ -5297,6 +5308,14 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             # Objeto
             if not ign_obj and st.session_state["mem_nl_objetos"]:
                 d = d[d["Objeto_Relacao"].isin(st.session_state["mem_nl_objetos"])]
+
+            # Ação
+            if not ign_acao and st.session_state["mem_nl_acoes"]:
+                d = d[d["Acao_Relacao"].isin(st.session_state["mem_nl_acoes"])]
+
+            # Subação
+            if not ign_sub and st.session_state["mem_nl_subacoes"]:
+                d = d[d["SubAcao_Relacao"].isin(st.session_state["mem_nl_subacoes"])]
 
             return d
 
@@ -5350,12 +5369,26 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             o for o in df_para_obj["Objeto_Relacao"].unique() if o != "NÃO INFORMADO"
         ]) if not df_para_obj.empty else []
 
+        df_para_acao = filtrar_df_nl(df_base, ign_acao=True)
+        acoes_opcoes = (
+            sorted(df_para_acao["Acao_Relacao"].dropna().astype(str).unique())
+            if not df_para_acao.empty else []
+        )
+
+        df_para_sub = filtrar_df_nl(df_base, ign_sub=True)
+        subacoes_opcoes = (
+            sorted(df_para_sub["SubAcao_Relacao"].dropna().astype(str).unique())
+            if not df_para_sub.empty else []
+        )
+
         validos_comp_nl = [c for c in st.session_state["mem_nl_comps"] if c in comps]
         grupos_validos_nl = [g for g in st.session_state["mem_nl_grupo"] if g in opcoes_grp_nl]
         validos_c_nl = [c for c in st.session_state["mem_nl_credores"] if c in credores]
         validas_f_nl = [f for f in st.session_state["mem_nl_fonte"] if f in fontes]
         validos_mrc_nl = [m for m in st.session_state["mem_nl_marcador_fonte"] if m in marcadores_fonte]
         validos_obj_nl = [o for o in st.session_state["mem_nl_objetos"] if o in objetos]
+        validos_acao_nl = [a for a in st.session_state["mem_nl_acoes"] if a in acoes_opcoes]
+        validos_sub_nl = [s for s in st.session_state["mem_nl_subacoes"] if s in subacoes_opcoes]
         status_aplicado_nl = (
             st.session_state["mem_nl_status"]
             if st.session_state["mem_nl_status"] in opcoes_sts_nl else "Todos"
@@ -5389,6 +5422,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["mem_nl_fonte"] = []
             st.session_state["mem_nl_marcador_fonte"] = []
             st.session_state["mem_nl_objetos"] = []
+            st.session_state["mem_nl_acoes"] = []
+            st.session_state["mem_nl_subacoes"] = []
             st.session_state["w_nl_tipo_periodo"] = "Por Mês de Competência"
             st.session_state["w_nl_comps"] = []
             st.session_state["w_nl_dt_ini"] = data_min_nl
@@ -5399,6 +5434,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
             st.session_state["w_nl_fonte"] = []
             st.session_state["w_nl_marcador_fonte"] = []
             st.session_state["w_nl_objetos"] = []
+            st.session_state["w_nl_acoes"] = []
+            st.session_state["w_nl_subacoes"] = []
 
         # O seletor de período fica fora do formulário para redesenhar os
         # campos de competência ou datas assim que o usuário alterná-lo.
@@ -5493,6 +5530,23 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 key="w_nl_objetos",
             )
 
+            st.divider()
+            acao_sel = st.multiselect(
+                "Filtrar por Ação:",
+                options=acoes_opcoes,
+                default=validos_acao_nl,
+                placeholder="Todas as ações",
+                key="w_nl_acoes",
+            )
+
+            subacao_sel = st.multiselect(
+                "Filtrar por Subação:",
+                options=subacoes_opcoes,
+                default=validos_sub_nl,
+                placeholder="Todas as subações",
+                key="w_nl_subacoes",
+            )
+
             col_aplicar_nl, col_limpar_nl = st.columns(2, gap="small")
             with col_aplicar_nl:
                 aplicar_nl = st.form_submit_button(
@@ -5519,6 +5573,8 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                 st.session_state["mem_nl_fonte"] = list(fontes_selecionadas_nl)
                 st.session_state["mem_nl_marcador_fonte"] = list(marcador_fonte_sel)
                 st.session_state["mem_nl_objetos"] = list(objeto_sel)
+                st.session_state["mem_nl_acoes"] = list(acao_sel)
+                st.session_state["mem_nl_subacoes"] = list(subacao_sel)
                 st.rerun()
 
         st.sidebar.divider()
@@ -5701,10 +5757,83 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
+        @st.dialog("Relatório por Ação e Subação")
+        def janela_relatorio_acao_nl():
+            st.caption(
+                "Parte dos mesmos registros do painel e inclui as colunas Ação e Subação. "
+                "Marque a opção abaixo para imprimir todas as liquidações, ignorando os filtros."
+            )
+            imprimir_tudo = st.checkbox(
+                "Imprimir tudo (ignorar os filtros do painel)",
+                key="relatorio_acao_nl_tudo",
+            )
+            df_rel = (df_base if imprimir_tudo else df_filtrado).copy()
+
+            acoes_disp = sorted(df_rel["Acao_Relacao"].dropna().astype(str).unique().tolist())
+            st.session_state["relatorio_acao_nl_acoes"] = [
+                a for a in st.session_state.get("relatorio_acao_nl_acoes", [])
+                if a in acoes_disp
+            ]
+            acoes_rel = st.multiselect(
+                "Ação (vazio = todas)", acoes_disp, key="relatorio_acao_nl_acoes"
+            )
+            if acoes_rel:
+                df_rel = df_rel[df_rel["Acao_Relacao"].isin(acoes_rel)]
+
+            subs_disp = sorted(df_rel["SubAcao_Relacao"].dropna().astype(str).unique().tolist())
+            st.session_state["relatorio_acao_nl_subacoes"] = [
+                s for s in st.session_state.get("relatorio_acao_nl_subacoes", [])
+                if s in subs_disp
+            ]
+            subs_rel = st.multiselect(
+                "Subação (vazio = todas)", subs_disp, key="relatorio_acao_nl_subacoes"
+            )
+            if subs_rel:
+                df_rel = df_rel[df_rel["SubAcao_Relacao"].isin(subs_rel)]
+
+            if df_rel.empty:
+                st.warning("Não há liquidações para os filtros escolhidos.")
+                return
+
+            qtd_rel = f"{len(df_rel):,}".replace(",", ".")
+            st.caption(
+                f"{qtd_rel} liquidações · {formatar_brl(df_rel['Valor_Total_Limpo'].sum())}"
+            )
+
+            try:
+                arquivo_acao = tabela_acoes.gerar_relatorio_excel(
+                    df_rel,
+                    recorte="Todas as liquidações" if imprimir_tudo else "Recorte do painel",
+                )
+                st.download_button(
+                    "Baixar relatório",
+                    data=arquivo_acao,
+                    file_name=(
+                        "Relatório por Ação e Subação "
+                        f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
+                    ),
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    use_container_width=True,
+                    key="btn_baixar_relatorio_acao_nl",
+                )
+            except (ModuleNotFoundError, ValueError, RuntimeError, KeyError) as erro:
+                st.error(f"Não foi possível gerar o relatório: {erro}")
+
         col_credor, col_resumos = st.columns([1.15, 0.85])
 
         with col_credor:
             renderizar_tabela_credor_dinamica(df_filtrado)
+
+            st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
+            tabela_acoes.exibir_tabela_acoes(df_filtrado, altura=520)
+            _, col_botao_acao = st.columns([2.2, 1])
+            with col_botao_acao:
+                if st.button(
+                    "📊 Gerar Relatório Ação/Subação",
+                    use_container_width=True,
+                    key="btn_gerar_relatorio_acao_nl",
+                ):
+                    janela_relatorio_acao_nl()
 
         with col_resumos:
             # Resumo financeiro por Marcador de Fonte, acima da Fonte.
