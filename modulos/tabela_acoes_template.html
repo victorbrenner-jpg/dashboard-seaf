@@ -1,0 +1,323 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Ação e Subação</title>
+    <script src="https://cdn.tailwindcss.com"></script>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+    <script>
+        tailwind.config = {
+            theme: { extend: {
+                fontFamily: { sans: ['Inter', 'sans-serif'] },
+                colors: { navy: { 950: '#07152B', 900: '#0F172A', 800: '#002454', 700: '#00356B' } }
+            } }
+        }
+    </script>
+    <style>
+        .tabular-nums { font-variant-numeric: tabular-nums; }
+
+        /* Grade compartilhada entre cabeçalho, linha pai, subtabela e rodapé */
+        .finance-grid {
+            display: grid;
+            grid-template-columns: minmax(260px, 1fr) 84px 150px 165px;
+            align-items: center;
+        }
+        @media (max-width: 768px) {
+            .finance-grid { grid-template-columns: minmax(220px, 1fr) 68px 125px 135px; }
+        }
+
+        .accordion-content { display: grid; grid-template-rows: 0fr; transition: grid-template-rows 0.26s cubic-bezier(0.4, 0, 0.2, 1); }
+        .accordion-content.is-open { grid-template-rows: 1fr; }
+        .accordion-inner { overflow: hidden; }
+        .drawer-shadow { box-shadow: inset 0 5px 8px -6px rgba(0, 36, 84, 0.16); }
+        .chevron-icon { transition: transform 0.22s cubic-bezier(0.4, 0, 0.2, 1); }
+        .is-expanded .chevron-icon { transform: rotate(90deg); }
+    </style>
+</head>
+<body class="bg-[#F4F6F9] text-slate-800 py-2 px-1 antialiased">
+
+<div id="raiz" class="max-w-6xl mx-auto space-y-3.5">
+
+    <!-- Barra superior: busca à esquerda, ações à direita -->
+    <div class="bg-white rounded-xl shadow-xs border border-slate-200/90 p-3 sm:px-4 sm:py-3 flex flex-col sm:flex-row sm:items-center justify-between gap-3">
+        <div class="relative flex-1 max-w-md">
+            <span class="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <svg class="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M21 21l-4.35-4.35M17 11A6 6 0 115 11a6 6 0 0112 0z" />
+                </svg>
+            </span>
+            <input type="text" id="searchInput" oninput="handleSearch(this.value)"
+                placeholder="Buscar ação ou subação por código ou nome..."
+                class="w-full pl-9 pr-8 py-1.5 text-xs sm:text-sm bg-slate-50 border border-slate-200 rounded-lg text-slate-800 placeholder-slate-400 focus:outline-none focus:bg-white focus:border-navy-800 focus:ring-2 focus:ring-navy-800/10 transition-all" />
+            <button id="clearSearchBtn" onclick="clearSearch()" title="Limpar busca"
+                class="hidden absolute inset-y-0 right-0 pr-2.5 flex items-center text-slate-400 hover:text-slate-600 cursor-pointer">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12" />
+                </svg>
+            </button>
+        </div>
+
+        <div class="flex flex-wrap items-center gap-2 self-end sm:self-auto">
+            <!-- Aparece só quando o botão real do Streamlit é encontrado (ver script) -->
+            <button id="reportBtn" onclick="abrirRelatorio()" style="display:none"
+                class="inline-flex items-center gap-2 px-3.5 py-1.5 text-xs font-semibold text-slate-700 bg-white hover:bg-slate-50 border border-slate-300/90 hover:border-slate-400 rounded-lg transition-colors cursor-pointer">
+                <svg class="w-4 h-4 text-navy-800" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 17v-2m3 2v-4m3 4v-6m2 10H7a2 2 0 01-2-2V5a2 2 0 012-2h5.586a1 1 0 01.707.293l5.414 5.414a1 1 0 01.293.707V19a2 2 0 01-2 2z" />
+                </svg>
+                <span>Gerar Relatório Ação/Subação</span>
+            </button>
+
+            <button id="toggleAllBtn" onclick="toggleAllRows()"
+                class="inline-flex items-center gap-1.5 px-3.5 py-1.5 text-xs font-semibold text-navy-800 bg-blue-50/70 hover:bg-blue-100/80 border border-blue-200/80 rounded-lg transition-colors cursor-pointer">
+                <svg class="w-3.5 h-3.5" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                    <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 8V4m0 0h4M4 4l5 5m11-1V4m0 0h-4m4 0l-5 5M4 16v4m0 0h4m-4 0l5-5m11 5l-5-5m5 5v-4m0 4h-4" />
+                </svg>
+                <span id="toggleAllText">Expandir Todos</span>
+            </button>
+        </div>
+    </div>
+
+    <!-- Tabela principal (cabeçalho e Total Geral fixos na rolagem) -->
+    <div class="bg-white rounded-xl shadow-sm border border-slate-200 overflow-clip">
+        <div class="sticky top-0 z-20 shadow-md bg-navy-800 text-white px-5 py-3.5 finance-grid text-xs font-bold uppercase tracking-wider select-none">
+            <div class="pl-8">Ação / Subação</div>
+            <div class="text-right pr-2">Qtd.</div>
+            <div class="text-right pr-2">Val. Ret.</div>
+            <div class="text-right">Valor Total</div>
+        </div>
+
+        <div id="acoesList" class="divide-y divide-slate-200"></div>
+
+        <div id="totalGeralRow" class="sticky bottom-0 z-20 bg-slate-100/90 border-t-2 border-slate-300 px-5 py-3.5 finance-grid text-xs sm:text-sm select-none">
+            <div class="font-bold text-navy-900 tracking-tight uppercase">Total Geral</div>
+            <div id="footerQtd" class="text-right pr-2 font-bold text-navy-900 tabular-nums"></div>
+            <div id="footerRet" class="text-right pr-2 font-bold text-[#C27803] tabular-nums"></div>
+            <div id="footerTotal" class="text-right font-bold text-navy-800 tabular-nums"></div>
+        </div>
+    </div>
+
+    <div class="flex flex-wrap items-center justify-between gap-2 px-1 text-[11px] text-slate-400">
+        <span>Clique em qualquer Ação para expandir ou recolher suas Subações.</span>
+        <span id="filterStatusText"></span>
+    </div>
+</div>
+
+<script>
+    const DADOS = __DADOS_JSON__;
+    // Aceita os valores como número (formato novo) ou como texto "R$ 1.234,56" (formato antigo).
+    const parseBR = (v) => {
+        if (typeof v === 'number') return v;
+        const n = parseFloat(String(v == null ? '' : v).replace(/[^\d,\-]/g, '').replace(',', '.'));
+        return isNaN(n) ? 0 : n;
+    };
+    const pick = (o, ...chaves) => { for (const c of chaves) if (o[c] != null) return o[c]; return 0; };
+    const acoesData = (DADOS.acoes || []).map((a) => ({
+        id: a.id, name: a.name, expanded: !!a.expanded,
+        qtd: parseBR(a.qtd), ret: parseBR(pick(a, 'ret', 'valRet')), tot: parseBR(pick(a, 'tot', 'valTotal')),
+        items: (a.items || []).map((s) => ({
+            sub: s.sub, qtd: parseBR(s.qtd), ret: parseBR(pick(s, 'ret', 'valRet')), tot: parseBR(pick(s, 'tot', 'total', 'valTotal')),
+        })),
+    }));
+    const _T = DADOS.totais || {};
+    const TOTAIS = { qtd: parseBR(_T.qtd), ret: parseBR(pick(_T, 'ret', 'valRet')), tot: parseBR(pick(_T, 'tot', 'valTotal')) };
+    let searchQuery = '';
+
+    const esc = (s) => String(s).replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
+    const norm = (s) => String(s).normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase();
+    const fmtBRL = (v) => Number(v).toLocaleString('pt-BR', { style: 'currency', currency: 'BRL' });
+    const fmtInt = (v) => Number(v).toLocaleString('pt-BR');
+
+    // "2178-UNIVERSALIZAÇÃO..." -> código em destaque + restante
+    function partes(texto) {
+        const m = String(texto).match(/^\s*(\d+)\s*-\s*(.*)$/);
+        return m ? { cod: m[1], resto: m[2] } : { cod: '', resto: String(texto) };
+    }
+    function subTexto(sub) {
+        const p = partes(sub.sub);
+        return p.cod ? `<span class="font-semibold text-slate-800">${esc(p.cod)}</span>-${esc(p.resto)}` : esc(p.resto);
+    }
+
+    function handleSearch(val) {
+        searchQuery = norm(val.trim());
+        document.getElementById('clearSearchBtn').classList.toggle('hidden', !searchQuery);
+        renderTable();
+    }
+    function clearSearch() {
+        const input = document.getElementById('searchInput');
+        input.value = '';
+        handleSearch('');
+        input.focus();
+    }
+
+    const casaSub = (s) => searchQuery && norm(s.sub).includes(searchQuery);
+    const casaAcao = (a) => norm(a.name).includes(searchQuery);
+
+    function renderTable() {
+        const container = document.getElementById('acoesList');
+        const status = document.getElementById('filterStatusText');
+
+        const filtered = acoesData.filter((a) => !searchQuery || casaAcao(a) || a.items.some(casaSub));
+
+        if (filtered.length === 0) {
+            container.innerHTML = `<div class="py-10 px-6 text-center text-sm text-slate-500">${
+                searchQuery ? 'Nenhuma ação ou subação encontrada para a busca.' : 'Nenhuma liquidação para os filtros selecionados.'
+            }</div>`;
+            document.getElementById('footerQtd').textContent = '0';
+            document.getElementById('footerRet').textContent = fmtBRL(0);
+            document.getElementById('footerTotal').textContent = fmtBRL(0);
+            status.textContent = searchQuery ? '0 resultados encontrados' : '';
+            updateToggleAllButton(filtered);
+            ajustarAltura();
+            return;
+        }
+
+        container.innerHTML = filtered.map((a) => {
+            const subMatch = searchQuery && a.items.some(casaSub);
+            const open = subMatch ? true : a.expanded;
+            const n = a.items.length;
+            const badge = n === 1 ? '1 subação' : `${n} subações`;
+            const p = partes(a.name);
+            const tituloAcao = p.cod ? `${esc(p.cod)}-${esc(p.resto)}` : esc(p.resto);
+
+            const subRows = a.items.map((s) => `
+                <div class="finance-grid py-3 border-b border-slate-200/70 last:border-b-0 text-xs transition-colors ${casaSub(s) ? 'bg-amber-50/70' : 'hover:bg-slate-50/90'}">
+                    <div class="pl-12 pr-4 text-slate-700 font-medium leading-snug">${subTexto(s)}</div>
+                    <div class="text-right pr-2 text-slate-600 font-medium tabular-nums">${fmtInt(s.qtd)}</div>
+                    <div class="text-right pr-2 text-[#C27803] font-medium tabular-nums">${fmtBRL(s.ret)}</div>
+                    <div class="text-right text-navy-900 font-semibold tabular-nums">${fmtBRL(s.tot)}</div>
+                </div>`).join('');
+
+            return `
+            <div class="transition-colors ${open ? 'is-expanded' : ''}">
+                <div role="button" tabindex="0" aria-expanded="${open}" onclick="toggleRow(${a.id})"
+                     onkeydown="if(event.key==='Enter'||event.key===' '){event.preventDefault();toggleRow(${a.id});}"
+                     class="group px-5 py-4 finance-grid cursor-pointer select-none transition-colors duration-150 ${open ? 'bg-blue-50/75 hover:bg-blue-50' : 'bg-white hover:bg-slate-50/90'}">
+                    <div class="flex items-start gap-3 pr-4">
+                        <span class="mt-0.5 w-6 h-6 rounded-md flex items-center justify-center shrink-0 transition-colors ${open ? 'bg-blue-100 text-navy-800' : 'bg-slate-100/80 text-slate-400 group-hover:bg-blue-100/70 group-hover:text-navy-800'}">
+                            <svg class="chevron-icon w-3.5 h-3.5" fill="none" stroke="currentColor" stroke-width="2.5" viewBox="0 0 24 24"><path stroke-linecap="round" stroke-linejoin="round" d="M9 5l7 7-7 7" /></svg>
+                        </span>
+                        <div class="flex flex-col items-start gap-2 min-w-0">
+                            <span class="text-xs sm:text-[13px] font-bold text-navy-900 leading-snug tracking-tight" title="${esc(a.name)}">${tituloAcao}</span>
+                            <span class="inline-flex items-center px-2.5 py-0.5 rounded-full text-[11px] font-semibold transition-colors ${open ? 'bg-navy-800 text-white shadow-2xs' : 'bg-slate-100 text-slate-600 group-hover:bg-blue-100/80 group-hover:text-navy-800'}">${badge}</span>
+                        </div>
+                    </div>
+                    <div class="text-right pr-2 text-xs sm:text-sm font-semibold text-slate-700 tabular-nums">${fmtInt(a.qtd)}</div>
+                    <div class="text-right pr-2 text-xs sm:text-sm font-semibold text-[#C27803] tabular-nums">${fmtBRL(a.ret)}</div>
+                    <div class="text-right text-xs sm:text-sm font-bold text-navy-900 tabular-nums">${fmtBRL(a.tot)}</div>
+                </div>
+                <div class="accordion-content ${open ? 'is-open' : ''}">
+                    <div class="accordion-inner">
+                        <div class="bg-[#F8FAFC] drawer-shadow border-t border-slate-200/80 relative">
+                            <div class="absolute left-0 top-0 bottom-0 w-1 bg-navy-800"></div>
+                            <div class="px-5 py-2 bg-slate-100/80 border-b border-slate-200/80 finance-grid text-[11px] font-bold uppercase tracking-wider text-slate-500">
+                                <div class="pl-12">Subação</div>
+                                <div class="text-right pr-2">Qtd.</div>
+                                <div class="text-right pr-2">Val. Ret.</div>
+                                <div class="text-right">Valor Total</div>
+                            </div>
+                            <div class="px-5 bg-white/70">${subRows}</div>
+                        </div>
+                    </div>
+                </div>
+            </div>`;
+        }).join('');
+
+        if (!searchQuery) {
+            document.getElementById('footerQtd').textContent = fmtInt(TOTAIS.qtd);
+            document.getElementById('footerRet').textContent = fmtBRL(TOTAIS.ret);
+            document.getElementById('footerTotal').textContent = fmtBRL(TOTAIS.tot);
+            status.textContent = 'Exibindo todas as ações';
+        } else {
+            document.getElementById('footerQtd').textContent = fmtInt(filtered.reduce((s, a) => s + a.qtd, 0));
+            document.getElementById('footerRet').textContent = fmtBRL(filtered.reduce((s, a) => s + a.ret, 0));
+            document.getElementById('footerTotal').textContent = fmtBRL(filtered.reduce((s, a) => s + a.tot, 0));
+            status.textContent = `Filtrado: ${filtered.length} ${filtered.length === 1 ? 'ação encontrada' : 'ações encontradas'}`;
+        }
+        updateToggleAllButton(filtered);
+        ajustarAltura();
+    }
+
+    // ------------------------------------------------------------------
+    // Altura automática: com tudo recolhido a tabela aparece inteira, sem
+    // barra de rolagem. Ao expandir, a caixa cresce até ALTURA_MAX (ou até a
+    // altura recolhida, se esta já for maior) e só então passa a rolar.
+    // ------------------------------------------------------------------
+    const ALTURA_MAX = 760;
+    let alturaRecolhida = 0;
+    let ultimaAltura = 0;
+    function ajustarAltura() {
+        try {
+            const quadro = window.frameElement;
+            if (!quadro) return;
+            const natural = Math.ceil(document.getElementById('raiz').offsetHeight) + 20;
+            const tudoFechado = !searchQuery && acoesData.every((a) => !a.expanded);
+            if (tudoFechado) alturaRecolhida = natural;
+            const alvo = Math.min(natural, Math.max(ALTURA_MAX, alturaRecolhida));
+            quadro.setAttribute('scrolling', 'auto');
+            if (Math.abs(alvo - ultimaAltura) > 1) {
+                ultimaAltura = alvo;
+                quadro.style.height = alvo + 'px';
+                quadro.setAttribute('height', alvo);
+            }
+        } catch (e) { /* sem acesso ao quadro: mantém a altura definida pelo app */ }
+    }
+
+    function toggleRow(id) {
+        const a = acoesData.find((x) => x.id === id);
+        if (!a) return;
+        a.expanded = !a.expanded;
+        renderTable();
+    }
+    function toggleAllRows() {
+        const anyClosed = acoesData.some((a) => !a.expanded);
+        acoesData.forEach((a) => { a.expanded = anyClosed; });
+        renderTable();
+    }
+    function updateToggleAllButton(list) {
+        const allOpen = list.length > 0 && list.every((a) => a.expanded);
+        document.getElementById('toggleAllText').textContent = allOpen ? 'Recolher Todos' : 'Expandir Todos';
+    }
+
+    // ------------------------------------------------------------------
+    // Botão "Gerar Relatório Ação/Subação": o relatório é uma janela do
+    // Streamlit, então este botão apenas clica no botão real da página.
+    // Se o botão real for encontrado, ele é escondido e este assume o lugar;
+    // se não for (ou o navegador bloquear o acesso), este fica oculto e o
+    // botão real do Streamlit continua visível — nada se perde.
+    // ------------------------------------------------------------------
+    const CLASSE_BOTAO = '.st-key-btn_gerar_relatorio_acao_nl';
+    function botaoReal() {
+        try { return window.parent.document.querySelector(CLASSE_BOTAO + ' button'); }
+        catch (e) { return null; }
+    }
+    function sincronizarBotao() {
+        const real = botaoReal();
+        const meu = document.getElementById('reportBtn');
+        if (real) {
+            const caixa = real.closest(CLASSE_BOTAO);
+            const linha = caixa && (caixa.closest('[data-testid="stHorizontalBlock"]') || caixa);
+            if (linha && linha.style.display !== 'none') linha.style.display = 'none';
+            meu.style.display = 'inline-flex';
+        } else {
+            meu.style.display = 'none';
+        }
+    }
+    function abrirRelatorio() {
+        const real = botaoReal();
+        if (real) real.click();
+    }
+
+    window.addEventListener('DOMContentLoaded', () => {
+        renderTable();
+        sincronizarBotao();
+        setInterval(sincronizarBotao, 700);
+        if (window.ResizeObserver) new ResizeObserver(ajustarAltura).observe(document.getElementById('raiz'));
+        if (document.fonts && document.fonts.ready) document.fonts.ready.then(ajustarAltura);
+        window.addEventListener('load', ajustarAltura);
+    });
+</script>
+</body>
+</html>
