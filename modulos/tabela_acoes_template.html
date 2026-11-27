@@ -257,10 +257,12 @@
             if (tudoFechado) alturaRecolhida = natural;
             const alvo = Math.min(natural, Math.max(ALTURA_MAX, alturaRecolhida));
             quadro.setAttribute('scrolling', 'auto');
-            if (Math.abs(alvo - ultimaAltura) > 1) {
+            if (Math.abs(alvo - quadro.getBoundingClientRect().height) > 1) {
                 ultimaAltura = alvo;
                 quadro.style.height = alvo + 'px';
                 quadro.setAttribute('height', alvo);
+                const caixa = quadro.parentElement;
+                if (caixa && caixa.style) { caixa.style.height = alvo + 'px'; caixa.style.minHeight = alvo + 'px'; }
             }
         } catch (e) { /* sem acesso ao quadro: mantém a altura definida pelo app */ }
     }
@@ -322,6 +324,7 @@
         renderTable();
         sincronizarBotao();
         setInterval(sincronizarBotao, 700);
+        setInterval(ajustarAltura, 400);
         if (window.ResizeObserver) new ResizeObserver(ajustarAltura).observe(document.getElementById('raiz'));
         if (document.fonts && document.fonts.ready) document.fonts.ready.then(ajustarAltura);
         window.addEventListener('load', ajustarAltura);

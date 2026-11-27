@@ -399,10 +399,12 @@
                 const natural = Math.ceil(document.getElementById('raiz').offsetHeight) + 56;
                 const alvo = Math.min(natural, ALTURA_MAX);
                 quadro.setAttribute('scrolling', 'auto');
-                if (Math.abs(alvo - ultimaAltura) > 1) {
+                if (Math.abs(alvo - quadro.getBoundingClientRect().height) > 1) {
                     ultimaAltura = alvo;
                     quadro.style.height = alvo + 'px';
                     quadro.setAttribute('height', alvo);
+                    const caixa = quadro.parentElement;
+                    if (caixa && caixa.style) { caixa.style.height = alvo + 'px'; caixa.style.minHeight = alvo + 'px'; }
                 }
             } catch (e) {}
         }
@@ -410,7 +412,11 @@
             window.addEventListener('DOMContentLoaded', () => {
                 new ResizeObserver(() => ajustarAltura()).observe(document.getElementById('raiz'));
             });
+        
         }
+        window.addEventListener('load', ajustarAltura);
+        // Rede de segurança: o Streamlit pode devolver a altura inicial após um novo filtro.
+        setInterval(ajustarAltura, 400);
 
         // Alterna uma linha específica
         function toggleRow(id) {
