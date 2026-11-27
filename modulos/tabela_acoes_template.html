@@ -307,7 +307,15 @@
     }
     function abrirRelatorio() {
         const real = botaoReal();
-        if (real) real.click();
+        if (!real) return;
+        // Envia o termo da busca ao Python pela URL da página (lida no clique).
+        try {
+            const url = new URL(window.parent.location.href);
+            if (searchQuery) url.searchParams.set('busca_acao', searchQuery);
+            else url.searchParams.delete('busca_acao');
+            window.parent.history.replaceState(null, '', url.toString());
+        } catch (e) {}
+        setTimeout(() => real.click(), 60);
     }
 
     window.addEventListener('DOMContentLoaded', () => {

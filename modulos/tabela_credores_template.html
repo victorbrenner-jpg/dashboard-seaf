@@ -67,9 +67,9 @@
         }
     </style>
 </head>
-<body class="bg-[#F4F6F9] text-slate-800 min-h-screen py-6 px-3 sm:px-6 lg:px-8 antialiased">
+<body class="bg-[#F4F6F9] text-slate-800 py-6 px-3 sm:px-6 lg:px-8 antialiased">
 
-    <div class="max-w-6xl mx-auto">
+    <div id="raiz" class="max-w-6xl mx-auto">
         
         <!-- Barra Superior de Controle e Contexto -->
         <div class="bg-white rounded-xl shadow-sm border border-slate-200/80 p-2.5 sm:p-3 mb-3 flex flex-col lg:flex-row lg:items-center lg:justify-end gap-3">
@@ -98,7 +98,7 @@
             
             <!-- Cabeçalho Principal -->
             <div class="sticky top-0 z-20 shadow-md bg-navy-800 text-white px-4 sm:px-6 py-3.5 grid grid-cols-12 items-center text-xs font-bold uppercase tracking-wider select-none">
-                <div class="col-span-6 sm:col-span-7 pl-7">Credor</div>
+                <div class="col-span-6 sm:col-span-7 pl-7">Credor / Natureza</div>
                 <div class="col-span-3 sm:col-span-2 text-right">Val. Ret.</div>
                 <div class="col-span-3 text-right">Valor Total</div>
             </div>
@@ -386,6 +386,30 @@
             `;
 
             updateToggleAllButton(filteredCreditors);
+            ajustarAltura();
+        }
+
+        // Ajusta a altura do quadro ao conteúdo (limite: ALTURA_MAX, depois rola)
+        const ALTURA_MAX = 820;
+        let ultimaAltura = 0;
+        function ajustarAltura() {
+            try {
+                const quadro = window.frameElement;
+                if (!quadro) return;
+                const natural = Math.ceil(document.getElementById('raiz').offsetHeight) + 56;
+                const alvo = Math.min(natural, ALTURA_MAX);
+                quadro.setAttribute('scrolling', 'auto');
+                if (Math.abs(alvo - ultimaAltura) > 1) {
+                    ultimaAltura = alvo;
+                    quadro.style.height = alvo + 'px';
+                    quadro.setAttribute('height', alvo);
+                }
+            } catch (e) {}
+        }
+        if (window.ResizeObserver) {
+            window.addEventListener('DOMContentLoaded', () => {
+                new ResizeObserver(() => ajustarAltura()).observe(document.getElementById('raiz'));
+            });
         }
 
         // Alterna uma linha específica

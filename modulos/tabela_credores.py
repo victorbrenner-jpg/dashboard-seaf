@@ -121,4 +121,8 @@ def renderizar_html(credores: list[dict]) -> str:
 def exibir_tabela_credores(df_filtrado: pd.DataFrame, altura: int = 820) -> None:
     import streamlit.components.v1 as components
 
-    components.html(renderizar_html(montar_credores(df_filtrado)), height=altura, scrolling=True)
+    dados = montar_credores(df_filtrado)
+    n = len(dados) if hasattr(dados, "__len__") else 1
+    # Altura inicial estimada; o próprio HTML se ajusta ao conteúdo (máx. 820 px).
+    inicial = min(max(210 + 80 * n, 260), 820)
+    components.html(renderizar_html(dados), height=inicial, scrolling=True)

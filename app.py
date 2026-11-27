@@ -5757,68 +5757,6 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
         st.markdown("<br>", unsafe_allow_html=True)
 
-        @st.dialog("Relatório por Ação e Subação")
-        def janela_relatorio_acao_nl():
-            st.caption(
-                "Parte dos mesmos registros do painel e inclui as colunas Ação e Subação. "
-                "Marque a opção abaixo para imprimir todas as liquidações, ignorando os filtros."
-            )
-            imprimir_tudo = st.checkbox(
-                "Imprimir tudo (ignorar os filtros do painel)",
-                key="relatorio_acao_nl_tudo",
-            )
-            df_rel = (df_base if imprimir_tudo else df_filtrado).copy()
-
-            acoes_disp = sorted(df_rel["Acao_Relacao"].dropna().astype(str).unique().tolist())
-            st.session_state["relatorio_acao_nl_acoes"] = [
-                a for a in st.session_state.get("relatorio_acao_nl_acoes", [])
-                if a in acoes_disp
-            ]
-            acoes_rel = st.multiselect(
-                "Ação (vazio = todas)", acoes_disp, key="relatorio_acao_nl_acoes"
-            )
-            if acoes_rel:
-                df_rel = df_rel[df_rel["Acao_Relacao"].isin(acoes_rel)]
-
-            subs_disp = sorted(df_rel["SubAcao_Relacao"].dropna().astype(str).unique().tolist())
-            st.session_state["relatorio_acao_nl_subacoes"] = [
-                s for s in st.session_state.get("relatorio_acao_nl_subacoes", [])
-                if s in subs_disp
-            ]
-            subs_rel = st.multiselect(
-                "Subação (vazio = todas)", subs_disp, key="relatorio_acao_nl_subacoes"
-            )
-            if subs_rel:
-                df_rel = df_rel[df_rel["SubAcao_Relacao"].isin(subs_rel)]
-
-            if df_rel.empty:
-                st.warning("Não há liquidações para os filtros escolhidos.")
-                return
-
-            qtd_rel = f"{len(df_rel):,}".replace(",", ".")
-            st.caption(
-                f"{qtd_rel} liquidações · {formatar_brl(df_rel['Valor_Total_Limpo'].sum())}"
-            )
-
-            try:
-                arquivo_acao = tabela_acoes.gerar_relatorio_excel(
-                    df_rel,
-                    recorte="Todas as liquidações" if imprimir_tudo else "Recorte do painel",
-                )
-                st.download_button(
-                    "Baixar relatório",
-                    data=arquivo_acao,
-                    file_name=(
-                        "Relatório por Ação e Subação "
-                        f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx"
-                    ),
-                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
-                    use_container_width=True,
-                    key="btn_baixar_relatorio_acao_nl",
-                )
-            except (ModuleNotFoundError, ValueError, RuntimeError, KeyError) as erro:
-                st.error(f"Não foi possível gerar o relatório: {erro}")
-
         col_credor, col_resumos = st.columns([1.15, 0.85])
 
         with col_credor:
@@ -5826,6 +5764,7 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
 
             st.markdown("<div style='height: 14px;'></div>", unsafe_allow_html=True)
             tabela_acoes.exibir_tabela_acoes(df_filtrado, altura=520)
+            rel_acao_pronto = None
             _, col_botao_acao = st.columns([2.2, 1])
             with col_botao_acao:
                 if st.button(
@@ -5833,7 +5772,41 @@ elif st.session_state["tela_atual"] == "Liquidação (NL)":
                     use_container_width=True,
                     key="btn_gerar_relatorio_acao_nl",
                 ):
-                    janela_relatorio_acao_nl()
+                    try:
+                        from modulos import modelo_acao
+                        _busca = st.query_params.get("busca_acao", "")
+                        _df_rel = modelo_acao.filtrar_por_busca(df_filtrado, _busca)
+                        if "busca_acao" in st.query_params:
+                            del st.query_params["busca_acao"]
+                        if _df_rel.empty:
+                            raise ValueError("nenhuma liquidação para a busca informada")
+                        rel_acao_pronto = (
+                            "Relatório por Ação e Subação "
+                            f"{datetime.date.today().strftime('%d.%m.%Y')}.xlsx",
+                            modelo_acao.preencher_modelo_relatorio(_df_rel),
+                        )
+                    except FileNotFoundError as erro:
+                        st.error(str(erro))
+                    except (ValueError, KeyError, RuntimeError, ModuleNotFoundError) as erro:
+                        st.error(f"Não foi possível gerar o relatório: {erro}")
+            if rel_acao_pronto:
+                import base64
+                import streamlit.components.v1 as _comp
+                _nome, _bytes = rel_acao_pronto
+                _b64 = base64.b64encode(_bytes).decode("ascii")
+                _comp.html(
+                    '<a id="dl" download="' + _nome + '" href="data:application/vnd.openxmlformats-'
+                    'officedocument.spreadsheetml.sheet;base64,' + _b64 + '"></a>'
+                    '<script>document.getElementById("dl").click();</script>',
+                    height=0,
+                )
+                st.download_button(
+                    "⬇️ Se o download não iniciou, clique aqui",
+                    data=_bytes,
+                    file_name=_nome,
+                    mime="application/vnd.openxmlformats-officedocument.spreadsheetml.sheet",
+                    key="btn_baixar_relatorio_acao_nl",
+                )
 
         with col_resumos:
             # Resumo financeiro por Marcador de Fonte, acima da Fonte.
